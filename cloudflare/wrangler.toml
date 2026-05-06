@@ -1,0 +1,7 @@
+name = "iobill-inbox"
+main = "email-worker.js"
+compatibility_date = "2024-12-01"
+
+[vars]
+# IOBILL_ENDPOINT et INBOX_SECRET doivent etre definis via wrangler secret
+# (ne PAS commiter ces valeurs ici)
