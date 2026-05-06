@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
@@ -8,15 +8,6 @@
   ],
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 30
-    },
-    "api/generate-facturx.js": {
-      "maxDuration": 60
-    },
-    "api/ocr-purchase.js": {
-      "maxDuration": 60
-    },
-    "api/accounting-export.js": {
       "maxDuration": 60
     }
   },
