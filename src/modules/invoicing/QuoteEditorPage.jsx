@@ -220,6 +220,41 @@ export function QuoteEditorPage({ token, company }) {
   }
 
   // ─── Envoi du devis (passage en "sent") ────────────────
+  // Aperçu PDF : génère et ouvre dans un nouvel onglet
+  async function previewPdf(quoteId) {
+    setSaving(true);
+    try {
+      const r = await fetch("/api/generate-quote-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ quote_id: quoteId })
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || "Erreur génération PDF");
+      }
+      const j = await r.json();
+      setSaving(false);
+      if (j.pdf_url) {
+        window.open(j.pdf_url, "_blank");
+      } else if (j.pdf_base64) {
+        // Fallback : base64 → blob → ouvrir
+        const byteChars = atob(j.pdf_base64);
+        const bytes = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } else {
+        alert("PDF généré mais aucune URL n'a été retournée.");
+      }
+    } catch (e) {
+      setSaving(false);
+      alert(e.message);
+    }
+  }
+
   // Créer une nouvelle version (v2, v3...) du devis courant
   async function createVersion(sourceQuoteId) {
     if (!confirm("Créer une nouvelle version de ce devis ? L'original sera marqué comme remplacé et restera consultable.")) return;
@@ -431,6 +466,11 @@ export function QuoteEditorPage({ token, company }) {
           {quote?.id && quote?.status !== "converted" && !quote?.superseded_by_id && (
             <button className="btn btn-ghost" onClick={() => createVersion(quote.id)} disabled={saving} title="Dupliquer ce devis en nouvelle version">
               ↪️ Créer v{(quote.version || 1) + 1}
+            </button>
+          )}
+          {quote?.id && (
+            <button className="btn btn-ghost" onClick={() => previewPdf(quote.id)} disabled={saving}>
+              📄 Aperçu PDF
             </button>
           )}
           {quote?.id && (

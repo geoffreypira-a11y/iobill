@@ -217,6 +217,39 @@ export function InvoiceEditorPage({ token, company }) {
   }
 
   // ─── Émission (passage à "issued" => verrouillage + hash chain) ─
+  async function previewInvoicePdf(invoiceId) {
+    setSaving(true);
+    try {
+      const r = await fetch("/api/generate-facturx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ invoice_id: invoiceId, preview: true })
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || "Erreur génération PDF");
+      }
+      const j = await r.json();
+      setSaving(false);
+      if (j.pdf_url) {
+        window.open(j.pdf_url, "_blank");
+      } else if (j.pdf_base64) {
+        const byteChars = atob(j.pdf_base64);
+        const bytes = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } else {
+        alert("PDF généré mais aucune URL retournée.");
+      }
+    } catch (e) {
+      setSaving(false);
+      alert(e.message);
+    }
+  }
+
   async function issueInvoice() {
     setSaving(true);
     setErr("");
@@ -407,6 +440,11 @@ export function InvoiceEditorPage({ token, company }) {
             <a className="btn btn-ghost" href={invoice.facturx_pdf_url} target="_blank" rel="noopener noreferrer">
               <Icon name="download" size={13} /> Télécharger PDF
             </a>
+          )}
+          {!invoice?.facturx_pdf_url && invoice?.id && (
+            <button className="btn btn-ghost" onClick={() => previewInvoicePdf(invoice.id)} disabled={saving}>
+              📄 Aperçu PDF
+            </button>
           )}
           {locked && (
             <button className="btn btn-ghost" onClick={() => sharePublicLink(token, "invoice", invoice.id)}>
