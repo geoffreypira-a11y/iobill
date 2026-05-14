@@ -26,11 +26,18 @@ CREATE INDEX IF NOT EXISTS idx_cu_user ON public.company_users(user_id);
 CREATE INDEX IF NOT EXISTS idx_cu_company ON public.company_users(company_id);
 
 -- Migration douce : pour chaque company existante, on cree une ligne owner
-INSERT INTO public.company_users (company_id, user_id, role, accepted_at)
-SELECT id, user_id, 'owner', created_at
-FROM public.companies
-WHERE user_id IS NOT NULL
-ON CONFLICT (company_id, user_id) DO NOTHING;
+-- (Cette migration n'execute rien si vous demarrez avec une base vide.)
+DO $$
+BEGIN
+  INSERT INTO public.company_users (company_id, user_id, role, accepted_at)
+  SELECT c.id, c.user_id, 'owner', c.created_at
+  FROM public.companies c
+  WHERE c.user_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM public.company_users cu
+      WHERE cu.company_id = c.id AND cu.user_id = c.user_id
+    );
+END $$;
 
 -- ───────────────────────────────────────────────────────────────────
 -- 2) PORTAIL CABINET MULTI-CLIENTS (plan V1.2)
@@ -277,8 +284,8 @@ CREATE POLICY "cu_select_own" ON public.company_users
 DROP POLICY IF EXISTS "cu_insert_owner" ON public.company_users;
 CREATE POLICY "cu_insert_owner" ON public.company_users
   FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM public.company_users WHERE company_id = NEW.company_id
-            AND user_id = auth.uid() AND role IN ('owner','admin'))
+    EXISTS (SELECT 1 FROM public.company_users cu2 WHERE cu2.company_id = company_users.company_id
+            AND cu2.user_id = auth.uid() AND cu2.role IN ('owner','admin'))
     OR public.is_admin()
   );
 

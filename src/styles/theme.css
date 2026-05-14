@@ -47,6 +47,30 @@ html, body {
 
 input, textarea, select, button { font-family: 'DM Sans', sans-serif; }
 
+/* ─── FOCUS — pas de bleu, gold partout ─── */
+*:focus { outline: none; }
+*:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--gold);
+}
+/* Selection texte en gold (pas bleu navigateur) */
+::selection {
+  background: rgba(212, 168, 67, 0.35);
+  color: var(--text);
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--card); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -342,6 +366,9 @@ tbody tr:hover td { background: var(--card2); }
   animation: slideup 0.2s;
   max-width: 600px;
 }
+.modal-sm { max-width: 480px; }
+.modal-md { max-width: 700px; }
+.modal-lg { max-width: 960px; }
 .modal-hd {
   display: flex;
   align-items: center;
@@ -355,6 +382,17 @@ tbody tr:hover td { background: var(--card2); }
 }
 .modal-title { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
 .modal-body { padding: 22px 24px; }
+.modal-foot {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border2);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  position: sticky;
+  bottom: 0;
+  background: var(--card);
+  z-index: 1;
+}
 .close-btn {
   background: var(--card2);
   border: none;
@@ -538,6 +576,20 @@ tbody tr:hover td { background: var(--card2); }
   .page { padding: 60px 18px 24px; }
   .page-title { font-size: 22px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  /* Modal devient drawer du bas sur mobile */
+  .modal {
+    border-radius: 16px 16px 0 0;
+    max-height: 95vh;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0;
+  }
+  .modal-bg { align-items: flex-end; padding: 0; }
+  .modal-lg, .modal-md, .modal-sm { max-width: 100%; }
 }
 
 /* ─── Skeleton loaders ────────────────────────────────────── */

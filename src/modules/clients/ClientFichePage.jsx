@@ -318,7 +318,7 @@ export function ClientFichePage({ token, company }) {
         <SectionTitle>Factures ({invoices.length})</SectionTitle>
         {invoices.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--muted)", padding: "12px 0" }}>
-            Aucune facture. <Link to="/quotes/new" style={{ color: "var(--gold)" }}>Créer un devis →</Link>
+            Aucune facture. <Link to="/quotes?new=1" style={{ color: "var(--gold)" }}>Créer un devis →</Link>
           </div>
         ) : (
           <table>

@@ -49,7 +49,7 @@ export function DashboardPage({ token, company }) {
           <div className="page-sub">{t("Bonjour {name}, voici où vous en êtes en {month}", { name: firstName, month })}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Link to="/quotes/new" className="btn btn-primary">
+          <Link to="/quotes?new=1" className="btn btn-primary">
             <Icon name="plus" size={14} />
             {t("Nouveau devis") || "Nouveau devis"}
           </Link>
@@ -104,7 +104,7 @@ export function DashboardPage({ token, company }) {
           {recentInvoices.length === 0 ? (
             <EmptyState
               text="Aucune facture pour l'instant."
-              cta={<Link to="/quotes/new" className="btn btn-primary btn-sm">Créer un premier devis</Link>}
+              cta={<Link to="/quotes?new=1" className="btn btn-primary btn-sm">Créer un premier devis</Link>}
             />
           ) : (
             <table>

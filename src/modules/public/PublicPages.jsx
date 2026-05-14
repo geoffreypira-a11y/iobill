@@ -9,30 +9,87 @@ export function PublicQuotePage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showAccept, setShowAccept] = useState(false);
+  const [showRefuse, setShowRefuse] = useState(false);
+  const [signerName, setSignerName] = useState("");
+  const [refusalReason, setRefusalReason] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionResult, setActionResult] = useState(null); // "accepted" | "refused"
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch(`/api/public-fetch?token=${encodeURIComponent(token)}`);
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          setError(j.error || "Lien invalide ou expiré");
-          setLoading(false);
-          return;
-        }
-        const j = await r.json();
-        if (j.scope !== "quote") {
-          setError("Ce lien n'est pas un devis.");
-          setLoading(false);
-          return;
-        }
-        setData(j);
-      } catch (e) {
-        setError("Erreur réseau");
+  async function reload() {
+    try {
+      const r = await fetch(`/api/public-fetch?token=${encodeURIComponent(token)}`);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setError(j.error || "Lien invalide ou expiré");
+        setLoading(false);
+        return;
       }
-      setLoading(false);
-    })();
-  }, [token]);
+      const j = await r.json();
+      if (j.scope !== "quote") {
+        setError("Ce lien n'est pas un devis.");
+        setLoading(false);
+        return;
+      }
+      setData(j);
+    } catch (e) {
+      setError("Erreur réseau");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { reload(); }, [token]);
+
+  async function handleAccept() {
+    if (!signerName.trim()) {
+      alert("Veuillez indiquer votre nom complet pour accepter ce devis.");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const r = await fetch("/api/public-fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, action: "accept_quote", signer_name: signerName.trim() })
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        alert(j.error || "Erreur lors de l'acceptation");
+        setActionLoading(false);
+        return;
+      }
+      setShowAccept(false);
+      setActionResult("accepted");
+      // Reload pour afficher le nouveau statut
+      await reload();
+    } catch (e) {
+      alert("Erreur réseau");
+    }
+    setActionLoading(false);
+  }
+
+  async function handleRefuse() {
+    setActionLoading(true);
+    try {
+      const r = await fetch("/api/public-fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, action: "refuse_quote", refusal_reason: refusalReason.trim() })
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        alert(j.error || "Erreur lors du refus");
+        setActionLoading(false);
+        return;
+      }
+      setShowRefuse(false);
+      setActionResult("refused");
+      await reload();
+    } catch (e) {
+      alert("Erreur réseau");
+    }
+    setActionLoading(false);
+  }
 
   if (loading) return <PublicShell><div style={{ padding: 60, textAlign: "center", color: "var(--muted)" }}>Chargement...</div></PublicShell>;
   if (error) return <PublicShell><ErrorCard message={error} /></PublicShell>;
@@ -40,6 +97,7 @@ export function PublicQuotePage() {
   const { company, document: q, lines } = data;
   const cs = q.client_snapshot || {};
   const co = q.company_snapshot || company;
+  const canSign = ["sent", "draft"].includes(q.status) && !isQuoteExpiredPub(q);
 
   return (
     <PublicShell>
@@ -126,18 +184,135 @@ export function PublicQuotePage() {
         )}
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
           {q.pdf_url && (
             <a href={q.pdf_url} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
               📄 Télécharger en PDF
             </a>
           )}
-          {q.status === "sent" && q.signature_provider && (
-            <div style={{ background: "var(--card2)", padding: "12px 18px", borderRadius: 8, fontSize: 13, color: "var(--muted2)", textAlign: "center" }}>
-              Vous avez reçu un email avec le lien de signature {q.signature_provider === "yousign" ? "Yousign" : ""}.
+          {canSign && !actionResult && (
+            <>
+              <button
+                className="btn btn-primary"
+                onClick={() => setShowAccept(true)}
+                style={{ fontSize: 14, padding: "12px 24px" }}
+              >
+                ✓ Accepter ce devis
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowRefuse(true)}
+                style={{ color: "var(--red)", borderColor: "rgba(229,92,92,0.3)" }}
+              >
+                ✗ Refuser
+              </button>
+            </>
+          )}
+          {q.status === "signed" && (
+            <div style={{
+              background: "rgba(62,207,122,0.1)",
+              border: "1px solid rgba(62,207,122,0.3)",
+              padding: "14px 22px",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "var(--green)",
+              textAlign: "center"
+            }}>
+              ✓ Devis accepté{q.signed_by_name ? ` par ${q.signed_by_name}` : ""}{q.signed_at ? ` le ${fmtDateLong(q.signed_at)}` : ""}
+            </div>
+          )}
+          {q.status === "refused" && (
+            <div style={{
+              background: "rgba(229,92,92,0.1)",
+              border: "1px solid rgba(229,92,92,0.3)",
+              padding: "14px 22px",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "var(--red)",
+              textAlign: "center"
+            }}>
+              ✗ Devis refusé{q.refusal_reason ? ` · ${q.refusal_reason}` : ""}
             </div>
           )}
         </div>
+
+        {/* Popup acceptation */}
+        {showAccept && (
+          <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && !actionLoading && setShowAccept(false)}>
+            <div className="modal modal-sm">
+              <div className="modal-hd">
+                <span className="modal-title">Accepter le devis</span>
+                <button className="close-btn" onClick={() => setShowAccept(false)} disabled={actionLoading}>×</button>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 16, color: "var(--text)" }}>
+                  En acceptant ce devis, vous donnez votre accord pour l'engagement des prestations décrites
+                  au prix de <strong>{fmtEUR(q.total_ttc_cents)} TTC</strong>.
+                </p>
+                <div className="form-row">
+                  <label className="form-label">Votre nom complet *</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={signerName}
+                    onChange={(e) => setSignerName(e.target.value)}
+                    placeholder="Ex : Jean Dupont"
+                    autoFocus
+                    disabled={actionLoading}
+                  />
+                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
+                    Cette acceptation vaut accord de devis. Pour une signature électronique certifiée
+                    (avec valeur légale renforcée), demandez à votre prestataire d'activer Yousign.
+                  </div>
+                </div>
+              </div>
+              <div className="modal-foot">
+                <button className="btn btn-ghost" onClick={() => setShowAccept(false)} disabled={actionLoading}>
+                  Annuler
+                </button>
+                <button className="btn btn-primary" onClick={handleAccept} disabled={actionLoading || !signerName.trim()}>
+                  {actionLoading ? "⏳ En cours..." : "✓ Confirmer l'acceptation"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Popup refus */}
+        {showRefuse && (
+          <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && !actionLoading && setShowRefuse(false)}>
+            <div className="modal modal-sm">
+              <div className="modal-hd">
+                <span className="modal-title">Refuser ce devis</span>
+                <button className="close-btn" onClick={() => setShowRefuse(false)} disabled={actionLoading}>×</button>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 16, color: "var(--text)" }}>
+                  Vous pouvez optionnellement indiquer la raison du refus pour informer votre prestataire.
+                </p>
+                <div className="form-row">
+                  <label className="form-label">Raison (optionnel)</label>
+                  <textarea
+                    className="form-input"
+                    rows={3}
+                    value={refusalReason}
+                    onChange={(e) => setRefusalReason(e.target.value)}
+                    placeholder="Ex : prix trop élevé, projet reporté, etc."
+                    disabled={actionLoading}
+                  />
+                </div>
+              </div>
+              <div className="modal-foot">
+                <button className="btn btn-ghost" onClick={() => setShowRefuse(false)} disabled={actionLoading}>
+                  Annuler
+                </button>
+                <button className="btn btn-danger" onClick={handleRefuse} disabled={actionLoading}>
+                  {actionLoading ? "⏳ En cours..." : "Confirmer le refus"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div style={{ marginTop: 50, textAlign: "center", fontSize: 10, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase" }}>
           Document généré par IO BILL · Owl's Industry
@@ -566,4 +741,10 @@ function IssuerAvatar({ co }) {
       {initials || "?"}
     </div>
   );
+}
+
+// Helper local : verifie si un devis est expire (sans dependance externe)
+function isQuoteExpiredPub(q) {
+  if (!q || !q.expires_at) return false;
+  return new Date(q.expires_at) < new Date();
 }

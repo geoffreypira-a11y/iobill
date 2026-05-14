@@ -16,9 +16,7 @@ import { ClientFichePage } from "./modules/clients/ClientFichePage.jsx";
 
 // Devis & Factures
 import { QuotesListPage } from "./modules/invoicing/QuotesListPage.jsx";
-import { QuoteEditorPage } from "./modules/invoicing/QuoteEditorPage.jsx";
 import { InvoicesListPage } from "./modules/invoicing/InvoicesListPage.jsx";
-import { InvoiceEditorPage } from "./modules/invoicing/InvoiceEditorPage.jsx";
 import { CreditNotesListPage } from "./modules/invoicing/CreditNotesListPage.jsx";
 import { CreditNoteEditorPage } from "./modules/invoicing/CreditNoteEditorPage.jsx";
 
@@ -166,13 +164,9 @@ export default function App() {
 
         {/* Devis */}
         <Route path="quotes" element={<QuotesListPage token={session.token} company={company} />} />
-        <Route path="quotes/new" element={<QuoteEditorPage token={session.token} company={company} isNew />} />
-        <Route path="quotes/:id" element={<QuoteEditorPage token={session.token} company={company} />} />
 
         {/* Factures */}
         <Route path="invoices" element={<InvoicesListPage token={session.token} company={company} />} />
-        <Route path="invoices/new" element={<InvoiceEditorPage token={session.token} company={company} isNew />} />
-        <Route path="invoices/:id" element={<InvoiceEditorPage token={session.token} company={company} />} />
 
         {/* Avoirs */}
         <Route path="credit-notes" element={<CreditNotesListPage token={session.token} company={company} />} />
