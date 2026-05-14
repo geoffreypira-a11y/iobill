@@ -44,17 +44,19 @@ export function PublicQuotePage() {
   return (
     <PublicShell>
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "40px 20px" }}>
-        {/* Header */}
+        {/* Header : ÉMETTEUR mis en avant, pas IO BILL */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <LogoMark size={48} />
+            <IssuerAvatar co={co} />
             <div>
-              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: 2, color: "var(--gold)" }}>
-                IO<span style={{ color: "var(--text)" }}>BILL</span>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 20, fontWeight: 700, color: "var(--text)" }}>
+                {co.legal_name || "Émetteur"}
               </div>
-              <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase" }}>
-                Owl's Industry
-              </div>
+              {co.siret && (
+                <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.5 }}>
+                  SIRET {co.siret}
+                </div>
+              )}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -185,12 +187,16 @@ export function PublicInvoicePage() {
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "40px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <LogoMark size={48} />
+            <IssuerAvatar co={co} />
             <div>
-              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: 2, color: "var(--gold)" }}>
-                IO<span style={{ color: "var(--text)" }}>BILL</span>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 20, fontWeight: 700, color: "var(--text)" }}>
+                {co.legal_name || "Émetteur"}
               </div>
-              <div style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase" }}>Owl's Industry</div>
+              {co.siret && (
+                <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 0.5 }}>
+                  SIRET {co.siret}
+                </div>
+              )}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -525,4 +531,39 @@ function QuoteStatusBadge({ status }) {
     refused: ["badge-red", "Refusé"], expired: ["badge-muted", "Expiré"], converted: ["badge-green", "Converti"]
   }[status] || ["badge-muted", status];
   return <span className={"badge " + m[0]}>{m[1]}</span>;
+}
+
+// Avatar de l'émetteur : logo si dispo, sinon initiales dans cercle gold
+function IssuerAvatar({ co }) {
+  const logoUrl = co?.logo_url;
+  if (logoUrl) {
+    return (
+      <img
+        src={logoUrl}
+        alt={co.legal_name || "Logo"}
+        style={{
+          width: 56, height: 56, borderRadius: 8,
+          objectFit: "contain", background: "var(--card2)", padding: 4
+        }}
+      />
+    );
+  }
+  const name = co?.legal_name || "?";
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() || "")
+    .join("");
+  return (
+    <div style={{
+      width: 56, height: 56, borderRadius: 8,
+      background: "var(--gold)",
+      color: "#0b0c10",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, letterSpacing: 1
+    }}>
+      {initials || "?"}
+    </div>
+  );
 }
