@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     custom_message,
     custom_subject,
     override_recipient,
-    public_token: providedToken  // optionnel: si le frontend a deja un token, on l'utilise
+    public_token: providedToken  // optionnel: si le frontend a deja un token
   } = body || {};
 
   if (!document_type || !document_id) {
@@ -118,11 +118,31 @@ export default async function handler(req, res) {
 
   // 4) Lien public pour signature/consultation
   let publicUrl = null;
-  let publicToken = providedToken || doc.public_token || null;
+  let publicToken = providedToken || null;
 
-  // Si pas de token public, on en cree un
   if (!publicToken && (document_type === "quote" || document_type === "invoice")) {
+    // a) Chercher un token existant
     try {
+      const existing = await sbAdmin.select("public_tokens", {
+        filter: `scope=eq.${document_type}&resource_id=eq.${document_id}`,
+        order: "created_at.desc",
+        limit: 1,
+        select: "token,expires_at,revoked_at"
+      });
+      if (existing && existing[0]) {
+        const t = existing[0];
+        const notExpired = !t.expires_at || new Date(t.expires_at) > new Date();
+        const notRevoked = !t.revoked_at;
+        if (notExpired && notRevoked) {
+          publicToken = t.token;
+        }
+      }
+    } catch (e) {
+      console.error("[send-document] Token lookup error:", e?.message);
+    }
+
+    // b) Si toujours pas de token, en creer un (sans try-catch pour voir l'erreur)
+    if (!publicToken) {
       const newToken = generateUrlSafeToken(32);
       const expiresAt = new Date(Date.now() + 90 * 86400000).toISOString();
       const insertResult = await sbAdmin.insert("public_tokens", {
@@ -133,11 +153,25 @@ export default async function handler(req, res) {
         expires_at: expiresAt,
         max_uses: null
       });
-      if (insertResult && insertResult[0]) {
+      // insertResult est un array, ou null si erreur HTTP
+      if (insertResult && Array.isArray(insertResult) && insertResult.length > 0) {
         publicToken = newToken;
+      } else if (insertResult && insertResult.token) {
+        // Cas où retour direct sans array
+        publicToken = insertResult.token;
+      } else {
+        // Insert a échoué → on garde le token quand même (probable cas: création OK mais réponse vide)
+        // On vérifie via SELECT
+        const check = await sbAdmin.select("public_tokens", {
+          filter: `token=eq.${newToken}`,
+          limit: 1
+        });
+        if (check && check[0]) {
+          publicToken = newToken;
+        } else {
+          console.error("[send-document] Token creation failed, no record found");
+        }
       }
-    } catch (e) {
-      console.warn("[send-document] Token creation failed:", e?.message);
     }
   }
 
@@ -245,26 +279,22 @@ export default async function handler(req, res) {
   const resendData = await resendRes.json();
 
   // 8) Marquer le document comme envoye
+  // Note : public_token n'est PAS stocke sur quote/invoice, il est dans la table public_tokens
   if (document_type === "quote" && ["draft"].includes(doc.status)) {
     await sbAdmin.update("quotes", `id=eq.${doc.id}`, {
       status: "sent",
-      sent_at: new Date().toISOString(),
-      public_token: publicToken
+      sent_at: new Date().toISOString()
     });
   } else if (document_type === "invoice" && doc.status === "issued") {
     await sbAdmin.update("invoices", `id=eq.${doc.id}`, {
       status: "sent",
-      sent_at: new Date().toISOString(),
-      public_token: publicToken
+      sent_at: new Date().toISOString()
     });
   } else if (document_type === "reminder") {
     await sbAdmin.update("invoices", `id=eq.${doc.id}`, {
       last_reminder_sent_at: new Date().toISOString(),
       reminder_count: (doc.reminder_count || 0) + 1
     });
-  } else if (publicToken && !doc.public_token) {
-    // Cas : doc deja envoye, on memorise juste le token
-    await sbAdmin.update(table, `id=eq.${doc.id}`, { public_token: publicToken });
   }
 
   return json(res, 200, {
