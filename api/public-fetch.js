@@ -43,7 +43,7 @@ export default async function handler(req, res) {
       status: "signed",
       signed_at: new Date().toISOString(),
       signed_by_name: signerName,
-      signed_by_ip: ip,
+      signed_ip: ip,
       signature_provider: "simple"
     });
     return json(res, 200, { ok: true, accepted: true });
@@ -73,6 +73,11 @@ export default async function handler(req, res) {
     `id=eq.${company_id}`,
     "id,legal_name,trade_name,email,phone,siret,vat_number,address_line1,address_line2,postal_code,city,country,logo_url,brand_color,modules"
   );
+
+  // Generer une URL signee 1h pour le logo (le frontend public n'a pas d'auth)
+  if (company && company.logo_url) {
+    company.logo_signed_url = await getSignedLogoUrl(company.logo_url, 3600);
+  }
 
   if (scope === "quote") {
     const [quote, lines] = await Promise.all([
@@ -132,4 +137,28 @@ export default async function handler(req, res) {
 
 function safeParse(s) {
   try { return JSON.parse(s); } catch { return null; }
+}
+
+// Genere une URL signee pour le logo dans le bucket company-logos
+async function getSignedLogoUrl(path, expiresIn = 3600) {
+  if (!path) return null;
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  try {
+    const r = await fetch(`${url}/storage/v1/object/sign/company-logos/${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ expiresIn })
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.signedURL ? `${url}/storage/v1${j.signedURL}` : null;
+  } catch (e) {
+    return null;
+  }
 }
