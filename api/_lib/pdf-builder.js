@@ -43,106 +43,189 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
 
   let y = height - 50;
 
-  // ─── En-tete : LOGO ou NOM EN GRAND (pattern IOcar) ───
+  // ═══════════════════════════════════════════════════════════
+  // BANDEAU GOLD HORIZONTAL EN HAUT (pattern IOcar print-doc-bar)
+  // ═══════════════════════════════════════════════════════════
+  page.drawRectangle({
+    x: 40, y: height - 12, width: width - 80, height: 4,
+    color: COLORS.gold
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // HEADER (.pdoc-head) : LOGO/NOM gauche + TYPE/REF/CLIENT droite
+  // ═══════════════════════════════════════════════════════════
   const co0 = doc.company_snapshot || company || {};
+  const cs0 = doc.client_snapshot || {};
   const issuerName = co0.legal_name || "Émetteur";
 
-  // 1) Essayer d'embarquer le logo s'il est defini
+  // ─── PARTIE GAUCHE : Logo (si dispo) ou nom en grand ───
+  let leftBlockY = y;
+  let leftBlockBottom = y;
+
+  // 1) Tenter d'embarquer le logo
   let logoEmbedded = false;
   if (company?.logo_url) {
     try {
       const logoBytes = await fetchLogoBytes(company.logo_url);
       if (logoBytes) {
-        // Detection du format depuis les premiers bytes
         const isPng = logoBytes[0] === 0x89 && logoBytes[1] === 0x50;
         const isJpg = logoBytes[0] === 0xff && logoBytes[1] === 0xd8;
         let embedded = null;
-        if (isPng) {
-          embedded = await pdfDoc.embedPng(logoBytes);
-        } else if (isJpg) {
-          embedded = await pdfDoc.embedJpg(logoBytes);
-        }
+        if (isPng) embedded = await pdfDoc.embedPng(logoBytes);
+        else if (isJpg) embedded = await pdfDoc.embedJpg(logoBytes);
         if (embedded) {
-          // Calcul de la taille en gardant les proportions (max 160x60)
-          const maxW = 160, maxH = 60;
+          // Logo max 200x60 (pattern IOcar)
+          const maxW = 200, maxH = 60;
           const ratio = Math.min(maxW / embedded.width, maxH / embedded.height);
           const drawW = embedded.width * ratio;
           const drawH = embedded.height * ratio;
           page.drawImage(embedded, {
             x: 40,
-            y: y - drawH + 16,
+            y: y - drawH,
             width: drawW,
             height: drawH
           });
+          leftBlockBottom = y - drawH - 8;
           logoEmbedded = true;
         }
       }
     } catch (e) {
-      console.warn("[pdf-builder] Logo embed failed, fallback to text:", e?.message);
+      console.warn("[pdf-builder] Logo embed failed:", e?.message);
     }
   }
 
-  // 2) Fallback si pas de logo : nom de l'emetteur en grand (pattern IOcar pdoc-logo)
+  // 2) Fallback : nom en GRAND (pattern .pdoc-logo = 26px bold letter-spacing:3px)
   if (!logoEmbedded) {
-    // Tronque si trop long
-    const displayName = issuerName.length > 28 ? issuerName.slice(0, 26) + "…" : issuerName;
+    const displayName = issuerName.length > 24 ? issuerName.slice(0, 22) + "…" : issuerName;
     page.drawText(displayName.toUpperCase(), {
-      x: 40, y: y + 6, size: 20, font: fontBold, color: COLORS.dark
+      x: 40, y: y - 18, size: 22, font: fontBold, color: COLORS.dark
     });
-    if (co0.siret) {
-      page.drawText(`SIRET ${co0.siret}`, { x: 40, y: y - 10, size: 8, font, color: COLORS.grey });
-    }
+    leftBlockBottom = y - 30;
   }
 
-  // À droite : numéro et type de document
-  page.drawText(L.title, { x: width - 180, y: y + 12, size: 22, font: fontBold, color: COLORS.dark });
-  page.drawText(doc.number, { x: width - 180, y: y - 10, size: 13, font, color: COLORS.gold });
-  page.drawText(`${L.verb} le ${formatDateFR(doc.issue_date)}`, { x: width - 180, y: y - 26, size: 9, font, color: COLORS.grey });
+  // ─── Coordonnees emetteur sous logo/nom (petit gris) ───
+  // (pattern IOcar : adresse, tel, email, SIRET, TVA en 10pt gris)
+  let yLeft = leftBlockBottom - 4;
+  if (co0.address_line1) {
+    page.drawText(co0.address_line1.slice(0, 60), { x: 40, y: yLeft, size: 9, font, color: COLORS.grey });
+    yLeft -= 11;
+  }
+  if (co0.address_line2) {
+    page.drawText(co0.address_line2.slice(0, 60), { x: 40, y: yLeft, size: 9, font, color: COLORS.grey });
+    yLeft -= 11;
+  }
+  if (co0.postal_code || co0.city) {
+    page.drawText(`${co0.postal_code || ""} ${co0.city || ""}`.trim().slice(0, 60), { x: 40, y: yLeft, size: 9, font, color: COLORS.grey });
+    yLeft -= 11;
+  }
+  // Ligne contact : Tel + Email
+  const contactParts = [];
+  if (co0.phone) contactParts.push(`Tél : ${co0.phone}`);
+  if (co0.email) contactParts.push(co0.email);
+  if (contactParts.length > 0) {
+    page.drawText(contactParts.join(" · ").slice(0, 70), { x: 40, y: yLeft, size: 9, font, color: COLORS.grey });
+    yLeft -= 11;
+  }
+  // Ligne legale : SIRET + TVA
+  const legalParts = [];
+  if (co0.siret) legalParts.push(`SIRET : ${co0.siret}`);
+  if (co0.vat_number) legalParts.push(`TVA : ${co0.vat_number}`);
+  if (legalParts.length > 0) {
+    page.drawText(legalParts.join(" · ").slice(0, 70), { x: 40, y: yLeft, size: 9, font, color: COLORS.grey });
+    yLeft -= 11;
+  }
 
+  // ─── PARTIE DROITE : Type document + Ref + CLIENT ───
+  // Type document en GROS GOLD (pattern .pdoc-type)
+  const typeWidth = fontBold.widthOfTextAtSize(L.title, 20);
+  page.drawText(L.title, { x: width - 40 - typeWidth, y: y - 4, size: 20, font: fontBold, color: COLORS.gold });
+
+  // Numéro
+  const refText = `N° ${doc.number}`;
+  const refWidth = font.widthOfTextAtSize(refText, 11);
+  page.drawText(refText, { x: width - 40 - refWidth, y: y - 22, size: 11, font: fontBold, color: COLORS.dark });
+
+  // Date
+  const dateText = `Date : ${formatDateFR(doc.issue_date)}`;
+  const dateWidth = font.widthOfTextAtSize(dateText, 9);
+  page.drawText(dateText, { x: width - 40 - dateWidth, y: y - 38, size: 9, font, color: COLORS.grey });
+
+  // Date supplémentaire selon type
+  let extraDateY = y - 50;
   if (docType === "quote" && doc.expires_at) {
-    page.drawText(`Valable jusqu'au ${formatDateFR(doc.expires_at)}`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
+    const txt = `Valable jusqu'au : ${formatDateFR(doc.expires_at)}`;
+    const w = font.widthOfTextAtSize(txt, 9);
+    page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font, color: COLORS.grey });
+    extraDateY -= 12;
   }
   if (docType === "invoice" && doc.due_date) {
-    page.drawText(`Échéance ${formatDateFR(doc.due_date)}`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
+    const txt = `Échéance : ${formatDateFR(doc.due_date)}`;
+    const w = font.widthOfTextAtSize(txt, 9);
+    page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font, color: COLORS.grey });
+    extraDateY -= 12;
   }
-  if (docType === "credit_note" && doc.invoice_id) {
-    page.drawText(`Réf. facture (id court)`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
+
+  // ─── BLOC CLIENT à droite, sous une ligne grise (pattern IOcar) ───
+  let clientBlockTop = extraDateY - 10;
+  // Ligne separatrice grise
+  page.drawLine({
+    start: { x: width - 240, y: clientBlockTop + 2 },
+    end: { x: width - 40, y: clientBlockTop + 2 },
+    thickness: 0.5,
+    color: COLORS.lineGrey
+  });
+  clientBlockTop -= 10;
+
+  // Label "CLIENT" en petit gris majuscule (pattern .pdoc-plabel)
+  const clientLabel = "CLIENT";
+  const clientLabelWidth = fontBold.widthOfTextAtSize(clientLabel, 8);
+  page.drawText(clientLabel, {
+    x: width - 40 - clientLabelWidth, y: clientBlockTop,
+    size: 8, font: fontBold, color: COLORS.grey
+  });
+  clientBlockTop -= 14;
+
+  // Nom client en gras (pattern .pdoc-pname)
+  const clientName = cs0.legal_name || `${cs0.first_name || ""} ${cs0.last_name || ""}`.trim() || "Client";
+  const clientNameDisplay = clientName.length > 32 ? clientName.slice(0, 30) + "…" : clientName;
+  const clientNameWidth = fontBold.widthOfTextAtSize(clientNameDisplay, 12);
+  page.drawText(clientNameDisplay, {
+    x: width - 40 - clientNameWidth, y: clientBlockTop,
+    size: 12, font: fontBold, color: COLORS.dark
+  });
+  clientBlockTop -= 14;
+
+  // Infos client (pattern .pdoc-pinfo) en petit gris
+  function drawRightLine(text, yy, size = 9, color = COLORS.grey) {
+    if (!text) return yy;
+    const trimmed = String(text).slice(0, 50);
+    const w = font.widthOfTextAtSize(trimmed, size);
+    page.drawText(trimmed, { x: width - 40 - w, y: yy, size, font, color });
+    return yy - 11;
   }
+  if (cs0.contact_person) clientBlockTop = drawRightLine(cs0.contact_person, clientBlockTop);
+  if (cs0.address_line1) clientBlockTop = drawRightLine(cs0.address_line1, clientBlockTop);
+  if (cs0.address_line2) clientBlockTop = drawRightLine(cs0.address_line2, clientBlockTop);
+  if (cs0.postal_code || cs0.city) clientBlockTop = drawRightLine(`${cs0.postal_code || ""} ${cs0.city || ""}`.trim(), clientBlockTop);
+  if (cs0.country) clientBlockTop = drawRightLine(cs0.country, clientBlockTop);
+  if (cs0.email) clientBlockTop = drawRightLine(cs0.email, clientBlockTop);
+  if (cs0.phone) clientBlockTop = drawRightLine(cs0.phone, clientBlockTop);
 
-  y -= 90;
+  // y = en dessous du bloc le plus bas (entre coordonnees emetteur et client) + divider
+  y = Math.min(yLeft, clientBlockTop) - 14;
 
-  // ─── Bloc emetteur ───
-  const cs = doc.client_snapshot || {};
-  const co = doc.company_snapshot || company;
+  // ─── Divider horizontal (pattern .pdoc-divider) ───
+  page.drawLine({
+    start: { x: 40, y: y + 4 },
+    end: { x: width - 40, y: y + 4 },
+    thickness: 0.5,
+    color: COLORS.lineGrey
+  });
+  y -= 14;
 
-  page.drawText("ÉMETTEUR", { x: 40, y, size: 8, font: fontBold, color: COLORS.grey });
-  let yy = y - 14;
-  page.drawText(co.legal_name || "", { x: 40, y: yy, size: 11, font: fontBold, color: COLORS.dark });
-  yy -= 14;
-  if (co.address_line1) { page.drawText(co.address_line1, { x: 40, y: yy, size: 9, font, color: COLORS.dark }); yy -= 12; }
-  if (co.address_line2) { page.drawText(co.address_line2, { x: 40, y: yy, size: 9, font, color: COLORS.dark }); yy -= 12; }
-  if (co.postal_code || co.city) { page.drawText(`${co.postal_code || ""} ${co.city || ""}`, { x: 40, y: yy, size: 9, font, color: COLORS.dark }); yy -= 12; }
-  if (co.country) { page.drawText(co.country, { x: 40, y: yy, size: 9, font, color: COLORS.dark }); yy -= 12; }
-  if (co.email) { page.drawText(co.email, { x: 40, y: yy, size: 9, font, color: COLORS.grey }); yy -= 12; }
-  if (co.siret) { page.drawText(`SIRET ${co.siret}`, { x: 40, y: yy, size: 8, font, color: COLORS.grey }); yy -= 11; }
-  if (co.vat_number) { page.drawText(`TVA ${co.vat_number}`, { x: 40, y: yy, size: 8, font, color: COLORS.grey }); yy -= 11; }
-
-  // ─── Bloc destinataire (cote droit) ───
-  let yc = height - 140;
-  page.drawText("DESTINATAIRE", { x: 320, y: yc, size: 8, font: fontBold, color: COLORS.grey });
-  yc -= 14;
-  const clientName = cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client";
-  page.drawText(clientName, { x: 320, y: yc, size: 11, font: fontBold, color: COLORS.dark });
-  yc -= 14;
-  if (cs.contact_person) { page.drawText(cs.contact_person, { x: 320, y: yc, size: 9, font, color: COLORS.dark }); yc -= 12; }
-  if (cs.address_line1) { page.drawText(cs.address_line1, { x: 320, y: yc, size: 9, font, color: COLORS.dark }); yc -= 12; }
-  if (cs.address_line2) { page.drawText(cs.address_line2, { x: 320, y: yc, size: 9, font, color: COLORS.dark }); yc -= 12; }
-  if (cs.postal_code || cs.city) { page.drawText(`${cs.postal_code || ""} ${cs.city || ""}`, { x: 320, y: yc, size: 9, font, color: COLORS.dark }); yc -= 12; }
-  if (cs.country) { page.drawText(cs.country, { x: 320, y: yc, size: 9, font, color: COLORS.dark }); yc -= 12; }
-  if (cs.siret) { page.drawText(`SIRET ${cs.siret}`, { x: 320, y: yc, size: 8, font, color: COLORS.grey }); yc -= 11; }
-  if (cs.vat_number) { page.drawText(`TVA ${cs.vat_number}`, { x: 320, y: yc, size: 8, font, color: COLORS.grey }); yc -= 11; }
-
-  y = Math.min(yy, yc) - 18;
+  // alias pour compatibilite avec code suivant
+  const cs = cs0;
+  const co = co0;
 
   // ─── Tableau des lignes ───
   page.drawRectangle({ x: 40, y: y - 4, width: width - 80, height: 18, color: rgb(0.96, 0.95, 0.92) });
