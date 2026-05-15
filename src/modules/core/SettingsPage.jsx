@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtDate, isSiret, formatSiret, isEmail } from "../../lib/helpers.js";
@@ -250,27 +250,157 @@ function ModulesTab({ token, company, setCompany }) {
 
 /* ─── Branding ────────────────────────────────────────── */
 function BrandingTab({ token, company, setCompany }) {
-  const [data, setData] = useState({ logo_url: company.logo_url || "", brand_color: company.brand_color || "#d4a843" });
+  const [data, setData] = useState({
+    logo_url: company.logo_url || "",
+    brand_color: company.brand_color || "#d4a843"
+  });
+  const [logoPreview, setLogoPreview] = useState(null);  // URL signée pour la preview
+  const [logoLoading, setLogoLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
 
-  async function uploadLogo(file) {
-    if (!file) return;
-    const path = `${company.id}/logo-${Date.now()}-${file.name}`;
-    const uploaded = await sb.uploadFile(token, "company-assets", path, file);
-    if (uploaded) {
-      setData((d) => ({ ...d, logo_url: path }));
-      setMsg("✓ Logo téléchargé. N'oubliez pas d'enregistrer.");
-    }
+  // Au montage : charger une URL signée du logo existant pour preview
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!data.logo_url) { setLogoPreview(null); return; }
+      const url = await sb.getSignedUrl(token, "company-logos", data.logo_url, 3600);
+      if (alive) setLogoPreview(url);
+    })();
+    return () => { alive = false; };
+  }, [data.logo_url, token]);
+
+  // Compresse une image data-URL : redimensionne à max 800px et ré-encode en PNG
+  function compressLogo(dataUrl, maxWidth = 800) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.naturalWidth);
+        const w = Math.round(img.naturalWidth * scale);
+        const h = Math.round(img.naturalHeight * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, w, h);
+        // PNG sinon JPEG selon le poids
+        const png = canvas.toDataURL("image/png");
+        // Si PNG > 200 Ko et > 500 Ko original, JPEG quality 92
+        if (png.length > 200_000 * 1.37) {
+          resolve(canvas.toDataURL("image/jpeg", 0.92));
+        } else {
+          resolve(png);
+        }
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
   }
 
-  async function save() {
+  async function handleFile(e) {
+    setErr("");
+    setMsg("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Limite taille brute (avant compression)
+    if (file.size > 5_000_000) {
+      setErr("Fichier trop volumineux (max 5 Mo). Réduisez votre image et réessayez.");
+      return;
+    }
+    if (!/^image\//.test(file.type)) {
+      setErr("Format non supporté. Utilisez PNG, JPEG, WebP ou SVG.");
+      return;
+    }
+
+    setLogoLoading(true);
+
+    // 1. Lire le fichier en DataURL
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        // 2. Compresser à 800px max
+        let finalDataUrl = ev.target.result;
+        try {
+          finalDataUrl = await compressLogo(ev.target.result, 800);
+        } catch (e) {
+          console.warn("[BrandingTab] Compression échouée, on garde l'original", e);
+        }
+
+        // 3. Convertir en Blob/File pour upload
+        const m = finalDataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+        if (!m) throw new Error("Format invalide après compression");
+        const mime = m[1];
+        const b64 = m[2];
+        const ext = mime.split("/")[1].replace("+xml", "").replace("jpeg", "jpg");
+        const byteChars = atob(b64);
+        const bytes = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+        const compressedFile = new File([bytes], `logo.${ext}`, { type: mime });
+
+        // 4. Upload vers Supabase Storage (bucket privé "company-logos")
+        const path = `${company.id}/logo.${ext}`;
+        const uploaded = await sb.uploadFile(token, "company-logos", path, compressedFile);
+        if (!uploaded) throw new Error("Échec d'upload (vérifiez les permissions du bucket)");
+
+        // 5. Stocker le path et générer une URL signée pour la preview immédiate
+        setData((d) => ({ ...d, logo_url: path }));
+        const signed = await sb.getSignedUrl(token, "company-logos", path, 3600);
+        setLogoPreview(signed || finalDataUrl);  // fallback dataURL si signed échoue
+
+        // 6. Sauvegarde immédiate en base (pas besoin de cliquer "Enregistrer")
+        const updated = await sb.update(token, "companies", `id=eq.${company.id}`, { logo_url: path });
+        if (updated && updated[0]) {
+          setCompany(updated[0]);
+          setMsg("✓ Logo enregistré et appliqué.");
+          setTimeout(() => setMsg(""), 3500);
+        }
+      } catch (e) {
+        setErr(e.message || "Erreur lors de l'upload");
+      }
+      setLogoLoading(false);
+    };
+    reader.onerror = () => {
+      setErr("Impossible de lire le fichier.");
+      setLogoLoading(false);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function removeLogo() {
+    if (!confirm("Retirer le logo ? Vos prochains documents s'afficheront sans logo.")) return;
+    setLogoLoading(true);
+    try {
+      // On ne supprime pas le fichier du Storage (au cas où l'utilisateur veuille restaurer)
+      // On vide juste la référence
+      setData((d) => ({ ...d, logo_url: "" }));
+      setLogoPreview(null);
+      const updated = await sb.update(token, "companies", `id=eq.${company.id}`, { logo_url: null });
+      if (updated && updated[0]) {
+        setCompany(updated[0]);
+        setMsg("✓ Logo retiré.");
+        setTimeout(() => setMsg(""), 2500);
+      }
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (e) {
+      setErr(e.message || "Erreur lors de la suppression");
+    }
+    setLogoLoading(false);
+  }
+
+  async function saveColor() {
     setSaving(true);
-    const updated = await sb.update(token, "companies", `id=eq.${company.id}`, data);
+    const updated = await sb.update(token, "companies", `id=eq.${company.id}`, {
+      brand_color: data.brand_color
+    });
     setSaving(false);
     if (updated && updated[0]) {
       setCompany(updated[0]);
-      setMsg("✓ Branding enregistré");
+      setMsg("✓ Couleur enregistrée");
       setTimeout(() => setMsg(""), 2500);
     }
   }
@@ -278,20 +408,105 @@ function BrandingTab({ token, company, setCompany }) {
   return (
     <div className="card card-pad">
       {msg && <div className="auth-success" style={{ marginBottom: 16 }}>{msg}</div>}
-      <SectionTitle>Logo</SectionTitle>
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-          Ce logo apparaîtra en haut de vos factures et devis.
+      {err && <div className="auth-error" style={{ marginBottom: 16 }}>{err}</div>}
+
+      <SectionTitle>Logo de votre activité</SectionTitle>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14, lineHeight: 1.5 }}>
+        Apparaîtra en haut de tous vos devis, factures, avoirs et sur la page publique vue par vos clients.
+        <br />
+        Formats acceptés : PNG, JPEG, WebP, SVG. Taille max : 5 Mo (compressé automatiquement à 800px).
+      </div>
+
+      {/* Preview du logo */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 18,
+        padding: 16,
+        background: "var(--card2)",
+        border: "1px solid var(--border2)",
+        borderRadius: 10,
+        marginBottom: 16
+      }}>
+        <div style={{
+          width: 120,
+          height: 120,
+          background: "var(--card)",
+          border: "1px solid var(--border2)",
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden"
+        }}>
+          {logoLoading ? (
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>⏳</div>
+          ) : logoPreview ? (
+            <img
+              src={logoPreview}
+              alt="Logo"
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+              onError={() => setLogoPreview(null)}
+            />
+          ) : (
+            <div style={{
+              fontFamily: "Syne, sans-serif",
+              fontSize: 28,
+              fontWeight: 800,
+              color: "var(--gold)"
+            }}>
+              {(company.legal_name || "?")
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((w) => (w[0] || "").toUpperCase())
+                .join("")}
+            </div>
+          )}
         </div>
-        <input type="file" accept="image/*" onChange={(e) => uploadLogo(e.target.files[0])} style={{ fontSize: 12 }} />
-        {data.logo_url && (
-          <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }} className="mono">
-            Stocké : {data.logo_url}
+
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 10, fontWeight: 600 }}>
+            {data.logo_url ? "Logo actuel" : "Aucun logo défini"}
           </div>
-        )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => fileRef.current?.click()}
+              disabled={logoLoading}
+            >
+              {data.logo_url ? "🔄 Remplacer" : "📤 Téléverser un logo"}
+            </button>
+            {data.logo_url && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={removeLogo}
+                disabled={logoLoading}
+                style={{ color: "var(--red)", borderColor: "rgba(229,92,92,0.3)" }}
+              >
+                🗑 Retirer
+              </button>
+            )}
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            onChange={handleFile}
+            style={{ display: "none" }}
+          />
+          {!data.logo_url && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 10, fontStyle: "italic" }}>
+              Sans logo, vos initiales s'afficheront dans un carré gold.
+            </div>
+          )}
+        </div>
       </div>
 
       <SectionTitle>Couleur d'accentuation</SectionTitle>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+        Couleur utilisée sur la page publique et certains accents (en complément du gold IO BILL).
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
         <input
           type="color"
@@ -305,11 +520,10 @@ function BrandingTab({ token, company, setCompany }) {
           value={data.brand_color}
           onChange={(e) => setData((d) => ({ ...d, brand_color: e.target.value }))}
         />
+        <button className="btn btn-primary btn-sm" onClick={saveColor} disabled={saving}>
+          {saving ? "..." : "Enregistrer"}
+        </button>
       </div>
-
-      <button className="btn btn-primary" onClick={save} disabled={saving}>
-        {saving ? "Enregistrement..." : "Enregistrer le branding"}
-      </button>
     </div>
   );
 }
