@@ -43,23 +43,70 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
 
   let y = height - 50;
 
-  // ─── En-tete : marque + numero ───
-  page.drawText("IO", { x: 40, y, size: 26, font: fontBold, color: COLORS.gold });
-  page.drawText("BILL", { x: 70, y, size: 26, font: fontBold, color: COLORS.dark });
-  page.drawText("OWL'S INDUSTRY", { x: 40, y: y - 14, size: 7, font, color: COLORS.grey });
+  // ─── En-tete : LOGO ou NOM EN GRAND (pattern IOcar) ───
+  const co0 = doc.company_snapshot || company || {};
+  const issuerName = co0.legal_name || "Émetteur";
 
-  page.drawText(L.title, { x: width - 180, y, size: 22, font: fontBold, color: COLORS.dark });
-  page.drawText(doc.number, { x: width - 180, y: y - 22, size: 13, font, color: COLORS.gold });
-  page.drawText(`${L.verb} le ${formatDateFR(doc.issue_date)}`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
+  // 1) Essayer d'embarquer le logo s'il est defini
+  let logoEmbedded = false;
+  if (company?.logo_url) {
+    try {
+      const logoBytes = await fetchLogoBytes(company.logo_url);
+      if (logoBytes) {
+        // Detection du format depuis les premiers bytes
+        const isPng = logoBytes[0] === 0x89 && logoBytes[1] === 0x50;
+        const isJpg = logoBytes[0] === 0xff && logoBytes[1] === 0xd8;
+        let embedded = null;
+        if (isPng) {
+          embedded = await pdfDoc.embedPng(logoBytes);
+        } else if (isJpg) {
+          embedded = await pdfDoc.embedJpg(logoBytes);
+        }
+        if (embedded) {
+          // Calcul de la taille en gardant les proportions (max 160x60)
+          const maxW = 160, maxH = 60;
+          const ratio = Math.min(maxW / embedded.width, maxH / embedded.height);
+          const drawW = embedded.width * ratio;
+          const drawH = embedded.height * ratio;
+          page.drawImage(embedded, {
+            x: 40,
+            y: y - drawH + 16,
+            width: drawW,
+            height: drawH
+          });
+          logoEmbedded = true;
+        }
+      }
+    } catch (e) {
+      console.warn("[pdf-builder] Logo embed failed, fallback to text:", e?.message);
+    }
+  }
+
+  // 2) Fallback si pas de logo : nom de l'emetteur en grand (pattern IOcar pdoc-logo)
+  if (!logoEmbedded) {
+    // Tronque si trop long
+    const displayName = issuerName.length > 28 ? issuerName.slice(0, 26) + "…" : issuerName;
+    page.drawText(displayName.toUpperCase(), {
+      x: 40, y: y + 6, size: 20, font: fontBold, color: COLORS.dark
+    });
+    if (co0.siret) {
+      page.drawText(`SIRET ${co0.siret}`, { x: 40, y: y - 10, size: 8, font, color: COLORS.grey });
+    }
+  }
+
+  // À droite : numéro et type de document
+  page.drawText(L.title, { x: width - 180, y: y + 12, size: 22, font: fontBold, color: COLORS.dark });
+  page.drawText(doc.number, { x: width - 180, y: y - 10, size: 13, font, color: COLORS.gold });
+  page.drawText(`${L.verb} le ${formatDateFR(doc.issue_date)}`, { x: width - 180, y: y - 26, size: 9, font, color: COLORS.grey });
 
   if (docType === "quote" && doc.expires_at) {
-    page.drawText(`Valable jusqu'au ${formatDateFR(doc.expires_at)}`, { x: width - 180, y: y - 50, size: 9, font, color: COLORS.grey });
+    page.drawText(`Valable jusqu'au ${formatDateFR(doc.expires_at)}`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
   }
   if (docType === "invoice" && doc.due_date) {
-    page.drawText(`Échéance ${formatDateFR(doc.due_date)}`, { x: width - 180, y: y - 50, size: 9, font, color: COLORS.grey });
+    page.drawText(`Échéance ${formatDateFR(doc.due_date)}`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
   }
   if (docType === "credit_note" && doc.invoice_id) {
-    page.drawText(`Réf. facture (id court)`, { x: width - 180, y: y - 50, size: 9, font, color: COLORS.grey });
+    page.drawText(`Réf. facture (id court)`, { x: width - 180, y: y - 38, size: 9, font, color: COLORS.grey });
   }
 
   y -= 90;
@@ -172,7 +219,7 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   }
 
   // ─── Mentions legales bas de page ───
-  let foot = 80;
+  let foot = 100;
   // Priorite : doc.vat_legal_mention (defini selon vat_category : franchise, intracom, export...)
   // Sinon fallback selon company.vat_regime
   if (doc.vat_legal_mention) {
@@ -195,7 +242,53 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     page.drawText(`Hash de chaîne : ${(doc.content_hash || "").slice(0, 32)}…`, {
       x: 40, y: foot, size: 6, font, color: COLORS.grey
     });
+    foot -= 10;
   }
+
+  // ─── Bandeau coordonnées de l'émetteur en pied de page ───
+  // Ligne séparatrice
+  page.drawLine({
+    start: { x: 40, y: 50 },
+    end: { x: width - 40, y: 50 },
+    thickness: 0.5,
+    color: COLORS.lineGrey
+  });
+
+  // Ligne 1 : nom légal · SIRET · TVA
+  const co1 = doc.company_snapshot || company || {};
+  const line1Parts = [];
+  if (co1.legal_name) line1Parts.push(co1.legal_name);
+  if (co1.siret) line1Parts.push(`SIRET ${co1.siret}`);
+  if (co1.vat_number) line1Parts.push(`TVA ${co1.vat_number}`);
+  if (line1Parts.length > 0) {
+    page.drawText(line1Parts.join(" · "), {
+      x: 40, y: 38, size: 7, font: fontBold, color: COLORS.dark
+    });
+  }
+
+  // Ligne 2 : adresse · email · téléphone
+  const line2Parts = [];
+  const addrParts = [
+    co1.address_line1,
+    co1.address_line2,
+    [co1.postal_code, co1.city].filter(Boolean).join(" "),
+    co1.country
+  ].filter(Boolean);
+  if (addrParts.length > 0) line2Parts.push(addrParts.join(", "));
+  if (co1.email) line2Parts.push(co1.email);
+  if (co1.phone) line2Parts.push(co1.phone);
+  if (line2Parts.length > 0) {
+    page.drawText(line2Parts.join(" · ").slice(0, 130), {
+      x: 40, y: 27, size: 7, font, color: COLORS.grey
+    });
+  }
+
+  // Mention discrete "via IO BILL" à droite
+  const viaText = "Document généré via IO BILL";
+  const viaWidth = font.widthOfTextAtSize(viaText, 6);
+  page.drawText(viaText, {
+    x: width - 40 - viaWidth, y: 16, size: 6, font, color: COLORS.grey
+  });
 
   return pdfDoc;
 }
@@ -268,4 +361,24 @@ export async function signedUrl(bucket, path, expiresIn = 3600) {
   if (!r.ok) return null;
   const j = await r.json();
   return j.signedURL ? `${url}/storage/v1${j.signedURL}` : null;
+}
+
+// ──────────────────────────────────────────────────────────────
+// LOGO HELPER : telecharge le logo en bytes depuis Supabase Storage
+// Le chemin stocke dans companies.logo_url est de la forme "{company_id}/logo.{ext}"
+// On genere une URL signee (service_role bypass RLS) et on telecharge l'image.
+// ──────────────────────────────────────────────────────────────
+export async function fetchLogoBytes(logoPath) {
+  if (!logoPath) return null;
+  try {
+    const url = await signedUrl("company-logos", logoPath, 60);  // 60s suffit
+    if (!url) return null;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    return new Uint8Array(buf);
+  } catch (e) {
+    console.warn("[fetchLogoBytes] error:", e?.message);
+    return null;
+  }
 }
