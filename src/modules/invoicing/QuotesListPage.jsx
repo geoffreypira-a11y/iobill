@@ -181,14 +181,17 @@ export function QuotesListPage({ token, company }) {
       const r = await fetch("/api/quote-version", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ source_quote_id: q.id })
+        body: JSON.stringify({ quote_id: q.id })
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Erreur création version");
       await refreshQuotes();
-      showToast(`Nouvelle version ${j.quote?.number || "créée"}`);
-      // Ouvre la nouvelle version pour édition
-      if (j.quote) setEditModal(j.quote);
+      showToast(`Nouvelle version ${j.new_quote_number} créée (v${j.version})`);
+      // Recharge le nouveau devis et l'ouvre pour édition
+      if (j.new_quote_id) {
+        const newQ = await sb.selectOne(token, "quotes", `id=eq.${j.new_quote_id}`);
+        if (newQ) setEditModal(newQ);
+      }
     } catch (e) {
       showToast(e.message, "error");
     }

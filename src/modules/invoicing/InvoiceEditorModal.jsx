@@ -220,15 +220,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
     }
   }
 
-  function addLine() {
-    setLines((ls) => [...ls, newEmptyLine({ vat_rate: company.vat_default_rate || 20 })]);
-  }
-  function updateLine(idx, patch) {
-    setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
-  }
-  function removeLine(idx) {
-    setLines((ls) => ls.filter((_, i) => i !== idx));
-  }
+  // ─── Lignes : géré directement par LineEditor via setLines ─────
 
   if (loading) {
     return (
@@ -407,12 +399,10 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
             </div>
             <LineEditor
               lines={lines}
-              onUpdate={updateLine}
-              onRemove={removeLine}
-              onAdd={addLine}
-              disabled={isReadonly}
+              onChange={setLines}
+              readonly={isReadonly}
               vatExempt={vatExempt}
-              currency={currency}
+              defaultVatRate={company.vat_default_rate || 20}
             />
           </div>
 
