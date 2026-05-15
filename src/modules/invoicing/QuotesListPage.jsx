@@ -27,6 +27,8 @@ export function QuotesListPage({ token, company }) {
   const [actionLoading, setActionLoading] = useState(null);
   // Notification de succès (toast simple)
   const [toast, setToast] = useState(null);
+  // Versions de devis depliees (root_quote_id du groupe ouvert)
+  const [expandedRoots, setExpandedRoots] = useState(new Set());
 
   // Auto-ouverture modale si ?new=1
   useEffect(() => {
@@ -80,6 +82,42 @@ export function QuotesListPage({ token, company }) {
   const totalPending = quotes
     .filter((q) => q.status === "sent" && !isQuoteExpired(q))
     .reduce((s, q) => s + (q.total_ttc_cents || 0), 0);
+
+  // ─── Groupement par root_quote_id (versions imbriquees facon arborescence) ─────
+  // On ne montre que la DERNIERE version de chaque arbre, et un bouton expand
+  // pour voir les versions precedentes.
+  const grouped = useMemo(() => {
+    // Construire map root_id -> [versions triees par version desc]
+    const byRoot = new Map();
+    for (const q of filtered) {
+      const rootId = q.root_quote_id || q.id;
+      if (!byRoot.has(rootId)) byRoot.set(rootId, []);
+      byRoot.get(rootId).push(q);
+    }
+    // Pour chaque groupe, trier par version desc (la plus recente en premier)
+    const result = [];
+    for (const [rootId, versions] of byRoot) {
+      versions.sort((a, b) => (b.version || 1) - (a.version || 1));
+      result.push({
+        rootId,
+        latest: versions[0],
+        versions,
+        hasMultipleVersions: versions.length > 1
+      });
+    }
+    // Trier les groupes par date de la derniere version (desc)
+    result.sort((a, b) => new Date(b.latest.issue_date) - new Date(a.latest.issue_date));
+    return result;
+  }, [filtered]);
+
+  function toggleExpand(rootId) {
+    setExpandedRoots((prev) => {
+      const next = new Set(prev);
+      if (next.has(rootId)) next.delete(rootId);
+      else next.add(rootId);
+      return next;
+    });
+  }
 
   // ─── Toast helper ─────
   function showToast(msg, type = "success") {
@@ -283,6 +321,124 @@ export function QuotesListPage({ token, company }) {
     }
   }
 
+  // ─── Rendu d'une ligne devis (utilise dans le tableau groupe) ─────
+  function renderQuoteRow(q, opts = {}) {
+    const { isLatest = true, hasMultipleVersions = false, isExpanded = false, totalVersions = 1, onToggleExpand, isChild = false } = opts;
+    const expired = isQuoteExpired(q);
+    const effectiveStatus = expired ? "expired" : q.status;
+    const badge = quoteStatusBadge(effectiveStatus);
+    const validity = q.expires_at ? daysUntil(q.expires_at) : null;
+    const canEdit = !["signed", "converted", "refused"].includes(q.status);
+    const canSend = ["draft", "sent"].includes(q.status);
+    // Conversion possible dès le brouillon (à condition de ne pas déjà être converti ou refusé)
+    const canConvert = !["converted", "refused"].includes(q.status) && !q.converted_invoice_id;
+    const canDelete = q.status === "draft";
+    const canVersion = !["converted", "refused"].includes(q.status);
+    const version = q.version || 1;
+
+    return (
+      <tr key={q.id} style={isChild ? { background: "rgba(212,168,67,0.04)" } : null}>
+        {/* Colonne expand : chevron si latest avec versions multiples, ⤷ si enfant */}
+        <td style={{ textAlign: "center", width: 30 }}>
+          {isLatest && hasMultipleVersions ? (
+            <button
+              onClick={onToggleExpand}
+              style={{
+                background: "transparent", border: "none", cursor: "pointer",
+                color: "var(--gold)", fontSize: 12, padding: 4
+              }}
+              title={isExpanded ? "Masquer les versions" : `Voir les ${totalVersions} versions`}
+            >
+              {isExpanded ? "▼" : "▶"}
+            </button>
+          ) : isChild ? (
+            <span style={{ color: "var(--muted)", fontSize: 12, paddingLeft: 12 }}>⤷</span>
+          ) : null}
+        </td>
+        <td className="mono" style={isChild ? { paddingLeft: 22, fontSize: 11, color: "var(--muted2)" } : null}>
+          {q.number || <span style={{ color: "var(--muted)" }}>—</span>}
+          {hasMultipleVersions && isLatest && (
+            <span style={{ marginLeft: 8, fontSize: 10, color: "var(--gold)", fontWeight: 600 }}>
+              v{version}{totalVersions > 1 ? ` (sur ${totalVersions})` : ""}
+            </span>
+          )}
+          {isChild && (
+            <span style={{ marginLeft: 8, fontSize: 10, color: "var(--muted)" }}>
+              v{version}
+            </span>
+          )}
+        </td>
+        <td style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>
+          {snapshotDisplayName(q.client_snapshot)}
+        </td>
+        <td style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>{fmtDate(q.issue_date)}</td>
+        <td style={{ fontSize: 12, color: q.status === "sent" && validity !== null && validity < 7 ? "var(--orange)" : "var(--muted2)" }}>
+          {q.expires_at ? (
+            validity > 0 ? `${validity} j` : validity === 0 ? "Aujourd'hui" : "Expiré"
+          ) : "—"}
+        </td>
+        <td className="mono" style={{ textAlign: "right", ...(isChild ? { fontSize: 11, color: "var(--muted2)" } : {}) }}>
+          {fmtEUR(q.total_ttc_cents)}
+        </td>
+        <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+        <td>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => previewPdf(q)}
+              disabled={actionLoading === `pdf-${q.id}`}
+              title="Aperçu PDF"
+            >📄</button>
+            {canSend && (
+              <button
+                className="btn btn-ghost btn-xs"
+                style={{ color: "var(--gold)" }}
+                onClick={() => sendQuote(q)}
+                disabled={actionLoading === `send-${q.id}`}
+                title="Envoyer par email"
+              >📧</button>
+            )}
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => shareLink(q)}
+              disabled={actionLoading === `share-${q.id}`}
+              title="Partager (lien public)"
+            >🔗</button>
+            {canVersion && (
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => createVersion(q)}
+                disabled={actionLoading === `v2-${q.id}`}
+                title={`Créer v${version + 1}`}
+              >↪️</button>
+            )}
+            {canConvert && (
+              <button
+                className="btn btn-ghost btn-xs"
+                style={{ color: "var(--green)" }}
+                onClick={() => setPendingConvert(q)}
+                disabled={actionLoading === `convert-${q.id}`}
+                title="Convertir en facture"
+              >🧾</button>
+            )}
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => setEditModal(q)}
+              title={canEdit ? "Modifier" : "Voir"}
+            >{canEdit ? "✏️" : "👁"}</button>
+            {canDelete && (
+              <button
+                className="btn btn-danger btn-xs"
+                onClick={() => setPendingDelete({ id: q.id, label: q.number || "ce devis" })}
+                title="Supprimer"
+              >🗑</button>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -347,6 +503,7 @@ export function QuotesListPage({ token, company }) {
           <table>
             <thead>
               <tr>
+                <th style={{ width: 30 }}></th>
                 <th>N°</th>
                 <th>Client</th>
                 <th>Émis le</th>
@@ -357,89 +514,36 @@ export function QuotesListPage({ token, company }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((q) => {
-                const expired = isQuoteExpired(q);
-                const effectiveStatus = expired ? "expired" : q.status;
-                const badge = quoteStatusBadge(effectiveStatus);
-                const validity = q.expires_at ? daysUntil(q.expires_at) : null;
-                const canEdit = !["signed", "converted", "refused"].includes(q.status);
-                const canSend = ["draft", "sent"].includes(q.status);
-                const canConvert = q.status === "signed" && !q.converted_invoice_id;
-                const canDelete = q.status === "draft";
+              {grouped.map((group) => {
+                const { rootId, latest, versions, hasMultipleVersions } = group;
+                const isExpanded = expandedRoots.has(rootId);
+                const rows = [];
 
-                return (
-                  <tr key={q.id}>
-                    <td className="mono">{q.number || <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                    <td>{snapshotDisplayName(q.client_snapshot)}</td>
-                    <td>{fmtDate(q.issue_date)}</td>
-                    <td style={{ fontSize: 12, color: q.status === "sent" && validity !== null && validity < 7 ? "var(--orange)" : "var(--muted2)" }}>
-                      {q.expires_at ? (
-                        validity > 0 ? `${validity} j` : validity === 0 ? "Aujourd'hui" : "Expiré"
-                      ) : "—"}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
-                    <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
-                    <td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => previewPdf(q)}
-                          disabled={actionLoading === `pdf-${q.id}`}
-                          title="Aperçu PDF"
-                        >📄</button>
-                        {canSend && (
-                          <button
-                            className="btn btn-ghost btn-xs"
-                            style={{ color: "var(--gold)" }}
-                            onClick={() => sendQuote(q)}
-                            disabled={actionLoading === `send-${q.id}`}
-                            title="Envoyer par email"
-                          >📧</button>
-                        )}
-                        <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => shareLink(q)}
-                          disabled={actionLoading === `share-${q.id}`}
-                          title="Partager (lien public)"
-                        >🔗</button>
-                        {canEdit && (
-                          <button
-                            className="btn btn-ghost btn-xs"
-                            onClick={() => createVersion(q)}
-                            disabled={actionLoading === `v2-${q.id}`}
-                            title={`Créer v${(q.version || 1) + 1}`}
-                          >↪️</button>
-                        )}
-                        {canConvert && (
-                          <button
-                            className="btn btn-ghost btn-xs"
-                            style={{ color: "var(--green)" }}
-                            onClick={() => setPendingConvert(q)}
-                            disabled={actionLoading === `convert-${q.id}`}
-                            title="Convertir en facture"
-                          >🧾</button>
-                        )}
-                        <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => setEditModal(q)}
-                          title={canEdit ? "Modifier" : "Voir"}
-                        >{canEdit ? "✏️" : "👁"}</button>
-                        {canDelete && (
-                          <button
-                            className="btn btn-danger btn-xs"
-                            onClick={() => setPendingDelete({ id: q.id, label: q.number || "ce devis" })}
-                            title="Supprimer"
-                          >🗑</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
+                // ─── Ligne principale (derniere version) ─────
+                rows.push(renderQuoteRow(latest, {
+                  isLatest: true,
+                  hasMultipleVersions,
+                  isExpanded,
+                  totalVersions: versions.length,
+                  onToggleExpand: () => toggleExpand(rootId)
+                }));
+
+                // ─── Lignes des versions precedentes (si deplie) ─────
+                if (isExpanded && hasMultipleVersions) {
+                  for (let i = 1; i < versions.length; i++) {
+                    rows.push(renderQuoteRow(versions[i], { isLatest: false, isChild: true }));
+                  }
+                }
+
+                return rows;
               })}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Fonction de rendu d'une ligne devis (definie inline pour acceder au closure) */}
+      {/* On stocke pas la fonction, on l'inline ici via renderQuoteRow definie en dessous */}
 
       {/* ─── Modale d'édition ─── */}
       {editModal && (
