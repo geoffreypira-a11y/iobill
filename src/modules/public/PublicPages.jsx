@@ -708,37 +708,35 @@ function QuoteStatusBadge({ status }) {
   return <span className={"badge " + m[0]}>{m[1]}</span>;
 }
 
-// Avatar de l'émetteur : logo si dispo, sinon initiales dans cercle gold
+// En-tete public de l'emetteur : logo signe si dispo, sinon nom en grand façon IOcar
 function IssuerAvatar({ co }) {
-  const logoUrl = co?.logo_url;
+  // logo_signed_url est fourni par l'API public-fetch (URL signee temporaire)
+  const logoUrl = co?.logo_signed_url;
   if (logoUrl) {
     return (
       <img
         src={logoUrl}
         alt={co.legal_name || "Logo"}
         style={{
-          width: 56, height: 56, borderRadius: 8,
-          objectFit: "contain", background: "var(--card2)", padding: 4
+          maxWidth: 200,
+          maxHeight: 60,
+          objectFit: "contain"
         }}
       />
     );
   }
-  const name = co?.legal_name || "?";
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() || "")
-    .join("");
+  // Sans logo : nom en grand façon IOcar (pdoc-logo)
+  const name = co?.legal_name || "Émetteur";
   return (
     <div style={{
-      width: 56, height: 56, borderRadius: 8,
-      background: "var(--gold)",
-      color: "#0b0c10",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, letterSpacing: 1
+      fontFamily: "Syne, sans-serif",
+      fontWeight: 800,
+      fontSize: 26,
+      letterSpacing: 2,
+      color: "var(--gold)",
+      textTransform: "uppercase"
     }}>
-      {initials || "?"}
+      {name}
     </div>
   );
 }
