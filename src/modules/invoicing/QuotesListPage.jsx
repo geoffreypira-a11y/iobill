@@ -8,6 +8,7 @@ import { QUOTE_STATUSES, quoteStatusBadge, isQuoteExpired } from "./quoteHelpers
 import { SkeletonTable } from "../../components/Skeleton.jsx";
 import { QuoteEditorModal } from "./QuoteEditorModal.jsx";
 import { ConfirmModal } from "../../components/ConfirmModal.jsx";
+import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 import { capture } from "../../lib/telemetry.js";
 
 export function QuotesListPage({ token, company }) {
@@ -29,6 +30,25 @@ export function QuotesListPage({ token, company }) {
   const [toast, setToast] = useState(null);
   // Versions de devis depliees (root_quote_id du groupe ouvert)
   const [expandedRoots, setExpandedRoots] = useState(new Set());
+  // Menu kebab ouvert (id du devis dont le menu est ouvert)
+  const [openMenuId, setOpenMenuId] = useState(null);
+  // Modale de preview PDF : null ou objet devis
+  const [previewQuote, setPreviewQuote] = useState(null);
+
+  // Fermer le menu kebab si on clique en dehors
+  useEffect(() => {
+    function handleClickOutside() { setOpenMenuId(null); }
+    if (openMenuId) {
+      // delai pour eviter de capturer le clic d'ouverture
+      const t = setTimeout(() => {
+        document.addEventListener("click", handleClickOutside);
+      }, 50);
+      return () => {
+        clearTimeout(t);
+        document.removeEventListener("click", handleClickOutside);
+      };
+    }
+  }, [openMenuId]);
 
   // Auto-ouverture modale si ?new=1
   useEffect(() => {
@@ -163,34 +183,9 @@ export function QuotesListPage({ token, company }) {
     setActionLoading(null);
   }
 
-  async function previewPdf(q) {
-    setActionLoading(`pdf-${q.id}`);
-    try {
-      const r = await fetch("/api/generate-quote-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ quote_id: q.id })
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || "Erreur génération PDF");
-      }
-      const j = await r.json();
-      if (j.pdf_url) {
-        window.open(j.pdf_url, "_blank");
-      } else if (j.pdf_base64) {
-        const byteChars = atob(j.pdf_base64);
-        const bytes = new Uint8Array(byteChars.length);
-        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-      }
-    } catch (e) {
-      showToast(e.message, "error");
-    }
-    setActionLoading(null);
+  function previewPdf(q) {
+    // Ouvre la modale d'apercu PDF (pattern IOcar PrintDoc)
+    setPreviewQuote(q);
   }
 
   async function shareLink(q) {
@@ -264,7 +259,7 @@ export function QuotesListPage({ token, company }) {
         terms: q.terms,
         number,
         status: "draft",
-        source_quote_id: q.id
+        quote_id: q.id
       };
       const created = await sb.insert(token, "invoices", invoicePayload);
       const newInvoice = created?.[0];
@@ -382,57 +377,108 @@ export function QuotesListPage({ token, company }) {
         </td>
         <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
         <td>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+            {/* Bouton principal : Voir / Modifier */}
             <button
-              className="btn btn-ghost btn-xs"
-              onClick={() => previewPdf(q)}
-              disabled={actionLoading === `pdf-${q.id}`}
-              title="Aperçu PDF"
-            >📄</button>
+              className="btn btn-primary btn-sm"
+              onClick={() => setEditModal(q)}
+              style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
+              title={canEdit ? "Modifier ce devis" : "Voir le devis"}
+            >
+              {canEdit ? "✏️ Modifier" : "👁 Voir"}
+            </button>
+
+            {/* Action contextuelle principale selon le statut */}
             {canSend && (
               <button
-                className="btn btn-ghost btn-xs"
-                style={{ color: "var(--gold)" }}
+                className="btn btn-ghost btn-sm"
                 onClick={() => sendQuote(q)}
                 disabled={actionLoading === `send-${q.id}`}
-                title="Envoyer par email"
-              >📧</button>
+                style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                title="Envoyer le devis par email au client"
+              >
+                {actionLoading === `send-${q.id}` ? "⏳" : "📧 Envoyer"}
+              </button>
             )}
-            <button
-              className="btn btn-ghost btn-xs"
-              onClick={() => shareLink(q)}
-              disabled={actionLoading === `share-${q.id}`}
-              title="Partager (lien public)"
-            >🔗</button>
-            {canVersion && (
+            {canConvert && !canSend && (
               <button
-                className="btn btn-ghost btn-xs"
-                onClick={() => createVersion(q)}
-                disabled={actionLoading === `v2-${q.id}`}
-                title={`Créer v${version + 1}`}
-              >↪️</button>
-            )}
-            {canConvert && (
-              <button
-                className="btn btn-ghost btn-xs"
-                style={{ color: "var(--green)" }}
+                className="btn btn-ghost btn-sm"
                 onClick={() => setPendingConvert(q)}
                 disabled={actionLoading === `convert-${q.id}`}
-                title="Convertir en facture"
-              >🧾</button>
+                style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                title="Convertir ce devis en facture"
+              >
+                🧾 Facturer
+              </button>
             )}
-            <button
-              className="btn btn-ghost btn-xs"
-              onClick={() => setEditModal(q)}
-              title={canEdit ? "Modifier" : "Voir"}
-            >{canEdit ? "✏️" : "👁"}</button>
-            {canDelete && (
+
+            {/* Menu kebab pour actions secondaires */}
+            <div style={{ position: "relative" }}>
               <button
-                className="btn btn-danger btn-xs"
-                onClick={() => setPendingDelete({ id: q.id, label: q.number || "ce devis" })}
-                title="Supprimer"
-              >🗑</button>
-            )}
+                className="btn btn-ghost btn-sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenMenuId(openMenuId === q.id ? null : q.id);
+                }}
+                style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
+                title="Plus d'actions"
+              >
+                ⋯
+              </button>
+              {openMenuId === q.id && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "100%",
+                    marginTop: 4,
+                    background: "var(--card)",
+                    border: "1px solid var(--border2)",
+                    borderRadius: 8,
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+                    minWidth: 180,
+                    zIndex: 100,
+                    overflow: "hidden"
+                  }}
+                >
+                  <MenuItem onClick={() => { previewPdf(q); setOpenMenuId(null); }}>
+                    📄 Aperçu PDF
+                  </MenuItem>
+                  <MenuItem onClick={() => { shareLink(q); setOpenMenuId(null); }}>
+                    🔗 Copier le lien public
+                  </MenuItem>
+                  {canConvert && canSend && (
+                    <MenuItem
+                      onClick={() => { setPendingConvert(q); setOpenMenuId(null); }}
+                      style={{ color: "var(--green)" }}
+                    >
+                      🧾 Convertir en facture
+                    </MenuItem>
+                  )}
+                  {canSend && !canConvert && (
+                    // déjà visible en bouton principal, pas de doublon
+                    null
+                  )}
+                  {canVersion && (
+                    <MenuItem onClick={() => { createVersion(q); setOpenMenuId(null); }}>
+                      ↪️ Créer une nouvelle version (v{version + 1})
+                    </MenuItem>
+                  )}
+                  {canDelete && (
+                    <>
+                      <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+                      <MenuItem
+                        onClick={() => { setPendingDelete({ id: q.id, label: q.number || "ce devis" }); setOpenMenuId(null); }}
+                        style={{ color: "var(--red)" }}
+                      >
+                        🗑 Supprimer
+                      </MenuItem>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </td>
       </tr>
@@ -580,6 +626,16 @@ export function QuotesListPage({ token, company }) {
         />
       )}
 
+      {/* ─── Apercu PDF en modale (pattern IOcar PrintDoc) ─── */}
+      {previewQuote && (
+        <DocumentPreviewModal
+          token={token}
+          docType="quote"
+          doc={previewQuote}
+          onClose={() => setPreviewQuote(null)}
+        />
+      )}
+
       {/* ─── Toast ─── */}
       {toast && (
         <div style={{
@@ -601,5 +657,32 @@ export function QuotesListPage({ token, company }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Composant MenuItem reutilisable (pour le menu kebab des actions) ───
+function MenuItem({ children, onClick, style = {} }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "10px 14px",
+        background: hover ? "var(--card2)" : "transparent",
+        border: "none",
+        color: "var(--text)",
+        fontSize: 12,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        ...style
+      }}
+    >
+      {children}
+    </button>
   );
 }

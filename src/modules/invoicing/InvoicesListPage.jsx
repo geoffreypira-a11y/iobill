@@ -8,6 +8,7 @@ import { INVOICE_STATUSES, invoiceStatusBadge, isInvoiceOverdue } from "./invoic
 import { SkeletonTable } from "../../components/Skeleton.jsx";
 import { InvoiceEditorModal } from "./InvoiceEditorModal.jsx";
 import { ConfirmModal } from "../../components/ConfirmModal.jsx";
+import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 import { capture } from "../../lib/telemetry.js";
 
 export function InvoicesListPage({ token, company }) {
@@ -22,6 +23,23 @@ export function InvoicesListPage({ token, company }) {
   const [pendingIssue, setPendingIssue] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
   const [toast, setToast] = useState(null);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  // Modale de preview PDF : null ou objet facture
+  const [previewInvoice, setPreviewInvoice] = useState(null);
+
+  // Fermer le menu kebab si on clique en dehors
+  useEffect(() => {
+    function handleClickOutside() { setOpenMenuId(null); }
+    if (openMenuId) {
+      const t = setTimeout(() => {
+        document.addEventListener("click", handleClickOutside);
+      }, 50);
+      return () => {
+        clearTimeout(t);
+        document.removeEventListener("click", handleClickOutside);
+      };
+    }
+  }, [openMenuId]);
 
   useEffect(() => {
     if (searchParams.get("new") === "1") {
@@ -136,39 +154,9 @@ export function InvoicesListPage({ token, company }) {
     setActionLoading(null);
   }
 
-  async function previewPdf(inv) {
-    setActionLoading(`pdf-${inv.id}`);
-    try {
-      if (inv.facturx_pdf_url) {
-        window.open(inv.facturx_pdf_url, "_blank");
-        setActionLoading(null);
-        return;
-      }
-      const r = await fetch("/api/generate-facturx", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ invoice_id: inv.id, preview: true })
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || "Erreur génération PDF");
-      }
-      const j = await r.json();
-      if (j.pdf_url) {
-        window.open(j.pdf_url, "_blank");
-      } else if (j.pdf_base64) {
-        const byteChars = atob(j.pdf_base64);
-        const bytes = new Uint8Array(byteChars.length);
-        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-      }
-    } catch (e) {
-      showToast(e.message, "error");
-    }
-    setActionLoading(null);
+  function previewPdf(inv) {
+    // Ouvre la modale d'apercu PDF (pattern IOcar PrintDoc)
+    setPreviewInvoice(inv);
   }
 
   async function shareLink(inv) {
@@ -296,51 +284,93 @@ export function InvoicesListPage({ token, company }) {
                     <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
                     <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
                     <td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                        {/* Bouton principal : Voir / Modifier */}
                         <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => previewPdf(inv)}
-                          disabled={actionLoading === `pdf-${inv.id}`}
-                          title="Aperçu PDF"
-                        >📄</button>
+                          className="btn btn-primary btn-sm"
+                          onClick={() => setEditModal(inv)}
+                          style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
+                          title={canEdit ? "Modifier cette facture" : "Voir la facture"}
+                        >
+                          {canEdit ? "✏️ Modifier" : "👁 Voir"}
+                        </button>
+
+                        {/* Action contextuelle principale */}
                         {canIssue && (
                           <button
-                            className="btn btn-ghost btn-xs"
-                            style={{ color: "var(--gold)" }}
+                            className="btn btn-ghost btn-sm"
                             onClick={() => setPendingIssue(inv)}
                             disabled={actionLoading === `issue-${inv.id}`}
-                            title="Émettre (verrouille la facture)"
-                          >🔒</button>
+                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                            title="Émettre et verrouiller cette facture"
+                          >
+                            🔒 Émettre
+                          </button>
                         )}
                         {canSend && (
                           <button
-                            className="btn btn-ghost btn-xs"
-                            style={{ color: "var(--gold)" }}
+                            className="btn btn-ghost btn-sm"
                             onClick={() => sendInvoice(inv)}
                             disabled={actionLoading === `send-${inv.id}`}
-                            title="Envoyer par email"
-                          >📧</button>
+                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                            title="Envoyer la facture par email"
+                          >
+                            {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
+                          </button>
                         )}
-                        {!canEdit && (
+
+                        {/* Menu kebab */}
+                        <div style={{ position: "relative" }}>
                           <button
-                            className="btn btn-ghost btn-xs"
-                            onClick={() => shareLink(inv)}
-                            disabled={actionLoading === `share-${inv.id}`}
-                            title="Partager (lien public)"
-                          >🔗</button>
-                        )}
-                        <button
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => setEditModal(inv)}
-                          title={canEdit ? "Modifier" : "Voir"}
-                        >{canEdit ? "✏️" : "👁"}</button>
-                        {canDelete && (
-                          <button
-                            className="btn btn-danger btn-xs"
-                            onClick={() => setPendingDelete({ id: inv.id, label: inv.number || "cette facture" })}
-                            title="Supprimer"
-                          >🗑</button>
-                        )}
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuId(openMenuId === inv.id ? null : inv.id);
+                            }}
+                            style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
+                            title="Plus d'actions"
+                          >
+                            ⋯
+                          </button>
+                          {openMenuId === inv.id && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                position: "absolute",
+                                right: 0,
+                                top: "100%",
+                                marginTop: 4,
+                                background: "var(--card)",
+                                border: "1px solid var(--border2)",
+                                borderRadius: 8,
+                                boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+                                minWidth: 180,
+                                zIndex: 100,
+                                overflow: "hidden"
+                              }}
+                            >
+                              <MenuItemInv onClick={() => { previewPdf(inv); setOpenMenuId(null); }}>
+                                📄 Aperçu PDF
+                              </MenuItemInv>
+                              {!canEdit && (
+                                <MenuItemInv onClick={() => { shareLink(inv); setOpenMenuId(null); }}>
+                                  🔗 Copier le lien public
+                                </MenuItemInv>
+                              )}
+                              {canDelete && (
+                                <>
+                                  <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+                                  <MenuItemInv
+                                    onClick={() => { setPendingDelete({ id: inv.id, label: inv.number || "cette facture" }); setOpenMenuId(null); }}
+                                    style={{ color: "var(--red)" }}
+                                  >
+                                    🗑 Supprimer
+                                  </MenuItemInv>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -392,6 +422,16 @@ export function InvoicesListPage({ token, company }) {
         />
       )}
 
+      {/* ─── Apercu PDF en modale (pattern IOcar PrintDoc) ─── */}
+      {previewInvoice && (
+        <DocumentPreviewModal
+          token={token}
+          docType="invoice"
+          doc={previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
+        />
+      )}
+
       {toast && (
         <div style={{
           position: "fixed",
@@ -412,5 +452,32 @@ export function InvoicesListPage({ token, company }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Composant MenuItem reutilisable ───
+function MenuItemInv({ children, onClick, style = {} }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "10px 14px",
+        background: hover ? "var(--card2)" : "transparent",
+        border: "none",
+        color: "var(--text)",
+        fontSize: 12,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        ...style
+      }}
+    >
+      {children}
+    </button>
   );
 }
