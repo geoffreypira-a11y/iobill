@@ -205,16 +205,24 @@ export default async function handler(req, res) {
       ${docLabel} ${escapeHtml(doc.number || "")}
     </div>
     <div style="white-space:pre-line;font-size:14px;line-height:1.6;color:#222">${escapeHtml(intro)}</div>
-    ${publicUrl ? `<div style="margin:28px 0">
-      <a href="${publicUrl}" style="display:inline-block;background:${escapeHtml(company.brand_color || '#d4a843')};color:#0b0c10;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;letter-spacing:0.5px">
-        ${document_type === "quote" ? "✍️ Consulter et accepter le devis" : "📄 Consulter le document"}
-      </a>
-    </div>` : ""}
-    ${doc.stripe_payment_link_url && document_type === "invoice" ? `<div style="margin:14px 0">
-      <a href="${doc.stripe_payment_link_url}" style="display:inline-block;background:#3ecf7a;color:#fff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:600;font-size:13px">
-        💳 Payer en ligne
-      </a>
-    </div>` : ""}
+    ${publicUrl ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0">
+      <tr>
+        <td bgcolor="${escapeHtml(company.brand_color || '#d4a843')}" style="background-color:${escapeHtml(company.brand_color || '#d4a843')};border-radius:8px;padding:0;mso-padding-alt:0">
+          <a href="${publicUrl}" style="display:inline-block;background-color:${escapeHtml(company.brand_color || '#d4a843')};color:#0b0c10 !important;padding:14px 28px;text-decoration:none !important;border-radius:8px;font-weight:600;font-size:14px;letter-spacing:0.5px;border:0;mso-padding-alt:0">
+            <span style="color:#0b0c10 !important;text-decoration:none !important">${document_type === "quote" ? "✍️ Consulter et accepter le devis" : "📄 Consulter le document"}</span>
+          </a>
+        </td>
+      </tr>
+    </table>` : ""}
+    ${doc.stripe_payment_link_url && document_type === "invoice" ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0">
+      <tr>
+        <td bgcolor="#3ecf7a" style="background-color:#3ecf7a;border-radius:8px;padding:0">
+          <a href="${doc.stripe_payment_link_url}" style="display:inline-block;background-color:#3ecf7a;color:#fff !important;padding:12px 24px;text-decoration:none !important;border-radius:8px;font-weight:600;font-size:13px;border:0">
+            <span style="color:#fff !important;text-decoration:none !important">💳 Payer en ligne</span>
+          </a>
+        </td>
+      </tr>
+    </table>` : ""}
     ${pdfBase64 ? `<div style="margin:16px 0;font-size:12px;color:#888">📎 Document joint en PDF : ${escapeHtml(pdfFilename)}</div>` : ""}
     <div style="margin-top:32px;padding-top:18px;border-top:1px solid #eee;font-size:11px;color:#999">
       ${escapeHtml(issuerName)}${company.siret ? ` · SIRET ${company.siret}` : ""}<br>
