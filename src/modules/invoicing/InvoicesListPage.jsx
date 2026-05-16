@@ -23,23 +23,27 @@ export function InvoicesListPage({ token, company }) {
   const [pendingIssue, setPendingIssue] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
   const [toast, setToast] = useState(null);
-  const [openMenuId, setOpenMenuId] = useState(null);
+  const [openMenu, setOpenMenu] = useState(null);
   // Modale de preview PDF : null ou objet facture
   const [previewInvoice, setPreviewInvoice] = useState(null);
 
-  // Fermer le menu kebab si on clique en dehors
+  // Fermer le menu kebab si on clique en dehors ou si on scroll
   useEffect(() => {
-    function handleClickOutside() { setOpenMenuId(null); }
-    if (openMenuId) {
+    function close() { setOpenMenu(null); }
+    if (openMenu) {
       const t = setTimeout(() => {
-        document.addEventListener("click", handleClickOutside);
+        document.addEventListener("click", close);
+        window.addEventListener("scroll", close, true);
+        window.addEventListener("resize", close);
       }, 50);
       return () => {
         clearTimeout(t);
-        document.removeEventListener("click", handleClickOutside);
+        document.removeEventListener("click", close);
+        window.removeEventListener("scroll", close, true);
+        window.removeEventListener("resize", close);
       };
     }
-  }, [openMenuId]);
+  }, [openMenu]);
 
   useEffect(() => {
     if (searchParams.get("new") === "1") {
@@ -319,58 +323,29 @@ export function InvoicesListPage({ token, company }) {
                           </button>
                         )}
 
-                        {/* Menu kebab */}
-                        <div style={{ position: "relative" }}>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenMenuId(openMenuId === inv.id ? null : inv.id);
-                            }}
-                            style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
-                            title="Plus d'actions"
-                          >
-                            ⋯
-                          </button>
-                          {openMenuId === inv.id && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              style={{
-                                position: "absolute",
-                                right: 0,
-                                top: "100%",
-                                marginTop: 4,
-                                background: "var(--card)",
-                                border: "1px solid var(--border2)",
-                                borderRadius: 8,
-                                boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-                                minWidth: 180,
-                                zIndex: 100,
-                                overflow: "hidden"
-                              }}
-                            >
-                              <MenuItemInv onClick={() => { previewPdf(inv); setOpenMenuId(null); }}>
-                                📄 Aperçu PDF
-                              </MenuItemInv>
-                              {!canEdit && (
-                                <MenuItemInv onClick={() => { shareLink(inv); setOpenMenuId(null); }}>
-                                  🔗 Copier le lien public
-                                </MenuItemInv>
-                              )}
-                              {canDelete && (
-                                <>
-                                  <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
-                                  <MenuItemInv
-                                    onClick={() => { setPendingDelete({ id: inv.id, label: inv.number || "cette facture" }); setOpenMenuId(null); }}
-                                    style={{ color: "var(--red)" }}
-                                  >
-                                    🗑 Supprimer
-                                  </MenuItemInv>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        {/* Bouton kebab : trigger, menu rendu en portail plus bas */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (openMenu?.id === inv.id) {
+                              setOpenMenu(null);
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setOpenMenu({
+                              id: inv.id,
+                              invoice: inv,
+                              right: window.innerWidth - rect.right,
+                              top: rect.bottom + 4,
+                              canEdit, canDelete
+                            });
+                          }}
+                          style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
+                          title="Plus d'actions"
+                        >
+                          ⋯
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -430,6 +405,45 @@ export function InvoicesListPage({ token, company }) {
           doc={previewInvoice}
           onClose={() => setPreviewInvoice(null)}
         />
+      )}
+
+      {/* ─── Menu kebab : rendu en position:fixed ─── */}
+      {openMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            top: openMenu.top,
+            right: openMenu.right,
+            background: "var(--card)",
+            border: "1px solid var(--border2)",
+            borderRadius: 8,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+            minWidth: 200,
+            zIndex: 9999,
+            overflow: "hidden"
+          }}
+        >
+          <MenuItemInv onClick={() => { previewPdf(openMenu.invoice); setOpenMenu(null); }}>
+            📄 Aperçu PDF
+          </MenuItemInv>
+          {!openMenu.canEdit && (
+            <MenuItemInv onClick={() => { shareLink(openMenu.invoice); setOpenMenu(null); }}>
+              🔗 Copier le lien public
+            </MenuItemInv>
+          )}
+          {openMenu.canDelete && (
+            <>
+              <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+              <MenuItemInv
+                onClick={() => { setPendingDelete({ id: openMenu.invoice.id, label: openMenu.invoice.number || "cette facture" }); setOpenMenu(null); }}
+                style={{ color: "var(--red)" }}
+              >
+                🗑 Supprimer
+              </MenuItemInv>
+            </>
+          )}
+        </div>
       )}
 
       {toast && (

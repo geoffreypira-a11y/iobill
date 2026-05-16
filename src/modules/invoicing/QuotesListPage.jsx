@@ -30,25 +30,28 @@ export function QuotesListPage({ token, company }) {
   const [toast, setToast] = useState(null);
   // Versions de devis depliees (root_quote_id du groupe ouvert)
   const [expandedRoots, setExpandedRoots] = useState(new Set());
-  // Menu kebab ouvert (id du devis dont le menu est ouvert)
-  const [openMenuId, setOpenMenuId] = useState(null);
+  // Menu kebab : null ou { id, x, y } pour position fixed
+  const [openMenu, setOpenMenu] = useState(null);
   // Modale de preview PDF : null ou objet devis
   const [previewQuote, setPreviewQuote] = useState(null);
 
-  // Fermer le menu kebab si on clique en dehors
+  // Fermer le menu kebab si on clique en dehors ou si on scroll
   useEffect(() => {
-    function handleClickOutside() { setOpenMenuId(null); }
-    if (openMenuId) {
-      // delai pour eviter de capturer le clic d'ouverture
+    function close() { setOpenMenu(null); }
+    if (openMenu) {
       const t = setTimeout(() => {
-        document.addEventListener("click", handleClickOutside);
+        document.addEventListener("click", close);
+        window.addEventListener("scroll", close, true);
+        window.addEventListener("resize", close);
       }, 50);
       return () => {
         clearTimeout(t);
-        document.removeEventListener("click", handleClickOutside);
+        document.removeEventListener("click", close);
+        window.removeEventListener("scroll", close, true);
+        window.removeEventListener("resize", close);
       };
     }
-  }, [openMenuId]);
+  }, [openMenu]);
 
   // Auto-ouverture modale si ?new=1
   useEffect(() => {
@@ -412,73 +415,30 @@ export function QuotesListPage({ token, company }) {
               </button>
             )}
 
-            {/* Menu kebab pour actions secondaires */}
-            <div style={{ position: "relative" }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpenMenuId(openMenuId === q.id ? null : q.id);
-                }}
-                style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
-                title="Plus d'actions"
-              >
-                ⋯
-              </button>
-              {openMenuId === q.id && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: "100%",
-                    marginTop: 4,
-                    background: "var(--card)",
-                    border: "1px solid var(--border2)",
-                    borderRadius: 8,
-                    boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-                    minWidth: 180,
-                    zIndex: 100,
-                    overflow: "hidden"
-                  }}
-                >
-                  <MenuItem onClick={() => { previewPdf(q); setOpenMenuId(null); }}>
-                    📄 Aperçu PDF
-                  </MenuItem>
-                  <MenuItem onClick={() => { shareLink(q); setOpenMenuId(null); }}>
-                    🔗 Copier le lien public
-                  </MenuItem>
-                  {canConvert && canSend && (
-                    <MenuItem
-                      onClick={() => { setPendingConvert(q); setOpenMenuId(null); }}
-                      style={{ color: "var(--green)" }}
-                    >
-                      🧾 Convertir en facture
-                    </MenuItem>
-                  )}
-                  {canSend && !canConvert && (
-                    // déjà visible en bouton principal, pas de doublon
-                    null
-                  )}
-                  {canVersion && (
-                    <MenuItem onClick={() => { createVersion(q); setOpenMenuId(null); }}>
-                      ↪️ Créer une nouvelle version (v{version + 1})
-                    </MenuItem>
-                  )}
-                  {canDelete && (
-                    <>
-                      <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
-                      <MenuItem
-                        onClick={() => { setPendingDelete({ id: q.id, label: q.number || "ce devis" }); setOpenMenuId(null); }}
-                        style={{ color: "var(--red)" }}
-                      >
-                        🗑 Supprimer
-                      </MenuItem>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Bouton kebab : calcule position et stocke contexte. Menu rendu en portail plus bas. */}
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (openMenu?.id === q.id) {
+                  setOpenMenu(null);
+                  return;
+                }
+                const rect = e.currentTarget.getBoundingClientRect();
+                setOpenMenu({
+                  id: q.id,
+                  quote: q,
+                  // Position du menu : aligné à droite du bouton, juste en-dessous
+                  right: window.innerWidth - rect.right,
+                  top: rect.bottom + 4,
+                  canConvert, canSend, canVersion, canDelete, version
+                });
+              }}
+              style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
+              title="Plus d'actions"
+            >
+              ⋯
+            </button>
           </div>
         </td>
       </tr>
@@ -634,6 +594,56 @@ export function QuotesListPage({ token, company }) {
           doc={previewQuote}
           onClose={() => setPreviewQuote(null)}
         />
+      )}
+
+      {/* ─── Menu kebab : rendu en position:fixed pour passer par-dessus la card ─── */}
+      {openMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            top: openMenu.top,
+            right: openMenu.right,
+            background: "var(--card)",
+            border: "1px solid var(--border2)",
+            borderRadius: 8,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+            minWidth: 200,
+            zIndex: 9999,
+            overflow: "hidden"
+          }}
+        >
+          <MenuItem onClick={() => { previewPdf(openMenu.quote); setOpenMenu(null); }}>
+            📄 Aperçu PDF
+          </MenuItem>
+          <MenuItem onClick={() => { shareLink(openMenu.quote); setOpenMenu(null); }}>
+            🔗 Copier le lien public
+          </MenuItem>
+          {openMenu.canConvert && openMenu.canSend && (
+            <MenuItem
+              onClick={() => { setPendingConvert(openMenu.quote); setOpenMenu(null); }}
+              style={{ color: "var(--green)" }}
+            >
+              🧾 Convertir en facture
+            </MenuItem>
+          )}
+          {openMenu.canVersion && (
+            <MenuItem onClick={() => { createVersion(openMenu.quote); setOpenMenu(null); }}>
+              ↪️ Créer une nouvelle version (v{openMenu.version + 1})
+            </MenuItem>
+          )}
+          {openMenu.canDelete && (
+            <>
+              <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+              <MenuItem
+                onClick={() => { setPendingDelete({ id: openMenu.quote.id, label: openMenu.quote.number || "ce devis" }); setOpenMenu(null); }}
+                style={{ color: "var(--red)" }}
+              >
+                🗑 Supprimer
+              </MenuItem>
+            </>
+          )}
+        </div>
       )}
 
       {/* ─── Toast ─── */}
