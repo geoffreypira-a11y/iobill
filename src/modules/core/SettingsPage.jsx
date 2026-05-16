@@ -507,6 +507,52 @@ function BrandingTab({ token, company, setCompany }) {
       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
         Couleur utilisée sur la page publique et certains accents (en complément du gold IO BILL).
       </div>
+
+      {/* Palette de couleurs prédéfinies */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {[
+          { name: "Gold IO BILL", value: "#d4a843" },
+          { name: "Vert émeraude", value: "#3ecf7a" },
+          { name: "Orange", value: "#e6a23c" },
+          { name: "Rouge corail", value: "#e55c5c" },
+          { name: "Violet", value: "#9b6bd6" },
+          { name: "Bleu nuit", value: "#3a5a8c" },
+          { name: "Cuivre", value: "#c87f4a" },
+          { name: "Anthracite", value: "#4a4a52" }
+        ].map((preset) => {
+          const isActive = data.brand_color?.toLowerCase() === preset.value.toLowerCase();
+          return (
+            <button
+              key={preset.value}
+              onClick={() => setData((d) => ({ ...d, brand_color: preset.value }))}
+              title={preset.name}
+              style={{
+                width: 36, height: 36,
+                background: preset.value,
+                border: isActive ? "2px solid var(--text)" : "2px solid var(--border2)",
+                borderRadius: 8,
+                cursor: "pointer",
+                padding: 0,
+                position: "relative",
+                outline: "none"
+              }}
+            >
+              {isActive && (
+                <span style={{
+                  position: "absolute", top: "50%", left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  color: "#fff", fontSize: 14, fontWeight: 700,
+                  textShadow: "0 0 4px rgba(0,0,0,0.7)"
+                }}>✓</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 8 }}>
+        Ou choisissez une couleur personnalisée :
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
         <input
           type="color"
@@ -520,7 +566,7 @@ function BrandingTab({ token, company, setCompany }) {
           value={data.brand_color}
           onChange={(e) => setData((d) => ({ ...d, brand_color: e.target.value }))}
         />
-        <button className="btn btn-primary btn-sm" onClick={saveColor} disabled={saving}>
+        <button className="btn btn-primary btn-sm" onClick={saveColor} disabled={saving || data.brand_color === (company.brand_color || "#d4a843")}>
           {saving ? "..." : "Enregistrer"}
         </button>
       </div>

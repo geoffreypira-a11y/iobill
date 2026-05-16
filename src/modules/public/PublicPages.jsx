@@ -98,9 +98,11 @@ export function PublicQuotePage() {
   const cs = q.client_snapshot || {};
   const co = q.company_snapshot || company;
   const canSign = ["sent", "draft"].includes(q.status) && !isQuoteExpiredPub(q);
+  // Couleur d'accentuation de l'emetteur (defaut: gold IO BILL)
+  const brandColor = company?.brand_color || "#d4a843";
 
   return (
-    <PublicShell>
+    <PublicShell brandColor={brandColor}>
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "40px 20px" }}>
         {/* Header : ÉMETTEUR mis en avant, pas IO BILL */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
@@ -356,9 +358,10 @@ export function PublicInvoicePage() {
   const cs = inv.client_snapshot || {};
   const co = inv.company_snapshot || company;
   const remaining = (inv.total_ttc_cents || 0) - (inv.paid_cents || 0);
+  const brandColor = company?.brand_color || "#d4a843";
 
   return (
-    <PublicShell>
+    <PublicShell brandColor={brandColor}>
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "40px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -472,8 +475,10 @@ export function PublicPortalPage() {
     .filter((i) => ["issued", "sent", "partial", "overdue"].includes(i.status))
     .reduce((s, i) => s + ((i.total_ttc_cents || 0) - (i.paid_cents || 0)), 0);
 
+  const brandColor = company?.brand_color || "#d4a843";
+
   return (
-    <PublicShell>
+    <PublicShell brandColor={brandColor}>
       <div style={{ maxWidth: 980, margin: "0 auto", padding: "40px 20px" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -608,8 +613,20 @@ export function PublicPortalPage() {
 // ──────────────────────────────────────────────────────────────
 //  Composants partages
 // ──────────────────────────────────────────────────────────────
-function PublicShell({ children }) {
-  return <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>{children}</div>;
+function PublicShell({ children, brandColor }) {
+  // Si la company a defini une brand_color, on l'utilise comme accent partout
+  // en surchargeant la variable CSS --gold dans le contexte de la page publique.
+  const style = {
+    minHeight: "100vh",
+    background: "var(--bg)",
+    color: "var(--text)"
+  };
+  if (brandColor) {
+    style["--gold"] = brandColor;
+    // Recalcul de --gold-soft (10% opacity pour les fonds discrets)
+    style["--gold-soft"] = brandColor + "1a";  // 1a = 10% opacity en hex
+  }
+  return <div style={style}>{children}</div>;
 }
 
 function ErrorCard({ message }) {

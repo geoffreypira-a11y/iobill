@@ -4,7 +4,7 @@
 // VAPID = Voluntary Application Server Identification (RFC 8292)
 // On signe un JWT ES256 avec la cle privee VAPID, et on l'envoie au push service.
 
-import { createSign, createPrivateKey, randomBytes, createCipheriv, createHash, createECDH } from "crypto";
+import { createSign, createPrivateKey, randomBytes, createCipheriv, createHash, createECDH, createHmac } from "crypto";
 import { sbAdmin } from "./supabase-admin.js";
 
 const VAPID_PUBLIC_KEY = process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;
@@ -170,12 +170,12 @@ function encryptPayload(plaintext, p256dhB64, authB64) {
 
 // HKDF helpers
 function hkdfExtract(salt, ikm) {
-  const hmac = require("crypto").createHmac("sha256", salt);
+  const hmac = createHmac("sha256", salt);
   hmac.update(ikm);
   return hmac.digest();
 }
 function hkdfExpand(prk, info, length) {
-  const hmac = require("crypto").createHmac("sha256", prk);
+  const hmac = createHmac("sha256", prk);
   hmac.update(Buffer.concat([info, Buffer.from([0x01])]));
   return hmac.digest().slice(0, length);
 }

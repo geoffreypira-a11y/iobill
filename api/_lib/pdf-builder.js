@@ -41,6 +41,13 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
+  // ═══════════════════════════════════════════════════════════
+  // COULEUR D'ACCENTUATION : brand_color de la company
+  // L'utilisateur peut la personnaliser dans les parametres.
+  // Si non defini, utilise le gold IO BILL par defaut.
+  // ═══════════════════════════════════════════════════════════
+  const brandRgb = hexToRgb(company?.brand_color || "#d4a843") || COLORS.gold;
+
   let y = height - 50;
 
   // ═══════════════════════════════════════════════════════════
@@ -48,7 +55,7 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // ═══════════════════════════════════════════════════════════
   page.drawRectangle({
     x: 40, y: height - 12, width: width - 80, height: 4,
-    color: COLORS.gold
+    color: brandRgb
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -138,7 +145,7 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // ─── PARTIE DROITE : Type document + Ref + CLIENT ───
   // Type document en GROS GOLD (pattern .pdoc-type)
   const typeWidth = fontBold.widthOfTextAtSize(L.title, 20);
-  page.drawText(L.title, { x: width - 40 - typeWidth, y: y - 4, size: 20, font: fontBold, color: COLORS.gold });
+  page.drawText(L.title, { x: width - 40 - typeWidth, y: y - 4, size: 20, font: fontBold, color: brandRgb });
 
   // Numéro
   const refText = `N° ${doc.number}`;
@@ -269,12 +276,13 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     drawRight(page, formatEUR(doc.vat_total_cents), width - 40, y, 9, font, COLORS.dark);
     y -= 14;
   }
-  y -= 4;
-  page.drawLine({ start: { x: totalsX, y: y + 6 }, end: { x: width - 40, y: y + 6 }, thickness: 1, color: COLORS.gold });
+  y -= 8;
+  // Ligne gold AU-DESSUS du texte Total TTC (pas à travers)
+  page.drawLine({ start: { x: totalsX, y: y + 16 }, end: { x: width - 40, y: y + 16 }, thickness: 1, color: brandRgb });
   const totalLabel = docType === "credit_note" ? "Total à déduire" : "Total TTC";
-  page.drawText(totalLabel, { x: totalsX, y, size: 12, font: fontBold, color: COLORS.gold });
+  page.drawText(totalLabel, { x: totalsX, y, size: 12, font: fontBold, color: brandRgb });
   const totalValue = (docType === "credit_note" ? "− " : "") + formatEUR(doc.total_ttc_cents);
-  drawRight(page, totalValue, width - 40, y, 12, fontBold, COLORS.gold);
+  drawRight(page, totalValue, width - 40, y, 12, fontBold, brandRgb);
   y -= 24;
 
   // Reste a payer (factures uniquement)
@@ -464,4 +472,16 @@ export async function fetchLogoBytes(logoPath) {
     console.warn("[fetchLogoBytes] error:", e?.message);
     return null;
   }
+}
+
+// Convertit "#d4a843" en rgb(0.83, 0.66, 0.26) pour pdf-lib
+function hexToRgb(hex) {
+  if (!hex || typeof hex !== "string") return null;
+  const clean = hex.replace("#", "").trim();
+  if (clean.length !== 6) return null;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+  return rgb(r / 255, g / 255, b / 255);
 }

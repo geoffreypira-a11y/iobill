@@ -4,6 +4,7 @@
 // - Branding de l'emetteur en grand, IO BILL en petit footer
 
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { randomBytes } from "node:crypto";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = (process.env.RESEND_FROM || "facturation@iobill.online")
@@ -205,7 +206,7 @@ export default async function handler(req, res) {
     </div>
     <div style="white-space:pre-line;font-size:14px;line-height:1.6;color:#222">${escapeHtml(intro)}</div>
     ${publicUrl ? `<div style="margin:28px 0">
-      <a href="${publicUrl}" style="display:inline-block;background:#d4a843;color:#0b0c10;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;letter-spacing:0.5px">
+      <a href="${publicUrl}" style="display:inline-block;background:${escapeHtml(company.brand_color || '#d4a843')};color:#0b0c10;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;letter-spacing:0.5px">
         ${document_type === "quote" ? "✍️ Consulter et accepter le devis" : "📄 Consulter le document"}
       </a>
     </div>` : ""}
@@ -347,8 +348,7 @@ function bufferToBase64(buf) {
 function generateUrlSafeToken(n = 32) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   let out = "";
-  const crypto = require("crypto");
-  const bytes = crypto.randomBytes(n);
+  const bytes = randomBytes(n);
   for (let i = 0; i < n; i++) out += chars[bytes[i] % chars.length];
   return out;
 }
