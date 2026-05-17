@@ -18,7 +18,7 @@ export function PublicQuotePage() {
 
   async function reload() {
     try {
-      const r = await fetch(`/api/public-fetch?token=${encodeURIComponent(token)}`);
+      const r = await fetch(`/api/public?op=fetch&token=${encodeURIComponent(token)}`);
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         setError(j.error || "Lien invalide ou expiré");
@@ -47,7 +47,7 @@ export function PublicQuotePage() {
     }
     setActionLoading(true);
     try {
-      const r = await fetch("/api/public-fetch", {
+      const r = await fetch("/api/public?op=fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, action: "accept_quote", signer_name: signerName.trim() })
@@ -71,7 +71,7 @@ export function PublicQuotePage() {
   async function handleRefuse() {
     setActionLoading(true);
     try {
-      const r = await fetch("/api/public-fetch", {
+      const r = await fetch("/api/public?op=fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, action: "refuse_quote", refusal_reason: refusalReason.trim() })
@@ -336,7 +336,7 @@ export function PublicInvoicePage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`/api/public-fetch?token=${encodeURIComponent(token)}`);
+        const r = await fetch(`/api/public?op=fetch&token=${encodeURIComponent(token)}`);
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
           setError(j.error || "Lien invalide ou expiré");
@@ -453,7 +453,7 @@ export function PublicPortalPage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`/api/public-fetch?token=${encodeURIComponent(token)}`);
+        const r = await fetch(`/api/public?op=fetch&token=${encodeURIComponent(token)}`);
         if (!r.ok) { const j = await r.json().catch(() => ({})); setError(j.error || "Lien invalide"); setLoading(false); return; }
         const j = await r.json();
         if (j.scope !== "portal") { setError("Ce lien n'est pas un portail client."); setLoading(false); return; }
@@ -727,7 +727,7 @@ function QuoteStatusBadge({ status }) {
 
 // En-tete public de l'emetteur : logo signe si dispo, sinon nom en grand façon IOcar
 function IssuerAvatar({ co }) {
-  // logo_signed_url est fourni par l'API public-fetch (URL signee temporaire)
+  // logo_signed_url est fourni par l'API public (URL signee temporaire)
   const logoUrl = co?.logo_signed_url;
   if (logoUrl) {
     return (

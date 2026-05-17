@@ -238,7 +238,7 @@ export function QuotesListPage({ token, company }) {
   async function shareLink(q) {
     setActionLoading(`share-${q.id}`);
     try {
-      const r = await fetch("/api/public-share", {
+      const r = await fetch("/api/public?op=share", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ scope: "quote", resource_id: q.id, expires_in_days: 90 })

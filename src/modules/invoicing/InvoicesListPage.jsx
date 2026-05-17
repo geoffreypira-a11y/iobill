@@ -227,7 +227,7 @@ export function InvoicesListPage({ token, company }) {
   async function shareLink(inv) {
     setActionLoading(`share-${inv.id}`);
     try {
-      const r = await fetch("/api/public-share", {
+      const r = await fetch("/api/public?op=share", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ scope: "invoice", resource_id: inv.id, expires_in_days: 90 })

@@ -174,7 +174,7 @@ export function ClientFichePage({ token, company }) {
             </button>
             <button className="btn btn-ghost btn-sm" onClick={async () => {
               try {
-                const r = await fetch("/api/public-share", {
+                const r = await fetch("/api/public?op=share", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ scope: "portal", resource_id: client.id, expires_in_days: 365 })
