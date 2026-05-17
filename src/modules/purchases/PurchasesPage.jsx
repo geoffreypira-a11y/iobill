@@ -1,15 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { sb } from "../../lib/supabase.js";
+import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
 import { CameraCapture } from "../../components/CameraCapture.jsx";
 import { fmtEUR, fmtDate, todayISO, toCents, fromCents, uid } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 const PURCHASE_STATUTS = {
-  pending:   { label: "En attente",  cls: "badge-muted",  icon: "📥" },
-  validated: { label: "Validée",     cls: "badge-gold",   icon: "✅" },
-  paid:      { label: "Payée",       cls: "badge-green",  icon: "💰" },
-  archived:  { label: "Archivée",    cls: "badge-muted",  icon: "📦" }
+  pending:   { label: "En attente",        cls: "badge-muted",  icon: "📥" },
+  validated: { label: "Validée",           cls: "badge-gold",   icon: "✅" },
+  partial:   { label: "Partiellement payée", cls: "badge-gold", icon: "💸" },
+  paid:      { label: "Payée",             cls: "badge-green",  icon: "💰" },
+  archived:  { label: "Archivée",          cls: "badge-muted",  icon: "📦" }
 };
 
 const ACCOUNTING_CODES = [
@@ -34,37 +36,171 @@ export function PurchasesPage({ token, company }) {
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);   // PDF viewer modal
+  const [partialFor, setPartialFor] = useState(null); // Modal paiement partiel
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active"); // "active" | "all" | <status>
+  const [openMenu, setOpenMenu] = useState(null); // id row pour le menu kebab
+  const [menuPos, setMenuPos] = useState(null);
+  const [actionLoading, setActionLoading] = useState(null); // id en cours d'action
+  const [toast, setToast] = useState(null);
+
+  // ── Refresh smart ──
+  async function refreshPurchases(silent = false) {
+    if (!silent) setLoading(true);
+    const list = await sb.select(token, "purchases", {
+      filter: `company_id=eq.${company.id}`,
+      order: "issue_date.desc.nullslast"
+    });
+    const newList = list || [];
+    if (silent) {
+      setPurchases((prev) => {
+        if (prev.length !== newList.length) return newList;
+        for (let i = 0; i < newList.length; i++) {
+          if (prev[i]?.id !== newList[i].id) return newList;
+          if (prev[i]?.status !== newList[i].status) return newList;
+          if (prev[i]?.paid_cents !== newList[i].paid_cents) return newList;
+        }
+        return prev;
+      });
+    } else {
+      setPurchases(newList);
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const list = await sb.select(token, "purchases", {
-        filter: `company_id=eq.${company.id}`,
-        order: "issue_date.desc.nullslast"
-      });
-      if (alive) {
-        setPurchases(list || []);
-        setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
+    let timer = null;
+    refreshPurchases(false);
+    const unsubscribe = subscribe(token, "purchases", `company_id=eq.${company.id}`,
+      () => { if (alive) refreshPurchases(true); });
+    timer = setInterval(() => { if (alive) refreshPurchases(true); }, 60000);
+    function onVisibility() {
+      if (alive && document.visibilityState === "visible") refreshPurchases(true);
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token, company.id]);
 
-  const filtered = purchases.filter((p) => {
+  // ── Toast helper ──
+  function showToast(msg, type = "success") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2500);
+  }
+
+  // ── Filtrage ──
+  const filtered = useMemo(() => purchases.filter((p) => {
     const s = search.toLowerCase().trim();
     const matchS = !s || (p.vendor_name || "").toLowerCase().includes(s) || (p.number || "").toLowerCase().includes(s);
-    const matchF = statusFilter === "all" || p.status === statusFilter;
+    let matchF = true;
+    if (statusFilter === "all") matchF = true;
+    else if (statusFilter === "active") matchF = ["pending", "validated", "partial"].includes(p.status);
+    else matchF = p.status === statusFilter;
     return matchS && matchF;
-  });
+  }), [purchases, search, statusFilter]);
 
-  const totalHT = purchases
-    .filter((p) => ["validated","paid","pending"].includes(p.status))
-    .reduce((s, p) => s + (p.subtotal_ht_cents || 0), 0);
-  const totalVAT = purchases
-    .filter((p) => ["validated","paid"].includes(p.status))
-    .reduce((s, p) => s + (p.vat_total_cents || 0), 0);
+  // ── Stats header ──
+  const totalHT = useMemo(() => purchases
+    .filter((p) => ["validated", "paid", "partial", "pending"].includes(p.status))
+    .reduce((s, p) => s + (p.subtotal_ht_cents || 0), 0), [purchases]);
+  const totalVAT = useMemo(() => purchases
+    .filter((p) => ["validated", "paid", "partial"].includes(p.status))
+    .reduce((s, p) => s + (p.vat_total_cents || 0), 0), [purchases]);
+
+  // ── Actions rapides sur ligne ──
+  async function quickSetStatus(p, newStatus) {
+    setActionLoading(p.id);
+    const updates = { status: newStatus, updated_at: new Date().toISOString() };
+    if (newStatus === "paid") {
+      updates.paid_at = todayISO();
+      updates.paid_cents = p.total_ttc_cents || 0;
+    } else if (newStatus === "pending") {
+      updates.paid_at = null;
+      updates.paid_cents = 0;
+    }
+    const r = await sb.update(token, "purchases", `id=eq.${p.id}`, updates);
+    if (r) {
+      showToast(`Achat ${newStatus === "paid" ? "marqué payé" : "remis en attente"} ✓`);
+      capture("purchase_status_changed", { from: p.status, to: newStatus });
+    } else {
+      showToast("Erreur mise à jour", "error");
+    }
+    setActionLoading(null);
+  }
+
+  async function deletePurchase(p) {
+    setActionLoading(p.id);
+    const r = await sb.delete(token, "purchases", `id=eq.${p.id}`);
+    if (r !== null) {
+      showToast("Achat supprimé");
+      capture("purchase_deleted");
+    } else {
+      showToast("Erreur suppression", "error");
+    }
+    setActionLoading(null);
+    setConfirmDelete(null);
+  }
+
+  // ── Menu kebab : position fixed (anti overflow) ──
+  function openKebab(e, p) {
+    e.stopPropagation();
+    if (openMenu === p.id) {
+      setOpenMenu(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setMenuPos({
+      top: rect.bottom + window.scrollY + 4,
+      left: Math.max(12, rect.right - 200 + window.scrollX)
+    });
+    setOpenMenu(p.id);
+  }
+
+  useEffect(() => {
+    if (!openMenu) return;
+    function close() { setOpenMenu(null); }
+    const t = setTimeout(() => {
+      document.addEventListener("mousedown", close);
+      window.addEventListener("scroll", close, true);
+      window.addEventListener("resize", close);
+    }, 50);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [openMenu]);
+
+  // ── PDF viewer : signed URL ──
+  async function viewDocument(p) {
+    if (!p.file_url) {
+      showToast("Aucun document attaché", "error");
+      return;
+    }
+    const signed = await sb.getSignedUrl(token, "purchases-attach", p.file_url, 600);
+    if (signed) {
+      setViewing({ url: signed, purchase: p });
+    } else {
+      showToast("Impossible d'accéder au document", "error");
+    }
+  }
+
+  // Compteurs pour les tabs
+  const counts = useMemo(() => ({
+    all: purchases.length,
+    active: purchases.filter((p) => ["pending", "validated", "partial"].includes(p.status)).length,
+    pending: purchases.filter((p) => p.status === "pending").length,
+    partial: purchases.filter((p) => p.status === "partial").length,
+    paid: purchases.filter((p) => p.status === "paid").length
+  }), [purchases]);
 
   return (
     <div className="page">
@@ -88,15 +224,35 @@ export function PurchasesPage({ token, company }) {
           onChange={(e) => setSearch(e.target.value)}
         />
         <div className="tabs" style={{ margin: 0 }}>
-          <button className={"tab" + (statusFilter === "all" ? " active" : "")} onClick={() => setStatusFilter("all")}>Tous ({purchases.length})</button>
-          {Object.entries(PURCHASE_STATUTS).map(([k, s]) => {
-            const count = purchases.filter((p) => p.status === k).length;
-            return count > 0 ? (
-              <button key={k} className={"tab" + (statusFilter === k ? " active" : "")} onClick={() => setStatusFilter(k)}>
-                {s.icon} {s.label} ({count})
-              </button>
-            ) : null;
-          })}
+          <button
+            className={"tab" + (statusFilter === "active" ? " active" : "")}
+            onClick={() => setStatusFilter("active")}
+            title="Factures en cours (en attente, validées, partiellement payées)"
+          >
+            ⏳ EN COURS ({counts.active})
+          </button>
+          <button
+            className={"tab" + (statusFilter === "all" ? " active" : "")}
+            onClick={() => setStatusFilter("all")}
+          >
+            Tous ({counts.all})
+          </button>
+          {counts.partial > 0 && (
+            <button
+              className={"tab" + (statusFilter === "partial" ? " active" : "")}
+              onClick={() => setStatusFilter("partial")}
+            >
+              💸 Partielle ({counts.partial})
+            </button>
+          )}
+          {counts.paid > 0 && (
+            <button
+              className={"tab" + (statusFilter === "paid" ? " active" : "")}
+              onClick={() => setStatusFilter("paid")}
+            >
+              💰 Payée ({counts.paid})
+            </button>
+          )}
         </div>
       </div>
 
@@ -132,38 +288,147 @@ export function PurchasesPage({ token, company }) {
                 <th style={{ textAlign: "right" }}>TVA</th>
                 <th style={{ textAlign: "right" }}>TTC</th>
                 <th>Statut</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
-                <tr key={p.id} style={{ cursor: "pointer" }} onClick={() => setEditing(p)}>
-                  <td>{fmtDate(p.issue_date)}</td>
-                  <td>
-                    {p.vendor_name}
-                    {p.ocr_status === "done" && (
-                      <span style={{ marginLeft: 6, fontSize: 9, color: "var(--green)" }} title="OCR validé">🤖</span>
-                    )}
-                  </td>
-                  <td className="mono">{p.number || "—"}</td>
-                  <td>
-                    {p.accounting_code && <span className="mono" style={{ fontSize: 11 }}>{p.accounting_code}</span>}
-                    {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>{p.category}</span>}
-                  </td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.subtotal_ht_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.vat_total_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtEUR(p.total_ttc_cents)}</td>
-                  <td>
-                    <span className={"badge " + PURCHASE_STATUTS[p.status]?.cls}>
-                      {PURCHASE_STATUTS[p.status]?.icon} {PURCHASE_STATUTS[p.status]?.label}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((p) => {
+                const isPaid = p.status === "paid";
+                const isPending = p.status === "pending" || p.status === "validated";
+                const isPartial = p.status === "partial";
+                const remaining = (p.total_ttc_cents || 0) - (p.paid_cents || 0);
+                return (
+                  <tr key={p.id}>
+                    <td>{fmtDate(p.issue_date)}</td>
+                    <td>
+                      {p.vendor_name}
+                      {p.ocr_status === "done" && (
+                        <span style={{ marginLeft: 6, fontSize: 9, color: "var(--green)" }} title="OCR validé">🤖</span>
+                      )}
+                    </td>
+                    <td className="mono">{p.number || "—"}</td>
+                    <td>
+                      {p.accounting_code && <span className="mono" style={{ fontSize: 11 }}>{p.accounting_code}</span>}
+                      {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>{p.category}</span>}
+                    </td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.subtotal_ht_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.vat_total_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>
+                      {fmtEUR(p.total_ttc_cents)}
+                      {isPartial && (
+                        <div style={{ fontSize: 9, color: "var(--gold)", marginTop: 2 }}>
+                          Reste : {fmtEUR(remaining)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <span className={"badge " + PURCHASE_STATUTS[p.status]?.cls}>
+                        {PURCHASE_STATUTS[p.status]?.icon} {PURCHASE_STATUTS[p.status]?.label}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        {/* Voir */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => p.file_url ? viewDocument(p) : setEditing(p)}
+                          style={{ padding: "5px 10px", fontSize: 11 }}
+                          title={p.file_url ? "Voir le document scanné" : "Voir les détails"}
+                        >
+                          👁 Voir
+                        </button>
+
+                        {/* Action rapide selon statut */}
+                        {(isPending || isPartial) && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => quickSetStatus(p, "paid")}
+                            disabled={actionLoading === p.id}
+                            style={{
+                              padding: "5px 10px", fontSize: 11,
+                              color: "var(--green)", borderColor: "rgba(62,207,122,0.4)",
+                              whiteSpace: "nowrap"
+                            }}
+                            title="Marquer comme payée"
+                          >
+                            {actionLoading === p.id ? "⏳" : "💰 Payé"}
+                          </button>
+                        )}
+                        {isPaid && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => quickSetStatus(p, "pending")}
+                            disabled={actionLoading === p.id}
+                            style={{
+                              padding: "5px 10px", fontSize: 11,
+                              color: "var(--muted)", borderColor: "var(--border2)",
+                              whiteSpace: "nowrap"
+                            }}
+                            title="Remettre en attente"
+                          >
+                            {actionLoading === p.id ? "⏳" : "⏳ En attente"}
+                          </button>
+                        )}
+
+                        {/* Kebab */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={(e) => openKebab(e, p)}
+                          style={{ padding: "5px 8px", fontSize: 13 }}
+                          title="Plus d'actions"
+                        >
+                          ⋯
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
+      {/* ─── Menu kebab (position fixed) ─── */}
+      {openMenu && menuPos && (() => {
+        const p = purchases.find((x) => x.id === openMenu);
+        if (!p) return null;
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              top: menuPos.top, left: menuPos.left,
+              background: "var(--card)", border: "1px solid var(--border2)",
+              borderRadius: 8, zIndex: 9999, minWidth: 200,
+              boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+              overflow: "hidden"
+            }}
+          >
+            <KebabItem icon="✏️" label="Modifier" onClick={() => { setEditing(p); setOpenMenu(null); }} />
+            {(p.status === "pending" || p.status === "validated" || p.status === "partial") && (
+              <KebabItem icon="💸" label="Paiement partiel" onClick={() => { setPartialFor(p); setOpenMenu(null); }} />
+            )}
+            <KebabItem icon="🗑️" label="Supprimer" danger onClick={() => { setConfirmDelete(p); setOpenMenu(null); }} />
+          </div>
+        );
+      })()}
+
+      {/* ─── Toast ─── */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 24, right: 24, zIndex: 10000,
+          padding: "10px 18px", borderRadius: 8,
+          background: toast.type === "error" ? "rgba(255,82,82,0.95)" : "rgba(62,207,122,0.95)",
+          color: "#0b0c10", fontSize: 13, fontWeight: 600,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)"
+        }}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* ─── Modale modification / création ─── */}
       {editing && (
         <PurchaseModal
           token={token}
@@ -183,6 +448,298 @@ export function PurchasesPage({ token, company }) {
           onClose={() => setEditing(null)}
         />
       )}
+
+      {/* ─── Modale PDF viewer ─── */}
+      {viewing && (
+        <PdfViewerModal
+          url={viewing.url}
+          purchase={viewing.purchase}
+          onEdit={() => { setEditing(viewing.purchase); setViewing(null); }}
+          onClose={() => setViewing(null)}
+        />
+      )}
+
+      {/* ─── Modale paiement partiel ─── */}
+      {partialFor && (
+        <PartialPaymentModal
+          token={token}
+          purchase={partialFor}
+          onClose={() => setPartialFor(null)}
+          onSaved={() => {
+            setPartialFor(null);
+            showToast("Paiement enregistré ✓");
+          }}
+        />
+      )}
+
+      {/* ─── Confirmation suppression ─── */}
+      {confirmDelete && (
+        <div className="modal-bg" onClick={() => setConfirmDelete(null)}>
+          <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-hd">
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Supprimer cet achat ?</div>
+              <button className="close-btn" onClick={() => setConfirmDelete(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: "var(--muted2)", lineHeight: 1.6 }}>
+                L'achat <strong>{confirmDelete.vendor_name}</strong>
+                {confirmDelete.number ? ` (${confirmDelete.number})` : ""} de {fmtEUR(confirmDelete.total_ttc_cents)} sera supprimé définitivement.
+              </p>
+              <p style={{ fontSize: 12, color: "var(--orange)", marginTop: 10 }}>
+                ⚠️ Cette action est irréversible. Le document attaché sera également supprimé.
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>Annuler</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => deletePurchase(confirmDelete)}
+                disabled={actionLoading === confirmDelete.id}
+                style={{ background: "var(--red)", borderColor: "var(--red)", color: "#fff" }}
+              >
+                {actionLoading === confirmDelete.id ? "Suppression..." : "Supprimer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Item menu kebab ─── */
+function KebabItem({ icon, label, onClick, danger }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        width: "100%", padding: "10px 14px", border: "none",
+        background: "transparent",
+        color: danger ? "var(--red)" : "var(--text)",
+        cursor: "pointer", fontSize: 12, textAlign: "left",
+        fontFamily: "inherit",
+        transition: "background 0.15s"
+      }}
+      onMouseEnter={(e) => e.currentTarget.style.background = "var(--card2)"}
+      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+    >
+      <span style={{ fontSize: 14 }}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+/* ─── Modale viewer PDF ─── */
+function PdfViewerModal({ url, purchase, onEdit, onClose }) {
+  const isImage = (purchase.file_mime || "").startsWith("image/");
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, width: "92vw", height: "85vh", display: "flex", flexDirection: "column" }}>
+        <div className="modal-hd">
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>
+              {purchase.vendor_name}
+              {purchase.number && <span style={{ color: "var(--muted)", fontWeight: 400, marginLeft: 8 }}>· {purchase.number}</span>}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              {fmtDate(purchase.issue_date)} · {fmtEUR(purchase.total_ttc_cents)} TTC
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={onEdit}
+              style={{ padding: "5px 12px", fontSize: 11 }}
+            >
+              ✏️ Modifier
+            </button>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-ghost btn-sm"
+              style={{ padding: "5px 12px", fontSize: 11, textDecoration: "none" }}
+            >
+              ⬇ Télécharger
+            </a>
+            <button className="close-btn" onClick={onClose}>×</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
+          {isImage ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "auto" }}>
+              <img src={url} alt={purchase.vendor_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            </div>
+          ) : (
+            <iframe src={url} title={purchase.vendor_name} style={{ width: "100%", height: "100%", border: "none" }} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Modale paiement partiel ─── */
+function PartialPaymentModal({ token, purchase, onClose, onSaved }) {
+  const totalTtc = purchase.total_ttc_cents || 0;
+  const alreadyPaid = purchase.paid_cents || 0;
+  const remaining = totalTtc - alreadyPaid;
+  const [amount, setAmount] = useState(fromCents(remaining).toFixed(2));
+  const [paidAt, setPaidAt] = useState(todayISO());
+  const [method, setMethod] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const amountCents = toCents(amount);
+  const newTotal = alreadyPaid + amountCents;
+  const newRemaining = totalTtc - newTotal;
+  const willBeFullyPaid = newRemaining <= 0;
+
+  async function save() {
+    setErr("");
+    if (!amount || amountCents <= 0) {
+      setErr("Montant invalide");
+      return;
+    }
+    if (newTotal > totalTtc) {
+      setErr(`Le montant total (${fmtEUR(newTotal)}) dépasse le TTC de la facture (${fmtEUR(totalTtc)}).`);
+      return;
+    }
+    setSaving(true);
+    const newStatus = willBeFullyPaid ? "paid" : "partial";
+    const updates = {
+      paid_cents: newTotal,
+      status: newStatus,
+      payment_partial_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    if (willBeFullyPaid) {
+      updates.paid_at = paidAt;
+    }
+    if (method) updates.payment_method = method;
+    if (notes) {
+      const existingNotes = purchase.notes || "";
+      const sep = existingNotes ? "\n" : "";
+      updates.notes = existingNotes + sep + `[${fmtDate(paidAt)}] Paiement ${fmtEUR(amountCents)}${method ? ` (${method})` : ""}${notes ? ` — ${notes}` : ""}`;
+    }
+    const r = await sb.update(token, "purchases", `id=eq.${purchase.id}`, updates);
+    setSaving(false);
+    if (r) {
+      capture("purchase_partial_payment", { amount: amountCents, fully_paid: willBeFullyPaid });
+      onSaved();
+    } else {
+      setErr("Erreur d'enregistrement");
+    }
+  }
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal modal-md" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-hd">
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>💸 Paiement partiel</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              {purchase.vendor_name}
+              {purchase.number && ` · ${purchase.number}`}
+            </div>
+          </div>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          {/* Récap */}
+          <div style={{
+            background: "var(--card2)", padding: 14, borderRadius: 8,
+            marginBottom: 18, fontSize: 12, lineHeight: 1.8
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--muted)" }}>Total TTC :</span>
+              <span className="mono" style={{ fontWeight: 600 }}>{fmtEUR(totalTtc)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--muted)" }}>Déjà payé :</span>
+              <span className="mono" style={{ color: "var(--green)" }}>{fmtEUR(alreadyPaid)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border)", paddingTop: 6, marginTop: 4 }}>
+              <span style={{ color: "var(--muted)" }}>Reste à payer :</span>
+              <span className="mono" style={{ color: "var(--gold)", fontWeight: 600 }}>{fmtEUR(remaining)}</span>
+            </div>
+          </div>
+
+          {err && <div className="auth-error" style={{ marginBottom: 14 }}>{err}</div>}
+
+          <div className="form-row">
+            <label className="form-label">Montant payé maintenant (€ TTC)</label>
+            <input
+              className="form-input mono"
+              type="number"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="form-row">
+            <label className="form-label">Date du paiement</label>
+            <input
+              className="form-input"
+              type="date"
+              value={paidAt}
+              onChange={(e) => setPaidAt(e.target.value)}
+            />
+          </div>
+
+          <div className="form-row">
+            <label className="form-label">Moyen de paiement (optionnel)</label>
+            <input
+              className="form-input"
+              placeholder="Virement, CB, espèces..."
+              value={method}
+              onChange={(e) => setMethod(e.target.value)}
+            />
+          </div>
+
+          <div className="form-row">
+            <label className="form-label">Note (optionnel)</label>
+            <input
+              className="form-input"
+              placeholder="Référence virement, n° chèque..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+
+          {/* Aperçu après paiement */}
+          {amountCents > 0 && amountCents <= remaining && (
+            <div style={{
+              background: willBeFullyPaid ? "rgba(62,207,122,0.10)" : "rgba(212,168,67,0.10)",
+              border: "1px solid " + (willBeFullyPaid ? "rgba(62,207,122,0.4)" : "rgba(212,168,67,0.4)"),
+              padding: 12, borderRadius: 8, marginTop: 14, fontSize: 12, lineHeight: 1.6
+            }}>
+              {willBeFullyPaid ? (
+                <>
+                  ✅ <strong>Facture entièrement payée</strong> après ce paiement.
+                  <br />Le statut passera en <strong style={{ color: "var(--green)" }}>Payée</strong>.
+                </>
+              ) : (
+                <>
+                  💸 Il restera <strong className="mono">{fmtEUR(newRemaining)}</strong> à payer après ce versement.
+                  <br />Statut : <strong style={{ color: "var(--gold)" }}>Partiellement payée</strong>.
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || !amount || amountCents <= 0}>
+            {saving ? "Enregistrement..." : (willBeFullyPaid ? "💰 Marquer comme payée" : "💸 Enregistrer paiement")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

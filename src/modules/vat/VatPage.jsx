@@ -28,7 +28,7 @@ export function VatPage({ token, company }) {
           order: "issue_date.desc"
         }),
         sb.select(token, "purchases", {
-          filter: `company_id=eq.${company.id}&status=in.(validated,paid)`,
+          filter: `company_id=eq.${company.id}&status=in.(validated,paid,partial,pending)`,
           order: "issue_date.desc"
         })
       ]);

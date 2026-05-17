@@ -34,7 +34,7 @@ export function DashboardPage({ token, company }) {
         const newStats = s || {};
         if (!prev) return newStats;
         // Comparaison shallow des cles principales
-        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "dso_days"];
+        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "vat_deductible_pending_cents", "dso_days"];
         for (const k of keys) {
           if (prev[k] !== newStats[k]) return newStats;
         }
@@ -117,13 +117,32 @@ export function DashboardPage({ token, company }) {
             {loading ? "" : `${stats?.unpaid_count || 0} ${t("facture(s) en attente")}`}
           </div>
         </div>
-        {company.modules?.vat && (
-          <div className="kpi">
-            <div className="kpi-label">{t("TVA collectée") + " (" + t("Mois").toLowerCase() + ")"}</div>
-            <div className="kpi-val">{loading ? "—" : fmtEUR(stats?.vat_collected_pending_cents)}</div>
-            <div className="kpi-foot">{t("À déclarer prochainement") || "À déclarer prochainement"}</div>
-          </div>
-        )}
+        {company.modules?.vat && (() => {
+          const collected = stats?.vat_collected_pending_cents || 0;
+          const deductible = stats?.vat_deductible_pending_cents || 0;
+          const net = collected - deductible;
+          const isCredit = net < 0; // crédit TVA en faveur de l'entreprise
+          return (
+            <div className="kpi">
+              <div className="kpi-label">{t("TVA nette") || "TVA nette"} ({t("Mois").toLowerCase()})</div>
+              <div className="kpi-val" style={{ color: isCredit ? "var(--green)" : "var(--gold)" }}>
+                {loading ? "—" : (isCredit ? "−" : "") + fmtEUR(Math.abs(net))}
+              </div>
+              <div className="kpi-foot" style={{ fontSize: 10 }}>
+                {loading ? "" : (
+                  <>
+                    {fmtEUR(collected)} collectée − {fmtEUR(deductible)} déductible
+                    <br />
+                    {isCredit
+                      ? <span style={{ color: "var(--green)" }}>🟢 Crédit en votre faveur</span>
+                      : <span style={{ color: "var(--gold)" }}>À reverser à l'État</span>
+                    }
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         <div className="kpi">
           <div className="kpi-label">{t("DSO moyen")}</div>
           <div className="kpi-val green">{loading ? "—" : (stats?.dso_days || 0) + " j"}</div>
