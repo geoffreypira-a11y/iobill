@@ -18,7 +18,9 @@ export function NotificationBell({ token, company, user }) {
   const [pos, setPos] = useState(null);
   const buttonRef = useRef(null);
 
-  // ── Chargement et polling ──
+  // ── Chargement et polling intelligent ──
+  // Polling toutes les 15s. On ne re-render que si la liste change
+  // vraiment (comparaison des IDs + read_at). Evite tout clignotement.
   useEffect(() => {
     let alive = true;
     let timer = null;
@@ -33,17 +35,37 @@ export function NotificationBell({ token, company, user }) {
         });
         if (!alive) return;
         const list = rows || [];
-        setItems(list);
-        setUnreadCount(list.filter((n) => !n.read_at).length);
+        // On compare avec l'etat actuel : on ne setState que si necessaire
+        setItems((prev) => {
+          if (prev.length !== list.length) return list;
+          // Comparer chaque id + read_at
+          for (let i = 0; i < list.length; i++) {
+            if (prev[i]?.id !== list[i].id) return list;
+            if (prev[i]?.read_at !== list[i].read_at) return list;
+          }
+          return prev; // pas de changement → pas de re-render
+        });
+        const newUnread = list.filter((n) => !n.read_at).length;
+        setUnreadCount((prev) => prev !== newUnread ? newUnread : prev);
       } catch {
         // silent
       }
     }
 
     load();
-    timer = setInterval(load, 60000);
+    timer = setInterval(load, 15000); // 15s
 
-    return () => { alive = false; if (timer) clearInterval(timer); };
+    // Refresh aussi quand l'onglet redevient visible (focus tab)
+    function onVisibility() {
+      if (document.visibilityState === "visible") load();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token, company.id]);
 
   // ── Fermeture sur clic exterieur / scroll / resize ──

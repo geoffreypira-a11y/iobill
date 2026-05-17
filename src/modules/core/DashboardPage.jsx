@@ -15,7 +15,9 @@ export function DashboardPage({ token, company }) {
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    let timer = null;
+
+    async function load() {
       const [s, m, inv] = await Promise.all([
         sb.rpc(token, "dashboard_stats"),
         company?.legal_form === "micro" ? sb.rpc(token, "micro_threshold_progress") : Promise.resolve(null),
@@ -26,12 +28,46 @@ export function DashboardPage({ token, company }) {
         })
       ]);
       if (!alive) return;
-      setStats(s || {});
+      // Stats : ne re-render que si changement reel
+      setStats((prev) => {
+        const newStats = s || {};
+        if (!prev) return newStats;
+        // Comparaison shallow des cles principales
+        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "dso_days"];
+        for (const k of keys) {
+          if (prev[k] !== newStats[k]) return newStats;
+        }
+        return prev;
+      });
       setMicroProgress(m);
-      setRecentInvoices(inv || []);
+      // Invoices : meme strategie
+      setRecentInvoices((prev) => {
+        const newInv = inv || [];
+        if (prev.length !== newInv.length) return newInv;
+        for (let i = 0; i < newInv.length; i++) {
+          if (prev[i]?.id !== newInv[i].id || prev[i]?.status !== newInv[i].status) {
+            return newInv;
+          }
+        }
+        return prev;
+      });
       setLoading(false);
-    })();
-    return () => { alive = false; };
+    }
+
+    load();
+    // Refresh toutes les 30s (silent : pas de re-render si rien n'a change)
+    timer = setInterval(load, 30000);
+    // Refresh quand on revient sur l'onglet
+    function onVisibility() {
+      if (document.visibilityState === "visible") load();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token, company.id, company.legal_form]);
 
   const firstName = (company?.legal_name || "").split(" ")[0] || "à vous";

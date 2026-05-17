@@ -61,7 +61,7 @@ BEGIN
     'clients_active', COALESCE((SELECT COUNT(*) FROM public.clients WHERE company_id = v_company_id AND status IN ('customer','vip')), 0),
     'quotes_pending', COALESCE((SELECT COUNT(*) FROM public.quotes WHERE company_id = v_company_id AND status = 'sent'), 0),
     'dso_days', COALESCE((
-      SELECT ROUND(AVG(EXTRACT(EPOCH FROM (p.paid_at - i.issue_date)) / 86400)::NUMERIC, 1)
+      SELECT ROUND(AVG(EXTRACT(EPOCH FROM (p.paid_at - i.issue_date::TIMESTAMPTZ)) / 86400.0)::NUMERIC, 1)
       FROM public.invoices i
       JOIN public.payments p ON p.invoice_id = i.id
       WHERE i.company_id = v_company_id
@@ -361,8 +361,13 @@ GRANT EXECUTE ON FUNCTION public.mark_all_notifications_read(UUID) TO authentica
 -- ───────────────────────────────────────────────────────────
 -- 7) consume_public_token : retourner use_count (utile pour notif "consulté")
 -- ───────────────────────────────────────────────────────────
+-- IMPORTANT : on doit DROP d'abord car on change la signature de retour
+-- (ajout de la colonne use_count). Postgres refuse CREATE OR REPLACE
+-- quand le type de retour change.
 
-CREATE OR REPLACE FUNCTION public.consume_public_token(p_token TEXT, p_ip INET DEFAULT NULL)
+DROP FUNCTION IF EXISTS public.consume_public_token(TEXT, INET);
+
+CREATE FUNCTION public.consume_public_token(p_token TEXT, p_ip INET DEFAULT NULL)
 RETURNS TABLE (
   company_id UUID,
   scope TEXT,
