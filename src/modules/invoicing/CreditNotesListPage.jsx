@@ -14,6 +14,9 @@ export function CreditNotesListPage({ token, company }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // Modale "Nouvel avoir" : sélection de la facture source
+  const [showPicker, setShowPicker] = useState(false);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -60,6 +63,9 @@ export function CreditNotesListPage({ token, company }) {
             {items.length} avoir{items.length > 1 ? "s" : ""} · {fmtEUR(totalIssued)} émis
           </div>
         </div>
+        <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
+          <Icon name="plus" size={14} /> Nouvel avoir
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
@@ -98,7 +104,7 @@ export function CreditNotesListPage({ token, company }) {
             {search || statusFilter !== "all" ? "Aucun avoir ne correspond" : "Aucun avoir pour l'instant"}
           </div>
           <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 16 }}>
-            Pour créer un avoir, ouvrez une facture émise et cliquez sur « Créer un avoir ».
+            Cliquez sur « Nouvel avoir » ci-dessus, ou ouvrez une facture émise et choisissez « Créer un avoir » dans le menu.
           </div>
           {(search || statusFilter !== "all") && (
             <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatusFilter("all"); }}>
@@ -149,6 +155,108 @@ export function CreditNotesListPage({ token, company }) {
           </table>
         </div>
       )}
+
+      {showPicker && (
+        <InvoicePickerModal
+          token={token}
+          company={company}
+          onCancel={() => setShowPicker(false)}
+          onPick={(invoiceId) => {
+            setShowPicker(false);
+            navigate(`/credit-notes/new?from_invoice=${invoiceId}`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modale : sélection d'une facture source pour créer un avoir ───
+function InvoicePickerModal({ token, company, onCancel, onPick }) {
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // On charge les factures émises (statuts éligibles à un avoir)
+      const list = await sb.select(token, "invoices", {
+        filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)`,
+        order: "issue_date.desc",
+        limit: 100
+      });
+      if (!alive) return;
+      setInvoices(list || []);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [token, company.id]);
+
+  const filtered = useMemo(() => {
+    const s = search.toLowerCase().trim();
+    if (!s) return invoices;
+    return invoices.filter((inv) => {
+      const name = snapshotDisplayName(inv.client_snapshot).toLowerCase();
+      return (inv.number || "").toLowerCase().includes(s) || name.includes(s);
+    });
+  }, [invoices, search]);
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="modal modal-md">
+        <div className="modal-hd">
+          <span className="modal-title">Choisir la facture à créditer</span>
+          <button className="close-btn" onClick={onCancel}>×</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 12 }}>
+            Un avoir doit toujours référencer une facture émise. Sélectionnez la facture concernée :
+          </div>
+          <input
+            className="search-input"
+            placeholder="Rechercher numéro, client..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: "100%", marginBottom: 12 }}
+          />
+          {loading ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--muted)" }}>Chargement…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--muted2)", fontSize: 13 }}>
+              {invoices.length === 0
+                ? "Aucune facture émise. Émettez d'abord une facture pour pouvoir créer un avoir."
+                : "Aucune facture ne correspond à votre recherche."}
+            </div>
+          ) : (
+            <div style={{ maxHeight: 360, overflow: "auto", border: "1px solid var(--border2)", borderRadius: 8 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>N°</th>
+                    <th>Client</th>
+                    <th>Émise le</th>
+                    <th style={{ textAlign: "right" }}>Montant TTC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((inv) => (
+                    <tr key={inv.id} onClick={() => onPick(inv.id)} style={{ cursor: "pointer" }}>
+                      <td className="mono">{inv.number}</td>
+                      <td>{snapshotDisplayName(inv.client_snapshot)}</td>
+                      <td>{fmtDate(inv.issue_date)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onCancel}>Annuler</button>
+        </div>
+      </div>
     </div>
   );
 }

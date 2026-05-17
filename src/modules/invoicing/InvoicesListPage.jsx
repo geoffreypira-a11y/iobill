@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
@@ -14,6 +14,7 @@ import { capture } from "../../lib/telemetry.js";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -227,7 +228,7 @@ export function InvoicesListPage({ token, company }) {
   async function shareLink(inv) {
     setActionLoading(`share-${inv.id}`);
     try {
-      const r = await fetch("/api/public?op=share", {
+      const r = await fetch("/api/public-share", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ scope: "invoice", resource_id: inv.id, expires_in_days: 90 })
@@ -337,6 +338,8 @@ export function InvoicesListPage({ token, company }) {
                 const canIssue = inv.status === "draft";
                 const canSend = ["issued", "sent", "partial", "overdue"].includes(inv.status);
                 const canDelete = inv.status === "draft";
+                // Avoir : possible uniquement pour les factures émises (pas brouillon, pas annulée)
+                const canCreateCreditNote = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status);
                 // Transmettre a l'admin : factures emises non encore transmises
                 const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
                 const alreadyTransmitted = !!inv.pdp_transmitted_at;
@@ -421,7 +424,7 @@ export function InvoicesListPage({ token, company }) {
                               invoice: inv,
                               right: window.innerWidth - rect.right,
                               top: rect.bottom + 4,
-                              canEdit, canDelete
+                              canEdit, canDelete, canCreateCreditNote
                             });
                           }}
                           style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
@@ -516,6 +519,11 @@ export function InvoicesListPage({ token, company }) {
           {!openMenu.canEdit && (
             <MenuItemInv onClick={() => { shareLink(openMenu.invoice); setOpenMenu(null); }}>
               🔗 Copier le lien public
+            </MenuItemInv>
+          )}
+          {openMenu.canCreateCreditNote && (
+            <MenuItemInv onClick={() => { navigate(`/credit-notes/new?from_invoice=${openMenu.invoice.id}`); setOpenMenu(null); }}>
+              ↩️ Créer un avoir
             </MenuItemInv>
           )}
           {openMenu.canDelete && (
