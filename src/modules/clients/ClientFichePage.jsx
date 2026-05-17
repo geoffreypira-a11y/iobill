@@ -5,6 +5,7 @@ import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate, fmtDateLong, initials, isEmail } from "../../lib/helpers.js";
 import { CLIENT_STATUTS, PAYMENT_SCORES } from "./constants.js";
 import { ClientModal } from "./ClientModal.jsx";
+import { creditNoteStatusBadge } from "../invoicing/creditNoteHelpers.js";
 
 export function ClientFichePage({ token, company }) {
   const { id } = useParams();
@@ -12,6 +13,7 @@ export function ClientFichePage({ token, company }) {
   const [client, setClient] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [creditNotes, setCreditNotes] = useState([]);
   const [payments, setPayments] = useState([]);
   const [interactions, setInteractions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,10 +25,11 @@ export function ClientFichePage({ token, company }) {
     let alive = true;
     (async () => {
       setLoading(true);
-      const [c, invs, qts, pays, ints] = await Promise.all([
+      const [c, invs, qts, cns, pays, ints] = await Promise.all([
         sb.selectOne(token, "clients", `id=eq.${id}`),
         sb.select(token, "invoices", { filter: `company_id=eq.${company.id}&client_id=eq.${id}`, order: "issue_date.desc" }),
         sb.select(token, "quotes", { filter: `company_id=eq.${company.id}&client_id=eq.${id}`, order: "issue_date.desc" }),
+        sb.select(token, "credit_notes", { filter: `company_id=eq.${company.id}&client_id=eq.${id}`, order: "issue_date.desc" }),
         sb.select(token, "payments", { filter: `company_id=eq.${company.id}`, order: "paid_at.desc", limit: 50 }),
         sb.select(token, "client_interactions", { filter: `client_id=eq.${id}`, order: "created_at.desc", limit: 50 })
       ]);
@@ -34,6 +37,7 @@ export function ClientFichePage({ token, company }) {
       setClient(c);
       setInvoices(invs || []);
       setQuotes(qts || []);
+      setCreditNotes(cns || []);
       // Filtre les paiements liés aux factures de ce client
       const myInvIds = new Set((invs || []).map((i) => i.id));
       setPayments((pays || []).filter((p) => myInvIds.has(p.invoice_id)));
@@ -51,9 +55,13 @@ export function ClientFichePage({ token, company }) {
   }
 
   // ─── Calculs ────────────────────────────────────────────
-  const totalCAHT = invoices
+  const totalCAHTBrut = invoices
     .filter((i) => ["issued", "sent", "partial", "paid", "overdue"].includes(i.status))
     .reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
+  const totalCreditNotesHT = creditNotes
+    .filter((c) => c.status === "issued")
+    .reduce((s, c) => s + (c.subtotal_ht_cents || 0), 0);
+  const totalCAHT = totalCAHTBrut - totalCreditNotesHT;
   const unpaidCents = invoices
     .filter((i) => ["issued", "sent", "partial", "overdue"].includes(i.status))
     .reduce((s, i) => s + ((i.total_ttc_cents || 0) - (i.paid_cents || 0)), 0);
@@ -174,7 +182,7 @@ export function ClientFichePage({ token, company }) {
             </button>
             <button className="btn btn-ghost btn-sm" onClick={async () => {
               try {
-                const r = await fetch("/api/public?op=share", {
+                const r = await fetch("/api/public-share", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ scope: "portal", resource_id: client.id, expires_in_days: 365 })
@@ -203,7 +211,14 @@ export function ClientFichePage({ token, company }) {
         <div className="kpi">
           <div className="kpi-label">CA HT total</div>
           <div className="kpi-val gold">{fmtEUR(totalCAHT)}</div>
-          <div className="kpi-foot">{invoices.length} facture{invoices.length > 1 ? "s" : ""}</div>
+          <div className="kpi-foot">
+            {invoices.length} facture{invoices.length > 1 ? "s" : ""}
+            {totalCreditNotesHT > 0 && (
+              <span style={{ color: "var(--orange)" }}>
+                {" "}· net de {fmtEUR(totalCreditNotesHT)} d'avoirs
+              </span>
+            )}
+          </div>
         </div>
         <div className="kpi">
           <div className="kpi-label">Encours</div>
@@ -372,6 +387,49 @@ export function ClientFichePage({ token, company }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Historique avoirs */}
+      {creditNotes.length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 16 }}>
+          <SectionTitle>Avoirs ({creditNotes.length})</SectionTitle>
+          <table>
+            <thead>
+              <tr>
+                <th>N°</th>
+                <th>Date</th>
+                <th>Facture liée</th>
+                <th style={{ textAlign: "right" }}>Montant TTC</th>
+                <th>Statut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {creditNotes.map((cn) => {
+                const linkedInv = invoices.find((i) => i.id === cn.invoice_id);
+                const badge = creditNoteStatusBadge(cn.status);
+                return (
+                  <tr key={cn.id} onClick={() => navigate(`/credit-notes/${cn.id}`)} style={{ cursor: "pointer" }}>
+                    <td className="mono">{cn.number}</td>
+                    <td>{fmtDate(cn.issue_date)}</td>
+                    <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
+                      {linkedInv ? linkedInv.number : "—"}
+                    </td>
+                    <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
+                      - {fmtEUR(cn.total_ttc_cents)}
+                    </td>
+                    <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
+            Total avoirs émis : <strong style={{ color: "var(--orange)" }}>- {fmtEUR(
+              creditNotes.filter((c) => c.status === "issued")
+                .reduce((s, c) => s + (c.total_ttc_cents || 0), 0)
+            )}</strong>
+          </div>
         </div>
       )}
 
