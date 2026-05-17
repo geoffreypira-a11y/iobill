@@ -42,6 +42,21 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   // ═══════════════════════════════════════════════════════════
+  // SANITIZATION AUTOMATIQUE : tous les drawText passent par
+  // winAnsiSafe() pour éviter les crashs sur les caractères
+  // Unicode non supportés par WinAnsi (StandardFonts).
+  // Sources de problèmes typiques : Intl.NumberFormat (U+202F),
+  // texte saisi par l'utilisateur (emojis, guillemets typographiques,
+  // tirets cadratin, etc.).
+  // ═══════════════════════════════════════════════════════════
+  const _origDrawText = page.drawText.bind(page);
+  page.drawText = (text, opts) => _origDrawText(winAnsiSafe(text), opts);
+  const _origWidthOfTextAtSize = font.widthOfTextAtSize.bind(font);
+  font.widthOfTextAtSize = (text, size) => _origWidthOfTextAtSize(winAnsiSafe(text), size);
+  const _origBoldWidthOfTextAtSize = fontBold.widthOfTextAtSize.bind(fontBold);
+  fontBold.widthOfTextAtSize = (text, size) => _origBoldWidthOfTextAtSize(winAnsiSafe(text), size);
+
+  // ═══════════════════════════════════════════════════════════
   // COULEUR D'ACCENTUATION : brand_color de la company
   // L'utilisateur peut la personnaliser dans les parametres.
   // Si non defini, utilise le gold IO BILL par defaut.
@@ -414,12 +429,44 @@ export function drawWrapped(page, text, x, y, maxWidth, font, size, color, lineH
 }
 
 export function formatEUR(cents) {
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format((cents || 0) / 100);
+  // Intl.NumberFormat en fr-FR sur Node 20+ utilise U+202F (NARROW NO-BREAK SPACE)
+  // entre les milliers, qui n'est PAS supporté par WinAnsi (l'encoding des
+  // StandardFonts de pdf-lib). Idem pour autres séparateurs invisibles.
+  // On sanitize la sortie pour éviter les crashs PDF.
+  return winAnsiSafe(
+    new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format((cents || 0) / 100)
+  );
 }
 
 export function formatDateFR(iso) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("fr-FR");
+  return winAnsiSafe(new Date(iso).toLocaleDateString("fr-FR"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// WINANSI SANITIZER
+// Remplace les caractères Unicode non supportés par WinAnsi (CP1252)
+// par leur équivalent ASCII le plus proche, ou les retire.
+// Évite les crashs `WinAnsi cannot encode "X"` de pdf-lib.
+// ──────────────────────────────────────────────────────────────
+export function winAnsiSafe(s) {
+  if (s == null) return "";
+  return String(s)
+    // Espaces fines / insécables non-WinAnsi → espace normal
+    .replace(/[\u2009\u200A\u200B\u202F]/g, " ")
+    // U+00A0 (non-break space) EST dans WinAnsi mais visuellement bizarre → espace normal
+    .replace(/\u00A0/g, " ")
+    // Tirets typographiques non-WinAnsi → hyphen-minus
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    // Guillemets typographiques → ASCII
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    // Puces → astérisque
+    .replace(/[\u2022\u2023\u25E6]/g, "*")
+    // Tous les autres caractères Unicode > 255 NON listés au-dessus :
+    // on retire pour être safe (sauf ceux explicitement mappés ailleurs).
+    .replace(/[\u0100-\u20AB\u20AD-\uFFFF]/g, "");
+  // Note : U+20AC (€) est PRÉSERVÉ car il est dans WinAnsi à 0x80.
 }
 
 // ──────────────────────────────────────────────────────────────
