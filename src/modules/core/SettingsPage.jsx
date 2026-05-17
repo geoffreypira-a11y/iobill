@@ -14,14 +14,13 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
       <div className="page-header">
         <div>
           <div className="page-title">PARAMÈTRES</div>
-          <div className="page-sub">Profil, modules, branding, abonnement et sécurité</div>
+          <div className="page-sub">Profil société, modules, abonnement et sécurité</div>
         </div>
       </div>
 
       <div className="tabs" style={{ marginBottom: 22, flexWrap: "wrap" }}>
         <button className={"tab" + (tab === "profile" ? " active" : "")} onClick={() => setTab("profile")}>Profil société</button>
         <button className={"tab" + (tab === "modules" ? " active" : "")} onClick={() => setTab("modules")}>Modules</button>
-        <button className={"tab" + (tab === "branding" ? " active" : "")} onClick={() => setTab("branding")}>Branding</button>
         <button className={"tab" + (tab === "billing" ? " active" : "")} onClick={() => setTab("billing")}>Abonnement</button>
         <button className={"tab" + (tab === "inbox" ? " active" : "")} onClick={() => setTab("inbox")}>📧 Inbox OCR</button>
         <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => setTab("pdp")}>🏛️ PDP</button>
@@ -31,7 +30,6 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
 
       {tab === "profile" && <ProfileTab token={token} company={company} setCompany={setCompany} />}
       {tab === "modules" && <ModulesTab token={token} company={company} setCompany={setCompany} />}
-      {tab === "branding" && <BrandingTab token={token} company={company} setCompany={setCompany} />}
       {tab === "billing" && <BillingTab token={token} company={company} setCompany={setCompany} />}
       {tab === "inbox" && <InboxTab token={token} company={company} setCompany={setCompany} />}
       {tab === "pdp" && <PdpTab token={token} company={company} setCompany={setCompany} />}
@@ -69,14 +67,18 @@ function ProfileTab({ token, company, setCompany }) {
   }
 
   return (
-    <div className="card card-pad">
-      {msg && (
-        <div className={msg.startsWith("✓") ? "auth-success" : "auth-error"} style={{ marginBottom: 16 }}>
-          {msg}
-        </div>
-      )}
+    <>
+      {/* ─── BRANDING en premier ─── */}
+      <BrandingTab token={token} company={company} setCompany={setCompany} />
 
-      <SectionTitle>Identité</SectionTitle>
+      <div className="card card-pad" style={{ marginTop: 18 }}>
+        {msg && (
+          <div className={msg.startsWith("✓") ? "auth-success" : "auth-error"} style={{ marginBottom: 16 }}>
+            {msg}
+          </div>
+        )}
+
+        <SectionTitle>Identité</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Raison sociale *" value={data.legal_name} onChange={(v) => update("legal_name", v)} />
         <Field label="Nom commercial" value={data.trade_name} onChange={(v) => update("trade_name", v)} />
@@ -145,6 +147,7 @@ function ProfileTab({ token, company, setCompany }) {
         </button>
       </div>
     </div>
+    </>
   );
 }
 

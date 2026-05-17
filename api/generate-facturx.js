@@ -91,14 +91,21 @@ export default async function handler(req, res) {
     }
     // Si elle est en draft, on l'emet maintenant
     if (inv.status === "draft") {
-      const updated = await sbAdmin.update("invoices", `id=eq.${invoiceId}`, {
-        status: "issued",
-        issued_at: new Date().toISOString()
-      });
-      if (!updated || !updated[0]) {
-        return json(res, 500, { error: "Echec de l'emission : verifiez les policies RLS sur invoices" });
+      try {
+        const updated = await sbAdmin.update("invoices", `id=eq.${invoiceId}`, {
+          status: "issued",
+          issued_at: new Date().toISOString()
+        });
+        if (!updated || !updated[0]) {
+          // sbAdmin.update logge deja l'erreur dans la console serveur
+          return json(res, 500, {
+            error: "Echec de l'emission. Si vous n'avez pas execute la migration v8.10, allez dans Supabase SQL Editor et lancez le contenu de migration_v8_10_fix_hash_chain.sql"
+          });
+        }
+        Object.assign(inv, updated[0]);
+      } catch (e) {
+        return json(res, 500, { error: "Erreur SQL emission : " + (e.message || "inconnue") });
       }
-      Object.assign(inv, updated[0]);
     }
     // Sinon (issued/sent/partial/overdue) : on continue, c'est idempotent
   }

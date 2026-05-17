@@ -45,7 +45,12 @@ export const sbAdmin = {
       headers: headers(),
       body: JSON.stringify(data)
     });
-    return r.ok ? r.json() : null;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      console.error("[sbAdmin.update] FAIL", table, filter, "status=" + r.status, "body=", errText);
+      return null;
+    }
+    return r.json();
   },
 
   async delete(table, filter) {
