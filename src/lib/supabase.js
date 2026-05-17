@@ -167,7 +167,12 @@ export const sb = {
       },
       body: file
     });
-    return r.ok ? r.json() : null;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      console.error("[uploadFile] FAIL", bucket, path, "status=" + r.status, "body=", errText);
+      return null;
+    }
+    return r.json();
   },
 
   async getSignedUrl(token, bucket, path, expiresIn = 300) {

@@ -893,7 +893,14 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
         .substring(0, 80);                 // limite longueur
       const path = `${company.id}/${uid()}-${safeName}`;
       const uploaded = await sb.uploadFile(token, "purchases-attach", path, file);
-      if (uploaded) fileUrl = path;
+      if (uploaded) {
+        fileUrl = path;
+      } else {
+        // Upload echoue : on stoppe TOUT pour eviter de creer un achat sans justificatif
+        setErr("⚠️ Impossible d'uploader le justificatif vers Supabase Storage. Vérifiez que le bucket 'purchases-attach' existe et que les policies RLS sont configurées. Détails dans la console (F12).");
+        setSaving(false);
+        return;
+      }
     }
 
     const payload = {
