@@ -182,14 +182,16 @@ export function PurchasesPage({ token, company }) {
   // ── PDF viewer : signed URL ──
   async function viewDocument(p) {
     if (!p.file_url) {
-      showToast("Aucun document attaché", "error");
+      showToast("Aucun document scanné pour cet achat — utilisez Modifier pour en attacher un", "error");
       return;
     }
+    console.log("[viewDocument] file_url:", p.file_url, "mime:", p.file_mime);
     const signed = await sb.getSignedUrl(token, "purchases-attach", p.file_url, 600);
+    console.log("[viewDocument] signed URL:", signed);
     if (signed) {
       setViewing({ url: signed, purchase: p });
     } else {
-      showToast("Impossible d'accéder au document", "error");
+      showToast("Impossible d'accéder au document (fichier introuvable ou supprimé)", "error");
     }
   }
 
@@ -328,17 +330,22 @@ export function PurchasesPage({ token, company }) {
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        {/* Voir */}
+                        {/* Voir : ouvre le PDF/image si attache, sinon toast info */}
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => p.file_url ? viewDocument(p) : setEditing(p)}
-                          style={{ padding: "5px 10px", fontSize: 11 }}
-                          title={p.file_url ? "Voir le document scanné" : "Voir les détails"}
+                          onClick={() => viewDocument(p)}
+                          style={{
+                            padding: "5px 10px", fontSize: 11, whiteSpace: "nowrap",
+                            opacity: p.file_url ? 1 : 0.5
+                          }}
+                          title={p.file_url
+                            ? "Voir le document scanné"
+                            : "Aucun document — cliquez sur Modifier pour en attacher un"}
                         >
-                          👁 Voir
+                          {p.file_url ? "👁 Voir" : "📎 —"}
                         </button>
 
-                        {/* Action rapide selon statut */}
+                        {/* Action rapide : SEULEMENT pour les non payées (Payé sur 1 clic) */}
                         {(isPending || isPartial) && (
                           <button
                             className="btn btn-ghost btn-sm"
@@ -354,23 +361,8 @@ export function PurchasesPage({ token, company }) {
                             {actionLoading === p.id ? "⏳" : "💰 Payé"}
                           </button>
                         )}
-                        {isPaid && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => quickSetStatus(p, "pending")}
-                            disabled={actionLoading === p.id}
-                            style={{
-                              padding: "5px 10px", fontSize: 11,
-                              color: "var(--muted)", borderColor: "var(--border2)",
-                              whiteSpace: "nowrap"
-                            }}
-                            title="Remettre en attente"
-                          >
-                            {actionLoading === p.id ? "⏳" : "⏳ En attente"}
-                          </button>
-                        )}
 
-                        {/* Kebab */}
+                        {/* Kebab : toujours visible */}
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={(e) => openKebab(e, p)}
@@ -409,6 +401,9 @@ export function PurchasesPage({ token, company }) {
             <KebabItem icon="✏️" label="Modifier" onClick={() => { setEditing(p); setOpenMenu(null); }} />
             {(p.status === "pending" || p.status === "validated" || p.status === "partial") && (
               <KebabItem icon="💸" label="Paiement partiel" onClick={() => { setPartialFor(p); setOpenMenu(null); }} />
+            )}
+            {p.status === "paid" && (
+              <KebabItem icon="⏳" label="Remettre en attente" onClick={() => { quickSetStatus(p, "pending"); setOpenMenu(null); }} />
             )}
             <KebabItem icon="🗑️" label="Supprimer" danger onClick={() => { setConfirmDelete(p); setOpenMenu(null); }} />
           </div>
