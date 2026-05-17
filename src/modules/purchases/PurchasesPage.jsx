@@ -225,17 +225,17 @@ export function PurchasesPage({ token, company }) {
         />
         <div className="tabs" style={{ margin: 0 }}>
           <button
-            className={"tab" + (statusFilter === "active" ? " active" : "")}
-            onClick={() => setStatusFilter("active")}
-            title="Factures en cours (en attente, validées, partiellement payées)"
-          >
-            ⏳ EN COURS ({counts.active})
-          </button>
-          <button
             className={"tab" + (statusFilter === "all" ? " active" : "")}
             onClick={() => setStatusFilter("all")}
           >
             Tous ({counts.all})
+          </button>
+          <button
+            className={"tab" + (statusFilter === "active" ? " active" : "")}
+            onClick={() => setStatusFilter("active")}
+            title="Factures en cours (en attente, validées, partiellement payées)"
+          >
+            ⏳ En cours ({counts.active})
           </button>
           {counts.partial > 0 && (
             <button
