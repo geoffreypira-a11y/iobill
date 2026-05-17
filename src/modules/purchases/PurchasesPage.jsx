@@ -342,9 +342,6 @@ export function PurchasesPage({ token, company }) {
                           title={p.file_url ? "Voir le document scanné" : "Voir les détails (aucun document attaché)"}
                         >
                           👁 Voir
-                          {!p.file_url && (
-                            <span style={{ marginLeft: 4, color: "var(--muted)", fontSize: 9 }} title="Pas de document attaché">📎</span>
-                          )}
                         </button>
 
                         {/* Action rapide : SEULEMENT pour les non payées (Payé sur 1 clic) */}
