@@ -883,7 +883,15 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
     // 1. Si fichier, on upload vers Storage
     let fileUrl = purchase?.file_url || null;
     if (file) {
-      const path = `${company.id}/${uid()}-${file.name}`;
+      // Sanitize le nom de fichier : enleve espaces, accents, caracteres speciaux
+      // pour eviter les problemes d'encodage URL avec Supabase Storage.
+      const safeName = file.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")   // supprime les accents
+        .replace(/[^a-zA-Z0-9._-]/g, "_")  // remplace tout caractere non-safe par _
+        .replace(/_+/g, "_")               // dedoublonne les underscores
+        .substring(0, 80);                 // limite longueur
+      const path = `${company.id}/${uid()}-${safeName}`;
       const uploaded = await sb.uploadFile(token, "purchases-attach", path, file);
       if (uploaded) fileUrl = path;
     }

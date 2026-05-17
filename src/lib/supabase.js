@@ -155,7 +155,9 @@ export const sb = {
 
   /* ─── STORAGE ─────────────────────────────────────────── */
   async uploadFile(token, bucket, path, file) {
-    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+    // Encoder chaque segment pour eviter les bugs avec espaces/accents
+    const safePath = path.split("/").map(encodeURIComponent).join("/");
+    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${safePath}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -169,7 +171,10 @@ export const sb = {
   },
 
   async getSignedUrl(token, bucket, path, expiresIn = 300) {
-    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`, {
+    // Encoder chaque segment du path (sans toucher aux /) pour gerer les
+    // noms de fichiers avec espaces, accents, etc. dans les anciens fichiers.
+    const safePath = path.split("/").map(encodeURIComponent).join("/");
+    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${safePath}`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify({ expiresIn })
