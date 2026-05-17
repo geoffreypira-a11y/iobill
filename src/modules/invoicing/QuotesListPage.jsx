@@ -381,12 +381,12 @@ export function QuotesListPage({ token, company }) {
         <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
         <td>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
-            {/* Bouton principal : Voir / Modifier */}
+            {/* Bouton principal : Voir (preview PDF) si readonly, sinon Modifier */}
             <button
               className="btn btn-primary btn-sm"
-              onClick={() => setEditModal(q)}
+              onClick={() => canEdit ? setEditModal(q) : setPreviewQuote(q)}
               style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
-              title={canEdit ? "Modifier ce devis" : "Voir le devis"}
+              title={canEdit ? "Modifier ce devis" : "Aperçu du devis avec son historique"}
             >
               {canEdit ? "✏️ Modifier" : "👁 Voir"}
             </button>
@@ -593,6 +593,9 @@ export function QuotesListPage({ token, company }) {
           docType="quote"
           doc={previewQuote}
           onClose={() => setPreviewQuote(null)}
+          onSend={async (q) => {
+            await sendQuote(q);
+          }}
         />
       )}
 

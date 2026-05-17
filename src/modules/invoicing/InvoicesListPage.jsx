@@ -116,25 +116,44 @@ export function InvoicesListPage({ token, company }) {
   async function issueInvoice(inv) {
     setActionLoading(`issue-${inv.id}`);
     try {
-      const updated = await sb.update(token, "invoices", `id=eq.${inv.id}`, {
-        status: "issued",
-        issued_at: new Date().toISOString()
-      });
-      if (!updated?.[0]) throw new Error("Erreur émission");
-      capture("invoice_issued", { invoice_id: inv.id });
-
-      // Génération facturx automatique (en async)
-      fetch("/api/generate-facturx", {
+      // On delegue tout au serveur : UPDATE statut + generation Factur-X en une seule API call
+      // (evite la race condition entre UPDATE frontend et lecture serveur)
+      const r = await fetch("/api/generate-facturx", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ invoice_id: inv.id })
-      }).catch(() => {});
-
+        body: JSON.stringify({ invoice_id: inv.id, issue: true })
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `Erreur ${r.status} lors de l'emission`);
+      }
+      capture("invoice_issued", { invoice_id: inv.id });
       await refreshInvoices();
       setPendingIssue(null);
-      showToast(`Facture ${inv.number} émise !`);
+      showToast(`Facture ${inv.number} émise et PDF Factur-X généré !`);
     } catch (e) {
       showToast(e.message || "Erreur émission", "error");
+    }
+    setActionLoading(null);
+  }
+
+  async function transmitToAdmin(inv) {
+    setActionLoading(`transmit-${inv.id}`);
+    try {
+      const r = await fetch("/api/generate-facturx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ invoice_id: inv.id, transmit_pdp: true })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(j.error || `Erreur ${r.status}`);
+      }
+      capture("invoice_pdp_transmitted", { invoice_id: inv.id, provider: j.provider });
+      await refreshInvoices();
+      showToast(`Facture transmise via ${j.provider || "PDP"} (ID: ${j.transmission_id || "?"})`);
+    } catch (e) {
+      showToast(e.message || "Erreur transmission PDP", "error");
     }
     setActionLoading(null);
   }
@@ -276,6 +295,9 @@ export function InvoicesListPage({ token, company }) {
                 const canIssue = inv.status === "draft";
                 const canSend = ["issued", "sent", "partial", "overdue"].includes(inv.status);
                 const canDelete = inv.status === "draft";
+                // Transmettre a l'admin : factures emises non encore transmises
+                const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
+                const alreadyTransmitted = !!inv.pdp_transmitted_at;
 
                 return (
                   <tr key={inv.id}>
@@ -289,12 +311,12 @@ export function InvoicesListPage({ token, company }) {
                     <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
                     <td>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
-                        {/* Bouton principal : Voir / Modifier */}
+                        {/* Bouton principal : Voir (preview PDF) si emise, sinon Modifier */}
                         <button
                           className="btn btn-primary btn-sm"
-                          onClick={() => setEditModal(inv)}
+                          onClick={() => canEdit ? setEditModal(inv) : setPreviewInvoice(inv)}
                           style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
-                          title={canEdit ? "Modifier cette facture" : "Voir la facture"}
+                          title={canEdit ? "Modifier cette facture" : "Aperçu PDF avec statut"}
                         >
                           {canEdit ? "✏️ Modifier" : "👁 Voir"}
                         </button>
@@ -321,6 +343,25 @@ export function InvoicesListPage({ token, company }) {
                           >
                             {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
                           </button>
+                        )}
+                        {canTransmit && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => transmitToAdmin(inv)}
+                            disabled={actionLoading === `transmit-${inv.id}`}
+                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                            title="Transmettre la facture à l'administration via votre PDP"
+                          >
+                            {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                          </button>
+                        )}
+                        {alreadyTransmitted && (
+                          <span
+                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--green)", border: "1px solid rgba(62,207,122,0.3)", borderRadius: 6, whiteSpace: "nowrap" }}
+                            title={`Transmise via ${inv.pdp_provider || "PDP"} le ${new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR")}`}
+                          >
+                            ✓ Transmise
+                          </span>
                         )}
 
                         {/* Bouton kebab : trigger, menu rendu en portail plus bas */}
@@ -404,6 +445,9 @@ export function InvoicesListPage({ token, company }) {
           docType="invoice"
           doc={previewInvoice}
           onClose={() => setPreviewInvoice(null)}
+          onSend={async (inv) => {
+            await sendInvoice(inv);
+          }}
         />
       )}
 

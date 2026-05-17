@@ -12,11 +12,12 @@ import React, { useEffect, useState } from "react";
  * - doc : objet devis/facture (pour titre)
  * - onClose() : fermeture modale
  */
-export function DocumentPreviewModal({ token, docType, doc, onClose }) {
+export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -74,6 +75,103 @@ export function DocumentPreviewModal({ token, docType, doc, onClose }) {
   const finalUrl = pdfUrl || pdfBlobUrl;
   const title = `${docType === "quote" ? "Devis" : "Facture"} ${doc.number || ""}`;
 
+  // ─── Bandeau de statut (devis signe/converti/refuse, facture payee, etc.) ───
+  let statusBanner = null;
+  if (docType === "quote") {
+    if (doc.status === "signed") {
+      const signedDate = doc.signed_at ? new Date(doc.signed_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) : null;
+      const signedTime = doc.signed_at ? new Date(doc.signed_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
+      statusBanner = {
+        bg: "rgba(62,207,122,0.12)",
+        border: "rgba(62,207,122,0.4)",
+        color: "var(--green)",
+        icon: "✓",
+        title: "Devis accepté",
+        text: `${doc.signed_by_name ? `Signé par ${doc.signed_by_name}` : "Accepté"}${signedDate ? ` le ${signedDate}` : ""}${signedTime ? ` à ${signedTime}` : ""}${doc.signed_ip ? ` (IP ${doc.signed_ip})` : ""}`
+      };
+    } else if (doc.status === "converted") {
+      const convDate = doc.signed_at ? new Date(doc.signed_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) : null;
+      statusBanner = {
+        bg: "rgba(62,207,122,0.12)",
+        border: "rgba(62,207,122,0.4)",
+        color: "var(--green)",
+        icon: "🧾",
+        title: "Devis converti en facture",
+        text: `${doc.signed_by_name ? `Signé par ${doc.signed_by_name}` : "Accepté"}${convDate ? ` le ${convDate}` : ""} puis converti en facture.`
+      };
+    } else if (doc.status === "refused") {
+      statusBanner = {
+        bg: "rgba(229,92,92,0.12)",
+        border: "rgba(229,92,92,0.4)",
+        color: "var(--red)",
+        icon: "✗",
+        title: "Devis refusé",
+        text: doc.refusal_reason ? `Motif : ${doc.refusal_reason}` : "Le client a refusé ce devis."
+      };
+    } else if (doc.status === "sent") {
+      const sentDate = doc.sent_at ? new Date(doc.sent_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) : null;
+      statusBanner = {
+        bg: "rgba(212,168,67,0.10)",
+        border: "rgba(212,168,67,0.4)",
+        color: "var(--gold)",
+        icon: "📤",
+        title: "Devis envoyé",
+        text: `Envoyé au client${sentDate ? ` le ${sentDate}` : ""} - En attente d'acceptation.`
+      };
+    }
+  } else if (docType === "invoice") {
+    if (doc.status === "paid") {
+      statusBanner = {
+        bg: "rgba(62,207,122,0.12)",
+        border: "rgba(62,207,122,0.4)",
+        color: "var(--green)",
+        icon: "💰",
+        title: "Facture payée",
+        text: "Le client a réglé l'intégralité de cette facture."
+      };
+    } else if (doc.status === "partial") {
+      statusBanner = {
+        bg: "rgba(212,168,67,0.10)",
+        border: "rgba(212,168,67,0.4)",
+        color: "var(--gold)",
+        icon: "💸",
+        title: "Paiement partiel",
+        text: `Encaissé : ${((doc.paid_cents || 0) / 100).toFixed(2)} € sur ${((doc.total_ttc_cents || 0) / 100).toFixed(2)} €`
+      };
+    } else if (doc.status === "overdue") {
+      statusBanner = {
+        bg: "rgba(229,92,92,0.12)",
+        border: "rgba(229,92,92,0.4)",
+        color: "var(--red)",
+        icon: "⚠️",
+        title: "Facture en retard",
+        text: doc.due_date ? `Échéance dépassée : ${new Date(doc.due_date).toLocaleDateString("fr-FR")}` : "Cette facture est en retard de paiement."
+      };
+    } else if (doc.status === "sent" || doc.status === "issued") {
+      const sentDate = doc.sent_at ? new Date(doc.sent_at).toLocaleDateString("fr-FR") : (doc.issued_at ? new Date(doc.issued_at).toLocaleDateString("fr-FR") : null);
+      statusBanner = {
+        bg: "rgba(212,168,67,0.10)",
+        border: "rgba(212,168,67,0.4)",
+        color: "var(--gold)",
+        icon: "📩",
+        title: doc.status === "sent" ? "Facture envoyée" : "Facture émise",
+        text: `${doc.status === "sent" ? "Envoyée" : "Émise"} le ${sentDate || "—"}${doc.due_date ? ` · Échéance ${new Date(doc.due_date).toLocaleDateString("fr-FR")}` : ""}`
+      };
+    }
+    // Surcouche : facture transmise a l'administration (PDP)
+    if (doc.pdp_transmitted_at) {
+      const transDate = new Date(doc.pdp_transmitted_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+      statusBanner = {
+        bg: "rgba(62,207,122,0.12)",
+        border: "rgba(62,207,122,0.4)",
+        color: "var(--green)",
+        icon: "🏛️",
+        title: "Transmise à l'administration",
+        text: `Via ${doc.pdp_provider || "PDP"} le ${transDate}${doc.pdp_transmission_id ? ` · ID transmission : ${doc.pdp_transmission_id}` : ""}`
+      };
+    }
+  }
+
   function handlePrint() {
     if (!finalUrl) return;
     // Ouvrir le PDF dans un nouvel onglet (le navigateur gère le print natif PDF)
@@ -122,6 +220,21 @@ export function DocumentPreviewModal({ token, docType, doc, onClose }) {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {finalUrl && !loading && (
               <>
+                {onSend && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={async () => {
+                      setSending(true);
+                      try { await onSend(doc); } catch {}
+                      setSending(false);
+                    }}
+                    disabled={sending}
+                    style={{ padding: "5px 12px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)" }}
+                    title="Envoyer par email au client"
+                  >
+                    {sending ? "⏳ Envoi..." : "📧 Envoyer"}
+                  </button>
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={handleDownload}
@@ -143,6 +256,28 @@ export function DocumentPreviewModal({ token, docType, doc, onClose }) {
             <button className="close-btn" onClick={onClose} title="Fermer">×</button>
           </div>
         </div>
+
+        {/* Bandeau de statut si applicable */}
+        {statusBanner && (
+          <div style={{
+            padding: "12px 24px",
+            background: statusBanner.bg,
+            borderBottom: `1px solid ${statusBanner.border}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 12
+          }}>
+            <div style={{ fontSize: 20, lineHeight: 1 }}>{statusBanner.icon}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: statusBanner.color, marginBottom: 2 }}>
+                {statusBanner.title}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted2)", lineHeight: 1.5 }}>
+                {statusBanner.text}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Contenu : iframe du PDF, scrollable */}
         <div style={{
