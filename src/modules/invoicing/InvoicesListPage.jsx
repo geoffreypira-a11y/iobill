@@ -54,19 +54,47 @@ export function InvoicesListPage({ token, company }) {
     }
   }, [searchParams, setSearchParams]);
 
-  async function refreshInvoices() {
-    setLoading(true);
+  async function refreshInvoices(silent = false) {
+    if (!silent) setLoading(true);
     const list = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}`,
       order: "created_at.desc",
       limit: 300
     });
-    setInvoices(list || []);
-    setLoading(false);
+    const newList = list || [];
+    if (silent) {
+      setInvoices((prev) => {
+        if (prev.length !== newList.length) return newList;
+        for (let i = 0; i < newList.length; i++) {
+          if (prev[i]?.id !== newList[i].id) return newList;
+          if (prev[i]?.status !== newList[i].status) return newList;
+          if (prev[i]?.paid_cents !== newList[i].paid_cents) return newList;
+          if (prev[i]?.pdp_transmitted_at !== newList[i].pdp_transmitted_at) return newList;
+          if (prev[i]?.sent_at !== newList[i].sent_at) return newList;
+        }
+        return prev;
+      });
+    } else {
+      setInvoices(newList);
+      setLoading(false);
+    }
   }
 
+  // Chargement initial + polling smart (30s) + refresh sur retour onglet
   useEffect(() => {
-    refreshInvoices();
+    let alive = true;
+    let timer = null;
+    refreshInvoices(false);
+    timer = setInterval(() => { if (alive) refreshInvoices(true); }, 30000);
+    function onVisibility() {
+      if (alive && document.visibilityState === "visible") refreshInvoices(true);
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token, company.id]);
 
   function effectiveStatus(inv) {

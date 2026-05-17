@@ -65,19 +65,49 @@ export function QuotesListPage({ token, company }) {
   }, [searchParams, setSearchParams]);
 
   // ─── Chargement ─────
-  async function refreshQuotes() {
-    setLoading(true);
+  // silent=true : refresh en arriere-plan, pas de "loading", pas de re-render
+  // si rien n'a change (compare ids + status).
+  async function refreshQuotes(silent = false) {
+    if (!silent) setLoading(true);
     const list = await sb.select(token, "quotes", {
       filter: `company_id=eq.${company.id}`,
       order: "issue_date.desc",
       limit: 200
     });
-    setQuotes(list || []);
-    setLoading(false);
+    const newList = list || [];
+    if (silent) {
+      // Compare avant de setState pour eviter re-render inutile
+      setQuotes((prev) => {
+        if (prev.length !== newList.length) return newList;
+        for (let i = 0; i < newList.length; i++) {
+          if (prev[i]?.id !== newList[i].id) return newList;
+          if (prev[i]?.status !== newList[i].status) return newList;
+          if (prev[i]?.signed_at !== newList[i].signed_at) return newList;
+          if (prev[i]?.refused_at !== newList[i].refused_at) return newList;
+        }
+        return prev;
+      });
+    } else {
+      setQuotes(newList);
+      setLoading(false);
+    }
   }
 
+  // Chargement initial + polling smart (30s) + refresh sur retour onglet
   useEffect(() => {
-    refreshQuotes();
+    let alive = true;
+    let timer = null;
+    refreshQuotes(false);
+    timer = setInterval(() => { if (alive) refreshQuotes(true); }, 30000);
+    function onVisibility() {
+      if (alive && document.visibilityState === "visible") refreshQuotes(true);
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token, company.id]);
 
   // ─── Filtres ─────
