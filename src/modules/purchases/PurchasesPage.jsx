@@ -243,7 +243,6 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
     setOcring(true);
     setErr("");
     try {
-      // Upload file via FormData to API route (côté serveur, on appelle Mistral OCR)
       const fd = new FormData();
       fd.append("file", file);
       fd.append("company_id", company.id);
@@ -252,28 +251,36 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
         headers: { Authorization: `Bearer ${token}` },
         body: fd
       });
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setErr("OCR indisponible (api/ocr-purchase non câblée). Saisissez les données manuellement.");
+        // Message d'erreur cible selon le status code
+        const msg = j.error || `Erreur OCR (${r.status})`;
+        setErr(msg);
         setOcring(false);
         return;
       }
-      const j = await r.json();
       // Pré-remplit le formulaire avec les données extraites
-      setData((d) => ({
-        ...d,
-        vendor_name: j.vendor_name || d.vendor_name,
-        vendor_siret: j.vendor_siret || d.vendor_siret,
-        vendor_vat_number: j.vendor_vat_number || d.vendor_vat_number,
-        number: j.number || d.number,
-        issue_date: j.issue_date || d.issue_date,
-        subtotal_ht: j.subtotal_ht ? Number(j.subtotal_ht).toFixed(2) : d.subtotal_ht,
-        vat_total: j.vat_total ? Number(j.vat_total).toFixed(2) : d.vat_total,
-        total_ttc: j.total_ttc ? Number(j.total_ttc).toFixed(2) : d.total_ttc,
-        category: j.category || d.category,
-        accounting_code: j.accounting_code || d.accounting_code
-      }));
+      const extracted = {};
+      if (j.vendor_name) extracted.vendor_name = j.vendor_name;
+      if (j.vendor_siret) extracted.vendor_siret = j.vendor_siret;
+      if (j.vendor_vat_number) extracted.vendor_vat_number = j.vendor_vat_number;
+      if (j.number) extracted.number = j.number;
+      if (j.issue_date) extracted.issue_date = j.issue_date;
+      if (j.subtotal_ht !== null && j.subtotal_ht !== undefined) extracted.subtotal_ht = Number(j.subtotal_ht).toFixed(2);
+      if (j.vat_total !== null && j.vat_total !== undefined) extracted.vat_total = Number(j.vat_total).toFixed(2);
+      if (j.total_ttc !== null && j.total_ttc !== undefined) extracted.total_ttc = Number(j.total_ttc).toFixed(2);
+      if (j.category) extracted.category = j.category;
+      if (j.accounting_code) extracted.accounting_code = j.accounting_code;
+
+      setData((d) => ({ ...d, ...extracted }));
+
+      // Compter combien de champs ont ete extraits avec succes
+      const nbExtracted = Object.keys(extracted).length;
+      if (nbExtracted === 0) {
+        setErr("Aucune donnee extraite. Verifiez la qualite du document ou saisissez manuellement.");
+      }
     } catch (e) {
-      setErr("OCR : erreur réseau. Saisissez manuellement.");
+      setErr("OCR : erreur reseau. Saisissez manuellement.");
     }
     setOcring(false);
   }
