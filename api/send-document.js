@@ -76,7 +76,7 @@ export default async function handler(req, res) {
       if (baseUrl) {
         const genEndpoint = document_type === "quote"
           ? "/api/generate-quote-pdf"
-          : (document_type === "invoice" ? "/api/generate-facturx" : null);
+          : (document_type === "invoice" || document_type === "credit_note" ? "/api/generate-facturx" : null);
 
         if (genEndpoint) {
           const genRes = await fetch(`${baseUrl}${genEndpoint}`, {
@@ -88,7 +88,7 @@ export default async function handler(req, res) {
             body: JSON.stringify(
               document_type === "quote"
                 ? { quote_id: document_id }
-                : { invoice_id: document_id }
+                : { document_type, document_id }
             )
           });
           if (genRes.ok) {

@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
 import { CREDIT_NOTE_STATUSES, creditNoteStatusBadge } from "./creditNoteHelpers.js";
 import { SkeletonTable } from "../../components/Skeleton.jsx";
+import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 
 export function CreditNotesListPage({ token, company }) {
   const navigate = useNavigate();
@@ -16,6 +17,8 @@ export function CreditNotesListPage({ token, company }) {
 
   // Modale "Nouvel avoir" : sélection de la facture source
   const [showPicker, setShowPicker] = useState(false);
+  // Aperçu de la facture source au clic sur "→ voir"
+  const [previewInvoice, setPreviewInvoice] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -135,13 +138,22 @@ export function CreditNotesListPage({ token, company }) {
                     <td>{fmtDate(c.issue_date)}</td>
                     <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
                       {c.invoice_id ? (
-                        <Link
-                          to={`/invoices/${c.invoice_id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ color: "var(--gold)", textDecoration: "none" }}
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            // Charge la facture source pour la preview
+                            const inv = await sb.selectOne(token, "invoices", `id=eq.${c.invoice_id}`);
+                            if (inv) setPreviewInvoice(inv);
+                          }}
+                          style={{
+                            background: "none", border: "none", padding: 0, cursor: "pointer",
+                            color: "var(--gold)", textDecoration: "none", fontSize: 11
+                          }}
+                          title="Aperçu de la facture liée"
                         >
                           → voir
-                        </Link>
+                        </button>
                       ) : "—"}
                     </td>
                     <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
@@ -165,6 +177,15 @@ export function CreditNotesListPage({ token, company }) {
             setShowPicker(false);
             navigate(`/credit-notes/new?from_invoice=${invoiceId}`);
           }}
+        />
+      )}
+
+      {previewInvoice && (
+        <DocumentPreviewModal
+          token={token}
+          docType="invoice"
+          doc={previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
         />
       )}
     </div>

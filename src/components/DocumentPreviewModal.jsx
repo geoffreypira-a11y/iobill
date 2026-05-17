@@ -24,9 +24,16 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
     let blobToRevoke = null;
     (async () => {
       try {
-        // Choisir le bon endpoint selon le type
+        // Choisir le bon endpoint et le bon body selon le type
         const endpoint = docType === "quote" ? "/api/generate-quote-pdf" : "/api/generate-facturx";
-        const bodyKey = docType === "quote" ? "quote_id" : "invoice_id";
+        let bodyJson;
+        if (docType === "quote") {
+          bodyJson = { quote_id: doc.id, preview: true };
+        } else if (docType === "credit_note") {
+          bodyJson = { document_type: "credit_note", document_id: doc.id, preview: true };
+        } else {
+          bodyJson = { invoice_id: doc.id, preview: true };
+        }
 
         const r = await fetch(endpoint, {
           method: "POST",
@@ -34,7 +41,7 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ [bodyKey]: doc.id, preview: true })
+          body: JSON.stringify(bodyJson)
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
@@ -73,7 +80,8 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
   }, [token, docType, doc?.id]);
 
   const finalUrl = pdfUrl || pdfBlobUrl;
-  const title = `${docType === "quote" ? "Devis" : "Facture"} ${doc.number || ""}`;
+  const titleLabel = docType === "quote" ? "Devis" : docType === "credit_note" ? "Avoir" : "Facture";
+  const title = `${titleLabel} ${doc.number || ""}`;
 
   // ─── Bandeau de statut (devis signe/converti/refuse, facture payee, etc.) ───
   let statusBanner = null;
@@ -170,6 +178,31 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
         text: `Via ${doc.pdp_provider || "PDP"} le ${transDate}${doc.pdp_transmission_id ? ` · ID transmission : ${doc.pdp_transmission_id}` : ""}`
       };
     }
+  } else if (docType === "credit_note") {
+    if (doc.status === "issued") {
+      const issuedDate = doc.issued_at
+        ? new Date(doc.issued_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
+        : null;
+      statusBanner = {
+        bg: "rgba(212,168,67,0.10)",
+        border: "rgba(212,168,67,0.4)",
+        color: "var(--gold)",
+        icon: "↩️",
+        title: "Avoir émis (verrouillé)",
+        text: `Émis${issuedDate ? ` le ${issuedDate}` : ""}. Verrouillé définitivement par chaîne de hashs.`
+      };
+    }
+    if (doc.pdp_transmitted_at) {
+      const transDate = new Date(doc.pdp_transmitted_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+      statusBanner = {
+        bg: "rgba(62,207,122,0.12)",
+        border: "rgba(62,207,122,0.4)",
+        color: "var(--green)",
+        icon: "🏛️",
+        title: "Avoir transmis à l'administration",
+        text: `Via ${doc.pdp_provider || "PDP"} le ${transDate}${doc.pdp_transmission_id ? ` · ID transmission : ${doc.pdp_transmission_id}` : ""}`
+      };
+    }
   }
 
   function handlePrint() {
@@ -188,7 +221,7 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
     if (!finalUrl) return;
     const a = document.createElement("a");
     a.href = finalUrl;
-    a.download = `${docType === "quote" ? "Devis" : "Facture"}-${(doc.number || "").replace(/[^a-zA-Z0-9-]/g, "_")}.pdf`;
+    a.download = `${titleLabel}-${(doc.number || "").replace(/[^a-zA-Z0-9-]/g, "_")}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
