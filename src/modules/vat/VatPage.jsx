@@ -28,8 +28,8 @@ export function VatPage({ token, company }) {
           order: "issue_date.desc"
         }),
         sb.select(token, "purchases", {
-          filter: `company_id=eq.${company.id}&status=in.(validated,paid,partial,pending)`,
-          order: "issue_date.desc"
+          filter: `company_id=eq.${company.id}&status=in.(paid,partial)`,
+          order: "paid_at.desc.nullslast"
         })
       ]);
       if (!alive) return;
@@ -60,9 +60,21 @@ export function VatPage({ token, company }) {
     const collectedHT = invoices
       .filter((i) => filterDate(i.issue_date))
       .reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
+    // TVA déductible : règle CGI art. 271-I-2
+    // → exigibilité = date de PAIEMENT, pas date de facture fournisseur.
+    // On filtre donc sur paid_at (status paid) ou payment_partial_at (status partial).
     const deductibleVAT = purchases
-      .filter((p) => filterDate(p.issue_date))
-      .reduce((s, p) => s + (p.vat_total_cents || 0), 0);
+      .reduce((s, p) => {
+        if (p.status === "paid" && p.paid_at && filterDate(p.paid_at)) {
+          return s + (p.vat_total_cents || 0);
+        }
+        if (p.status === "partial" && p.payment_partial_at
+            && filterDate(p.payment_partial_at) && p.total_ttc_cents > 0) {
+          const ratio = (p.paid_cents || 0) / p.total_ttc_cents;
+          return s + Math.round((p.vat_total_cents || 0) * ratio);
+        }
+        return s; // pending, validated, archived, ou hors période de paiement
+      }, 0);
     const breakdown = {};
     invoices
       .filter((i) => filterDate(i.issue_date))
@@ -104,7 +116,12 @@ export function VatPage({ token, company }) {
           return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
         }).length,
         purchases_count: purchases.filter((p) => {
-          const d = new Date(p.issue_date);
+          // On compte les achats déductibles sur la période (date d'exigibilité = paiement)
+          const payDate = p.status === "paid" ? p.paid_at
+                        : p.status === "partial" ? p.payment_partial_at
+                        : null;
+          if (!payDate) return false;
+          const d = new Date(payDate);
           return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
         }).length,
         generated_at: new Date().toISOString()
