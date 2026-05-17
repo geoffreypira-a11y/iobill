@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { sb } from "../lib/supabase.js";
+import { subscribe } from "../lib/realtime.js";
 import { fmtDate } from "../lib/helpers.js";
 
 /**
@@ -18,14 +19,15 @@ export function NotificationBell({ token, company, user }) {
   const [pos, setPos] = useState(null);
   const buttonRef = useRef(null);
 
-  // ── Chargement et polling intelligent ──
-  // Polling toutes les 15s. On ne re-render que si la liste change
-  // vraiment (comparaison des IDs + read_at). Evite tout clignotement.
+  // ── Chargement initial + Realtime WebSocket ──
+  // 1) On charge la liste une fois au montage (fetch HTTP)
+  // 2) On s'abonne via WebSocket aux changements sur la table notifications
+  //    → toute INSERT/UPDATE arrive en <1s, sans polling
+  // 3) Backup : refresh quand l'onglet redevient visible
   useEffect(() => {
     let alive = true;
-    let timer = null;
 
-    async function load() {
+    async function loadInitial() {
       try {
         const rows = await sb.select(token, "notifications", {
           filter: `company_id=eq.${company.id}`,
@@ -35,35 +37,61 @@ export function NotificationBell({ token, company, user }) {
         });
         if (!alive) return;
         const list = rows || [];
-        // On compare avec l'etat actuel : on ne setState que si necessaire
-        setItems((prev) => {
-          if (prev.length !== list.length) return list;
-          // Comparer chaque id + read_at
-          for (let i = 0; i < list.length; i++) {
-            if (prev[i]?.id !== list[i].id) return list;
-            if (prev[i]?.read_at !== list[i].read_at) return list;
-          }
-          return prev; // pas de changement → pas de re-render
-        });
-        const newUnread = list.filter((n) => !n.read_at).length;
-        setUnreadCount((prev) => prev !== newUnread ? newUnread : prev);
+        setItems(list);
+        setUnreadCount(list.filter((n) => !n.read_at).length);
       } catch {
         // silent
       }
     }
 
-    load();
-    timer = setInterval(load, 15000); // 15s
+    loadInitial();
 
-    // Refresh aussi quand l'onglet redevient visible (focus tab)
+    // ── Abonnement WebSocket : INSERT et UPDATE en temps reel ──
+    const unsubscribe = subscribe(
+      token,
+      "notifications",
+      `company_id=eq.${company.id}`,
+      (payload) => {
+        if (!alive) return;
+        const row = payload?.record || payload?.new || payload?.data;
+        const eventType = payload?.type || payload?.eventType || (payload?.record ? "INSERT" : null);
+        if (!row) {
+          // Cas ou Supabase envoie un format different : on refresh complet
+          loadInitial();
+          return;
+        }
+        if (eventType === "INSERT") {
+          setItems((prev) => {
+            // Eviter doublons si already there
+            if (prev.some((n) => n.id === row.id)) return prev;
+            return [row, ...prev].slice(0, 20);
+          });
+          if (!row.read_at) setUnreadCount((c) => c + 1);
+        } else if (eventType === "UPDATE") {
+          setItems((prev) => prev.map((n) => n.id === row.id ? row : n));
+          // Recalcul du compteur unread
+          setItems((curr) => {
+            setUnreadCount(curr.filter((n) => !n.read_at).length);
+            return curr;
+          });
+        } else if (eventType === "DELETE") {
+          setItems((prev) => prev.filter((n) => n.id !== (row.id || payload?.old?.id)));
+        } else {
+          // Type inconnu : refresh complet
+          loadInitial();
+        }
+      }
+    );
+
+    // Refresh aussi quand l'onglet redevient visible (au cas ou WS down)
     function onVisibility() {
-      if (document.visibilityState === "visible") load();
+      if (document.visibilityState === "visible") loadInitial();
     }
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       alive = false;
-      if (timer) clearInterval(timer);
+      unsubscribe();
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [token, company.id]);

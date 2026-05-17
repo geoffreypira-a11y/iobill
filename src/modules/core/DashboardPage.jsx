@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
+import { subscribe } from "../../lib/realtime.js";
 import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
 import { Icon } from "../../components/Icon.jsx";
 import { useT } from "../../lib/i18n.js";
@@ -55,8 +56,15 @@ export function DashboardPage({ token, company }) {
     }
 
     load();
-    // Refresh toutes les 30s (silent : pas de re-render si rien n'a change)
-    timer = setInterval(load, 30000);
+    // Realtime : refresh dashboard quand une facture change
+    const unsubscribeInvoices = subscribe(
+      token,
+      "invoices",
+      `company_id=eq.${company.id}`,
+      () => { if (alive) load(); }
+    );
+    // Fallback polling 60s
+    timer = setInterval(load, 60000);
     // Refresh quand on revient sur l'onglet
     function onVisibility() {
       if (document.visibilityState === "visible") load();
@@ -66,6 +74,7 @@ export function DashboardPage({ token, company }) {
     return () => {
       alive = false;
       if (timer) clearInterval(timer);
+      unsubscribeInvoices();
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [token, company.id, company.legal_form]);

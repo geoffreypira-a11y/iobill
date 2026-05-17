@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
+import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
@@ -93,19 +94,32 @@ export function QuotesListPage({ token, company }) {
     }
   }
 
-  // Chargement initial + polling smart (30s) + refresh sur retour onglet
+  // Chargement initial + Realtime WebSocket + fallback polling
   useEffect(() => {
     let alive = true;
     let timer = null;
     refreshQuotes(false);
-    timer = setInterval(() => { if (alive) refreshQuotes(true); }, 30000);
+
+    // Realtime : reaction <1s aux INSERT/UPDATE/DELETE
+    const unsubscribe = subscribe(
+      token,
+      "quotes",
+      `company_id=eq.${company.id}`,
+      () => { if (alive) refreshQuotes(true); }
+    );
+
+    // Fallback : polling 60s (au cas ou WS lache)
+    timer = setInterval(() => { if (alive) refreshQuotes(true); }, 60000);
+
     function onVisibility() {
       if (alive && document.visibilityState === "visible") refreshQuotes(true);
     }
     document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       alive = false;
       if (timer) clearInterval(timer);
+      unsubscribe();
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [token, company.id]);
