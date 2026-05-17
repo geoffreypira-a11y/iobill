@@ -312,6 +312,42 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     y -= 18;
   }
 
+  // ─── Bloc IBAN (factures non entièrement payées uniquement) ───
+  const coIban = doc.company_snapshot || company || {};
+  const hasIban = docType === "invoice"
+    && coIban.iban
+    && doc.status !== "paid"
+    && doc.status !== "canceled";
+  if (hasIban) {
+    // Encadré gold à gauche, dans la zone des totaux pour cohérence visuelle
+    const bx = 40, bw = 280;
+    // Hauteur dynamique selon nombre de lignes (titre + jusqu'à 3 lignes infos)
+    const lineCount = 1 + (coIban.bank_name ? 1 : 0) + 1 + (coIban.bic ? 1 : 0);
+    const bh = 18 + lineCount * 12 + 8;
+    // Cadre fond très léger gold (rgb diluée)
+    page.drawRectangle({
+      x: bx, y: y - bh + 10, width: bw, height: bh,
+      borderColor: brandRgb, borderWidth: 0.5,
+      color: rgb(brandRgb.red, brandRgb.green, brandRgb.blue), opacity: 0.04
+    });
+    let iy = y;
+    page.drawText("Paiement par virement bancaire", {
+      x: bx + 10, y: iy, size: 9, font: fontBold, color: brandRgb
+    });
+    iy -= 14;
+    if (coIban.bank_name) {
+      page.drawText(coIban.bank_name, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
+      iy -= 12;
+    }
+    page.drawText(`IBAN : ${coIban.iban}`, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
+    iy -= 12;
+    if (coIban.bic) {
+      page.drawText(`BIC : ${coIban.bic}`, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
+      iy -= 12;
+    }
+    // Ne pas avancer y (on a écrit à gauche, le côté droit était les totaux)
+  }
+
   // ─── Notes / Conditions ───
   if (doc.notes) {
     page.drawText("NOTES", { x: 40, y, size: 8, font: fontBold, color: COLORS.grey });

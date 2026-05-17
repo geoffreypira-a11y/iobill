@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { LogoFull } from "./Logo.jsx";
 import { Icon } from "./Icon.jsx";
@@ -11,12 +11,33 @@ import { NotificationBell } from "./NotificationBell.jsx";
 export function Sidebar({ token, company, user, onSignOut }) {
   const t = useT();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef(null);
   const [isFirmMember, setIsFirmMember] = useState(false);
   const [hasTeammates, setHasTeammates] = useState(false);
   const navigate = useNavigate();
   const modules = company?.modules || {};
 
   const close = () => setMobileOpen(false);
+
+  // Fermer le menu user au click extérieur
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function onDocClick(e) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setUserMenuOpen(false);
+      }
+    }
+    function onEsc(e) {
+      if (e.key === "Escape") setUserMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [userMenuOpen]);
 
   // Charge en arriere-plan : appartenance firm + presence d'autres membres
   useEffect(() => {
@@ -168,21 +189,77 @@ export function Sidebar({ token, company, user, onSignOut }) {
             <Icon name="settings" className="nav-icon" />
             {t("Paramètres")}
           </NavLink>
-          <div
-            className="userbox"
-            onClick={() => {
-              close();
-              navigate("/settings");
-            }}
-            title="Voir mon compte"
-          >
-            <div className="avatar">{initials(company?.legal_name || user?.email)}</div>
-            <div className="userbox-info">
-              <div className="userbox-name">{company?.legal_name || user?.email || "—"}</div>
-              <div className="userbox-plan">
-                {company?.sub_status === "active" ? "Pro · 9,90€" : company?.sub_status === "trialing" ? "Essai gratuit" : "Découverte"}
+          <div ref={userMenuRef} style={{ position: "relative" }}>
+            <div
+              className="userbox"
+              onClick={() => setUserMenuOpen((o) => !o)}
+              title={userMenuOpen ? "Fermer le menu" : "Menu utilisateur"}
+              style={{ cursor: "pointer" }}
+            >
+              <div className="avatar">{initials(company?.legal_name || user?.email)}</div>
+              <div className="userbox-info">
+                <div className="userbox-name">{company?.legal_name || user?.email || "—"}</div>
+                <div className="userbox-plan">
+                  {company?.sub_status === "active" ? "Pro · 9,90€" : company?.sub_status === "trialing" ? "Essai gratuit" : "Découverte"}
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6, transform: userMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                ▾
               </div>
             </div>
+
+            {userMenuOpen && (
+              <div style={{
+                position: "absolute",
+                bottom: "calc(100% + 6px)",
+                left: 0,
+                right: 0,
+                background: "var(--card-bg, #1a1d22)",
+                border: "1px solid var(--border, rgba(255,255,255,0.08))",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                overflow: "hidden",
+                zIndex: 100
+              }}>
+                <button
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    close();
+                    navigate("/settings");
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    width: "100%", padding: "10px 14px",
+                    background: "transparent", border: 0, cursor: "pointer",
+                    color: "var(--text)", fontSize: 13, textAlign: "left"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <Icon name="settings" style={{ width: 16, height: 16 }} />
+                  Mon compte
+                </button>
+                <div style={{ height: 1, background: "var(--border, rgba(255,255,255,0.06))" }} />
+                <button
+                  onClick={async () => {
+                    setUserMenuOpen(false);
+                    close();
+                    if (onSignOut) await onSignOut();
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    width: "100%", padding: "10px 14px",
+                    background: "transparent", border: 0, cursor: "pointer",
+                    color: "var(--red, #e0556a)", fontSize: 13, textAlign: "left"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(224,85,106,0.08)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <span style={{ fontSize: 14 }}>↪</span>
+                  Se déconnecter
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </aside>

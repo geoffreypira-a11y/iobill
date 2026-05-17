@@ -310,7 +310,7 @@ export function NotificationBell({ token, company, user }) {
             textAlign: "center", flexShrink: 0
           }}>
             <Link
-              to="/settings"
+              to="/settings?tab=notifications"
               onClick={() => setOpen(false)}
               style={{
                 fontSize: 10, color: "var(--muted)", textDecoration: "none",

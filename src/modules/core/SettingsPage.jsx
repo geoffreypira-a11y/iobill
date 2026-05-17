@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtDate, isSiret, formatSiret, isEmail } from "../../lib/helpers.js";
@@ -6,8 +7,30 @@ import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
 import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePush } from "../../lib/push.js";
 
+const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security"];
+
 export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
-  const [tab, setTab] = useState("profile");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = VALID_TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "profile";
+  const [tab, setTab] = useState(initialTab);
+
+  // Quand on change d'onglet, on synchronise l'URL (sans push history)
+  function selectTab(newTab) {
+    setTab(newTab);
+    if (newTab === "profile") {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams({ tab: newTab }, { replace: true });
+    }
+  }
+
+  // Si l'URL change depuis l'extérieur (deeplink), on resynchronise
+  useEffect(() => {
+    const urlTab = searchParams.get("tab");
+    if (VALID_TABS.includes(urlTab) && urlTab !== tab) {
+      setTab(urlTab);
+    }
+  }, [searchParams]);
 
   return (
     <div className="page" style={{ maxWidth: 1000 }}>
@@ -19,14 +42,14 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
       </div>
 
       <div className="tabs" style={{ marginBottom: 22, flexWrap: "wrap" }}>
-        <button className={"tab" + (tab === "profile" ? " active" : "")} onClick={() => setTab("profile")}>Profil société</button>
-        <button className={"tab" + (tab === "modules" ? " active" : "")} onClick={() => setTab("modules")}>Modules</button>
-        <button className={"tab" + (tab === "notifications" ? " active" : "")} onClick={() => setTab("notifications")}>🔔 Notifications</button>
-        <button className={"tab" + (tab === "billing" ? " active" : "")} onClick={() => setTab("billing")}>Abonnement</button>
-        <button className={"tab" + (tab === "inbox" ? " active" : "")} onClick={() => setTab("inbox")}>📧 Inbox OCR</button>
-        <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => setTab("pdp")}>🏛️ PDP</button>
-        <button className={"tab" + (tab === "sms" ? " active" : "")} onClick={() => setTab("sms")}>📱 SMS</button>
-        <button className={"tab" + (tab === "security" ? " active" : "")} onClick={() => setTab("security")}>Sécurité</button>
+        <button className={"tab" + (tab === "profile" ? " active" : "")} onClick={() => selectTab("profile")}>Profil société</button>
+        <button className={"tab" + (tab === "modules" ? " active" : "")} onClick={() => selectTab("modules")}>Modules</button>
+        <button className={"tab" + (tab === "notifications" ? " active" : "")} onClick={() => selectTab("notifications")}>🔔 Notifications</button>
+        <button className={"tab" + (tab === "billing" ? " active" : "")} onClick={() => selectTab("billing")}>Abonnement</button>
+        <button className={"tab" + (tab === "inbox" ? " active" : "")} onClick={() => selectTab("inbox")}>📧 Inbox OCR</button>
+        <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => selectTab("pdp")}>🏛️ PDP</button>
+        <button className={"tab" + (tab === "sms" ? " active" : "")} onClick={() => selectTab("sms")}>📱 SMS</button>
+        <button className={"tab" + (tab === "security" ? " active" : "")} onClick={() => selectTab("security")}>Sécurité</button>
       </div>
 
       {tab === "profile" && <ProfileTab token={token} company={company} setCompany={setCompany} />}
@@ -105,6 +128,17 @@ function ProfileTab({ token, company, setCompany }) {
         <Field label="Email" value={data.email} onChange={(v) => update("email", v)} />
         <Field label="Téléphone" value={data.phone} onChange={(v) => update("phone", v)} />
         <Field label="Site web" value={data.website} onChange={(v) => update("website", v)} />
+      </div>
+
+      <SectionTitle style={{ marginTop: 24 }}>Coordonnées bancaires</SectionTitle>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
+        Affichées sur les PDF de factures pour permettre à vos clients de payer par virement.
+        Laissez vide si vous ne souhaitez pas les afficher.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Nom de la banque" value={data.bank_name} onChange={(v) => update("bank_name", v)} />
+        <Field label="BIC / SWIFT" value={data.bic} onChange={(v) => update("bic", (v || "").toUpperCase().replace(/\s/g, ""))} />
+        <Field label="IBAN" value={data.iban} onChange={(v) => update("iban", (v || "").toUpperCase())} full />
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Régime fiscal</SectionTitle>

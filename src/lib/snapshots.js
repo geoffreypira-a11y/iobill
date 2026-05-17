@@ -45,6 +45,7 @@ export function buildCompanySnapshot(company) {
     website: company.website,
     iban: company.iban || null,
     bic: company.bic || null,
+    bank_name: company.bank_name || null,
     vat_regime: company.vat_regime,
     snapshot_at: new Date().toISOString()
   };

@@ -161,6 +161,34 @@ async function handleRequest(req, res) {
     return json(res, 400, { error: `${cfg.label} doit être émis avant de générer le Factur-X` });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // FAST-PATH PREVIEW : si le document est émis (donc immuable
+  // par chaîne de hashs) ET qu'un PDF est déjà stocké, on resigne
+  // simplement l'URL existante au lieu de tout regénérer.
+  // Gain : ~3-5s → ~300ms.
+  // ═══════════════════════════════════════════════════════════
+  if (preview && !issueMode && cfg.issuedStatuses.includes(doc.status) && doc[cfg.fxPdfColumn]) {
+    // Le PDF existe déjà. On a besoin du path pour resigner.
+    // doc[cfg.fxPdfColumn] est une URL signée déjà : on en extrait le path.
+    const filePrefix = documentType === "credit_note" ? "avoir-" : "";
+    const pdfPath = `${company.id}/${filePrefix}${doc.number}.pdf`;
+    const xmlPath = `${company.id}/${filePrefix}${doc.number}.xml`;
+    const pdfSigned = await signedUrl(cfg.storageBucket, pdfPath, 3600);
+    if (pdfSigned) {
+      const xmlSigned = await signedUrl(cfg.storageBucket, xmlPath, 3600);
+      console.log(`[generate-facturx] FAST-PATH preview pour ${doc.number}`);
+      return json(res, 200, {
+        ok: true,
+        pdf_url: pdfSigned,
+        xml_url: xmlSigned,
+        cached: true
+      });
+    }
+    // Si la signature échoue (fichier supprimé ?), on retombe sur la
+    // régénération normale ci-dessous, ce qui le recréera.
+    console.log(`[generate-facturx] FAST-PATH miss pour ${doc.number}, régénération`);
+  }
+
   const lines = await sbAdmin.select("document_lines", {
     filter: `document_type=eq.${cfg.lineType}&document_id=eq.${documentId}`,
     order: "sort_order.asc"
