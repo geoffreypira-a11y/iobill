@@ -532,7 +532,15 @@ function KebabItem({ icon, label, onClick, danger }) {
 
 /* ─── Modale viewer PDF ─── */
 function PdfViewerModal({ url, purchase, onEdit, onClose }) {
-  const isImage = (purchase.file_mime || "").startsWith("image/");
+  // Detection robuste : MIME en priorite, puis extension du file_url
+  const mime = (purchase.file_mime || "").toLowerCase();
+  const filePath = (purchase.file_url || "").toLowerCase();
+  const ext = filePath.split(".").pop() || "";
+  const imageMimes = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
+  const imageExts = ["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"];
+  const isImage = imageMimes.some((m) => mime.startsWith(m)) || imageExts.includes(ext);
+  const isPdf = mime === "application/pdf" || ext === "pdf";
+  // Si on ne sait pas, on tente d'abord image (plus tolerant que iframe)
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, width: "92vw", height: "85vh", display: "flex", flexDirection: "column" }}>
@@ -544,6 +552,9 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
               {fmtDate(purchase.issue_date)} · {fmtEUR(purchase.total_ttc_cents)} TTC
+              {(mime || ext) && (
+                <span style={{ marginLeft: 8, color: "var(--muted2)" }}>· {mime || ext.toUpperCase()}</span>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -567,12 +578,40 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
           </div>
         </div>
         <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
-          {isImage ? (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "auto" }}>
-              <img src={url} alt={purchase.vendor_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+          {isPdf ? (
+            <iframe src={url} title={purchase.vendor_name} style={{ width: "100%", height: "100%", border: "none" }} />
+          ) : isImage ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "auto", padding: 16 }}>
+              <img
+                src={url}
+                alt={purchase.vendor_name}
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 4 }}
+                onError={(e) => {
+                  // Si l'image ne charge pas, fallback en iframe (peut etre un PDF mal taggue)
+                  e.currentTarget.style.display = "none";
+                  const fallback = e.currentTarget.parentElement.querySelector(".pdf-fallback");
+                  if (fallback) fallback.style.display = "block";
+                }}
+              />
+              <iframe
+                className="pdf-fallback"
+                src={url}
+                title={purchase.vendor_name}
+                style={{ display: "none", width: "100%", height: "100%", border: "none" }}
+              />
             </div>
           ) : (
-            <iframe src={url} title={purchase.vendor_name} style={{ width: "100%", height: "100%", border: "none" }} />
+            // Format inconnu : on essaye iframe en dernier recours, sinon message
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <iframe
+                src={url}
+                title={purchase.vendor_name}
+                style={{ flex: 1, width: "100%", border: "none" }}
+              />
+              <div style={{ padding: 10, textAlign: "center", fontSize: 11, color: "var(--muted)", background: "var(--card)" }}>
+                Format non reconnu — utilisez "⬇ Télécharger" si l'aperçu ne fonctionne pas.
+              </div>
+            </div>
           )}
         </div>
       </div>
