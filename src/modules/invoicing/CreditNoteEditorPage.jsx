@@ -8,7 +8,7 @@ import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom"
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { TotalsBlock, calcLine } from "../../components/LineEditor.jsx";
-import { fmtEUR, fmtDate, todayISO, toCents } from "../../lib/helpers.js";
+import { fmtEUR, fmtDate, todayISO } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
 import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 import { creditNoteStatusBadge, CREDIT_NOTE_REASONS } from "./creditNoteHelpers.js";
@@ -129,13 +129,25 @@ export function CreditNoteEditorPage({ token, company }) {
   // ─── Calculs côté création ─────────────────────────────────
   const totals = useMemo(() => {
     if (!isNew) return null;
-    // On ne somme que les lignes cochées et avec qty > 0
+    // On ne somme que les lignes cochées avec amount > 0
     let ht = 0, vat = 0;
     const byRate = {};
     pickerLines.forEach((l) => {
-      if (!l.checked || !l.qty || l.qty <= 0) return;
+      if (!l.checked) return;
+      const amountHt = Number(l.amount_ht) || 0;
+      if (amountHt <= 0) return;
+      const fullHtCents = calcLine({
+        quantity: l.source_qty,
+        unit_price_ht: l.unit_price_ht,
+        vat_rate: l.vat_rate,
+        discount_pct: l.discount_pct
+      }).line_ht_cents;
+      if (fullHtCents <= 0) return;
+      // Ratio = part créditée / part totale facturée pour cette ligne
+      const ratio = Math.min(1, Math.round(amountHt * 100) / fullHtCents);
+      const creditedQty = l.source_qty * ratio;
       const c = calcLine({
-        quantity: l.qty,
+        quantity: creditedQty,
         unit_price_ht: l.unit_price_ht,
         vat_rate: l.vat_rate,
         discount_pct: l.discount_pct
@@ -165,16 +177,30 @@ export function CreditNoteEditorPage({ token, company }) {
   function toggleLine(idx) {
     setPickerLines((ls) => ls.map((l, i) => i === idx ? { ...l, checked: !l.checked } : l));
   }
-  function updateQty(idx, newQty) {
+  function updateAmount(idx, newAmount) {
     setPickerLines((ls) => ls.map((l, i) => {
       if (i !== idx) return l;
-      // Bornes : entre 0 et source_qty (on ne peut pas créditer plus qu'il n'a été facturé)
-      const q = Math.max(0, Math.min(Number(newQty) || 0, l.source_qty));
-      return { ...l, qty: q };
+      // Borne haute : montant HT total de la ligne facturée
+      const fullHt = calcLine({
+        quantity: l.source_qty,
+        unit_price_ht: l.unit_price_ht,
+        vat_rate: l.vat_rate,
+        discount_pct: l.discount_pct
+      }).line_ht_cents / 100;
+      const amt = Math.max(0, Math.min(Number(newAmount) || 0, fullHt));
+      return { ...l, amount_ht: amt.toFixed(2) };
     }));
   }
   function checkAll() {
-    setPickerLines((ls) => ls.map((l) => ({ ...l, checked: true, qty: l.source_qty })));
+    setPickerLines((ls) => ls.map((l) => {
+      const fullHt = calcLine({
+        quantity: l.source_qty,
+        unit_price_ht: l.unit_price_ht,
+        vat_rate: l.vat_rate,
+        discount_pct: l.discount_pct
+      }).line_ht_cents / 100;
+      return { ...l, checked: true, amount_ht: fullHt.toFixed(2) };
+    }));
   }
   function uncheckAll() {
     setPickerLines((ls) => ls.map((l) => ({ ...l, checked: false })));
@@ -188,15 +214,27 @@ export function CreditNoteEditorPage({ token, company }) {
     // Construire les lignes finales à partir du picker (création) ou stored (édition)
     const finalLines = isNew
       ? pickerLines
-          .filter((l) => l.checked && l.qty > 0 && l.description?.trim())
-          .map((l) => ({
-            description: l.description,
-            quantity: l.qty,
-            unit: l.unit || "u",
-            unit_price_ht_cents: toCents(l.unit_price_ht),
-            vat_rate: Number(l.vat_rate || 0),
-            discount_pct: Number(l.discount_pct || 0)
-          }))
+          .filter((l) => l.checked && Number(l.amount_ht) > 0 && l.description?.trim())
+          .map((l) => {
+            // Convertir le montant HT cible en quantité (proportionnelle)
+            const fullHtCents = calcLine({
+              quantity: l.source_qty,
+              unit_price_ht: l.unit_price_ht,
+              vat_rate: l.vat_rate,
+              discount_pct: l.discount_pct
+            }).line_ht_cents;
+            const targetHtCents = Math.round(Number(l.amount_ht) * 100);
+            const ratio = fullHtCents > 0 ? Math.min(1, targetHtCents / fullHtCents) : 0;
+            const creditedQty = Number((l.source_qty * ratio).toFixed(4));
+            return {
+              description: l.description,
+              quantity: creditedQty,
+              unit: l.unit || "u",
+              unit_price_ht_cents: Math.round(l.unit_price_ht * 100),
+              vat_rate: Number(l.vat_rate || 0),
+              discount_pct: Number(l.discount_pct || 0)
+            };
+          })
       : storedLines.map((l) => ({
           description: l.description,
           quantity: l.quantity,
@@ -619,12 +657,12 @@ export function CreditNoteEditorPage({ token, company }) {
         </div>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
           {isNew
-            ? "Cochez les lignes à créditer et ajustez la quantité si besoin (avoir partiel)."
+            ? "Cochez les lignes à créditer puis ajustez le montant HT si vous souhaitez ne rembourser qu'une partie. La colonne « reste » indique ce qui restera dû au client sur cette ligne après l'avoir."
             : "Les montants sont enregistrés en positif (la comptabilité interprète automatiquement le signe négatif)."}
         </div>
 
         {isNew ? (
-          <PickerTable lines={pickerLines} onToggle={toggleLine} onUpdateQty={updateQty} />
+          <PickerTable lines={pickerLines} onToggle={toggleLine} onUpdateAmount={updateAmount} />
         ) : (
           <StoredLinesTable lines={storedLines} />
         )}
@@ -706,7 +744,7 @@ export function CreditNoteEditorPage({ token, company }) {
 }
 
 // ─── Tableau picker (mode création) ─────────────────────────
-function PickerTable({ lines, onToggle, onUpdateQty }) {
+function PickerTable({ lines, onToggle, onUpdateAmount }) {
   if (lines.length === 0) {
     return <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Aucune ligne sur la facture source.</div>;
   }
@@ -716,21 +754,27 @@ function PickerTable({ lines, onToggle, onUpdateQty }) {
         <tr>
           <th style={{ width: 30 }}></th>
           <th>Désignation</th>
-          <th style={{ width: 90, textAlign: "right" }}>Qté facturée</th>
-          <th style={{ width: 110, textAlign: "right" }}>Qté à créditer</th>
-          <th style={{ width: 90, textAlign: "right" }}>P.U. HT</th>
+          <th style={{ width: 130, textAlign: "right" }}>Facturé HT</th>
+          <th style={{ width: 130, textAlign: "right" }}>À créditer HT</th>
+          <th style={{ width: 130, textAlign: "right" }}>Reste sur ligne</th>
           <th style={{ width: 60, textAlign: "right" }}>TVA</th>
-          <th style={{ width: 100, textAlign: "right" }}>Total HT</th>
         </tr>
       </thead>
       <tbody>
         {lines.map((l, idx) => {
-          const computed = l.checked && l.qty > 0 ? calcLine({
-            quantity: l.qty,
+          // Montant HT facturé pour cette ligne (en cents)
+          const lineFullCalc = calcLine({
+            quantity: l.source_qty,
             unit_price_ht: l.unit_price_ht,
             vat_rate: l.vat_rate,
             discount_pct: l.discount_pct
-          }) : { line_ht_cents: 0 };
+          });
+          const fullHtCents = lineFullCalc.line_ht_cents;
+          // Montant HT à créditer (en cents), basé sur l.amount_ht (euros)
+          const creditedHtCents = l.checked
+            ? Math.min(Math.round((Number(l.amount_ht) || 0) * 100), fullHtCents)
+            : 0;
+          const remainingCents = fullHtCents - creditedHtCents;
           return (
             <tr key={idx} style={{ opacity: l.checked ? 1 : 0.5 }}>
               <td>
@@ -741,28 +785,36 @@ function PickerTable({ lines, onToggle, onUpdateQty }) {
                   style={{ accentColor: "var(--gold)" }}
                 />
               </td>
-              <td style={{ fontSize: 13 }}>{l.description}</td>
+              <td style={{ fontSize: 13 }}>
+                {l.description}
+                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                  {l.source_qty} {l.unit} × {fmtEUR(l.unit_price_ht * 100)}
+                  {l.discount_pct > 0 ? ` (remise ${l.discount_pct}%)` : ""}
+                </div>
+              </td>
               <td className="mono" style={{ textAlign: "right", fontSize: 12, color: "var(--muted2)" }}>
-                {l.source_qty} {l.unit}
+                {fmtEUR(fullHtCents)}
               </td>
               <td style={{ textAlign: "right" }}>
-                <input
-                  type="number"
-                  className="form-input"
-                  min="0"
-                  max={l.source_qty}
-                  step="0.01"
-                  value={l.qty}
-                  disabled={!l.checked}
-                  onChange={(e) => onUpdateQty(idx, e.target.value)}
-                  style={{ width: 90, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
-                />
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="number"
+                    className="form-input"
+                    min="0"
+                    max={fullHtCents / 100}
+                    step="0.01"
+                    value={l.amount_ht}
+                    disabled={!l.checked}
+                    onChange={(e) => onUpdateAmount(idx, e.target.value)}
+                    style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>€</span>
+                </div>
               </td>
-              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{fmtEUR(l.unit_price_ht * 100)}</td>
+              <td className="mono" style={{ textAlign: "right", fontSize: 12, color: remainingCents > 0 ? "var(--gold)" : "var(--muted)" }}>
+                {fmtEUR(remainingCents)}
+              </td>
               <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.vat_rate}%</td>
-              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>
-                − {fmtEUR(computed.line_ht_cents)}
-              </td>
             </tr>
           );
         })}
@@ -802,6 +854,12 @@ function StoredLinesTable({ lines }) {
 
 // ─── Helpers ────────────────────────────────────────────────
 function toPickerLine(l) {
+  const fullHt = calcLine({
+    quantity: Number(l.quantity),
+    unit_price_ht: Number(l.unit_price_ht_cents) / 100,
+    vat_rate: Number(l.vat_rate),
+    discount_pct: Number(l.discount_pct) || 0
+  }).line_ht_cents;
   return {
     source_id: l.id,
     description: l.description,
@@ -810,7 +868,9 @@ function toPickerLine(l) {
     unit_price_ht: Number(l.unit_price_ht_cents) / 100,
     discount_pct: Number(l.discount_pct) || 0,
     source_qty: Number(l.quantity),
-    qty: Number(l.quantity),    // par défaut, qté complète
+    // amount_ht : montant HT à créditer pour cette ligne (en euros, pour l'input)
+    // Initialement, on prérenseigne au montant total facturé (= avoir total)
+    amount_ht: (fullHt / 100).toFixed(2),
     checked: true                // par défaut, cochée
   };
 }

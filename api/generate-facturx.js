@@ -37,6 +37,19 @@ const DOC_CONFIG = {
 };
 
 export default async function handler(req, res) {
+  try {
+    return await handleRequest(req, res);
+  } catch (e) {
+    // Catch global pour éviter les 500 HTML Vercel : on retourne toujours du JSON
+    console.error("[generate-facturx] UNCAUGHT", e?.stack || e?.message || e);
+    return json(res, 500, {
+      error: "Erreur serveur : " + (e?.message || "inconnue"),
+      stack_top: (e?.stack || "").split("\n").slice(0, 3).join(" | ")
+    });
+  }
+}
+
+async function handleRequest(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
 
   const auth = await authenticate(req);
@@ -153,41 +166,66 @@ export default async function handler(req, res) {
     order: "sort_order.asc"
   });
 
+  console.log(`[generate-facturx] doc=${documentType}/${documentId} lines=${(lines || []).length} status=${doc.status}`);
+
   // 1) XML CII Factur-X
-  const xml = buildFacturxXml({ doc, lines: lines || [], company, cfg });
+  let xml;
+  try {
+    xml = buildFacturxXml({ doc, lines: lines || [], company, cfg });
+  } catch (e) {
+    throw new Error("buildFacturxXml: " + (e?.message || "?"));
+  }
 
   // 2) PDF (builder partagé) + embed XML
-  const pdfDoc = await buildDocumentPdf({
-    docType: documentType,
-    doc,
-    lines: lines || [],
-    company
-  });
+  let pdfDoc;
+  try {
+    pdfDoc = await buildDocumentPdf({
+      docType: documentType,
+      doc,
+      lines: lines || [],
+      company
+    });
+  } catch (e) {
+    throw new Error("buildDocumentPdf: " + (e?.message || "?"));
+  }
 
   const xmlBytes = new TextEncoder().encode(xml);
-  await pdfDoc.attach(xmlBytes, "factur-x.xml", {
-    mimeType: "application/xml",
-    description: documentType === "credit_note" ? "Avoir électronique Factur-X" : "Facture électronique Factur-X",
-    creationDate: new Date(),
-    modificationDate: new Date(),
-    afRelationship: AFRelationship.Alternative
-  });
+  try {
+    await pdfDoc.attach(xmlBytes, "factur-x.xml", {
+      mimeType: "application/xml",
+      description: documentType === "credit_note" ? "Avoir électronique Factur-X" : "Facture électronique Factur-X",
+      creationDate: new Date(),
+      modificationDate: new Date(),
+      afRelationship: AFRelationship.Alternative
+    });
+  } catch (e) {
+    throw new Error("pdfDoc.attach: " + (e?.message || "?"));
+  }
 
-  const pdfBytes = await pdfDoc.save();
+  let pdfBytes;
+  try {
+    pdfBytes = await pdfDoc.save();
+  } catch (e) {
+    throw new Error("pdfDoc.save: " + (e?.message || "?"));
+  }
 
   // 3) Upload + URLs signées
   // Prefix "avoir-" pour différencier des factures dans le bucket commun
   const filePrefix = documentType === "credit_note" ? "avoir-" : "";
   const pdfPath = `${company.id}/${filePrefix}${doc.number}.pdf`;
   const xmlPath = `${company.id}/${filePrefix}${doc.number}.xml`;
-  if (!(await uploadToStorage(cfg.storageBucket, pdfPath, pdfBytes, "application/pdf"))) {
-    return json(res, 500, { error: "Storage upload failed (pdf)" });
+  const uploadedPdf = await uploadToStorage(cfg.storageBucket, pdfPath, pdfBytes, "application/pdf");
+  if (!uploadedPdf) {
+    return json(res, 500, { error: `Storage upload failed (pdf) — bucket=${cfg.storageBucket} path=${pdfPath}` });
   }
-  if (!(await uploadToStorage(cfg.storageBucket, xmlPath, xmlBytes, "application/xml"))) {
-    return json(res, 500, { error: "Storage upload failed (xml)" });
+  const uploadedXml = await uploadToStorage(cfg.storageBucket, xmlPath, xmlBytes, "application/xml");
+  if (!uploadedXml) {
+    return json(res, 500, { error: `Storage upload failed (xml) — bucket=${cfg.storageBucket} path=${xmlPath}` });
   }
   const pdfSigned = await signedUrl(cfg.storageBucket, pdfPath, 3600);
   const xmlSigned = await signedUrl(cfg.storageBucket, xmlPath, 3600);
+
+  console.log(`[generate-facturx] OK pdf_size=${pdfBytes.length} signed=${!!pdfSigned}`);
 
   const updatePayload = {
     [cfg.fxStatusColumn]: "generated",

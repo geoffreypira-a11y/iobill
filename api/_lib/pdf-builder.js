@@ -281,14 +281,16 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   page.drawLine({ start: { x: totalsX, y: y + 16 }, end: { x: width - 40, y: y + 16 }, thickness: 1, color: brandRgb });
   const totalLabel = docType === "credit_note" ? "Total à déduire" : "Total TTC";
   page.drawText(totalLabel, { x: totalsX, y, size: 12, font: fontBold, color: brandRgb });
-  const totalValue = (docType === "credit_note" ? "− " : "") + formatEUR(doc.total_ttc_cents);
+  // Note : on utilise le hyphen-minus (U+002D) au lieu du minus sign (U+2212)
+  // car StandardFonts.Helvetica utilise l'encoding WinAnsi qui ne supporte pas U+2212.
+  const totalValue = (docType === "credit_note" ? "- " : "") + formatEUR(doc.total_ttc_cents);
   drawRight(page, totalValue, width - 40, y, 12, fontBold, brandRgb);
   y -= 24;
 
   // Reste a payer (factures uniquement)
   if (docType === "invoice" && (doc.paid_cents || 0) > 0) {
     page.drawText("Déjà encaissé", { x: totalsX, y, size: 9, font, color: COLORS.green });
-    drawRight(page, "− " + formatEUR(doc.paid_cents), width - 40, y, 9, font, COLORS.green);
+    drawRight(page, "- " + formatEUR(doc.paid_cents), width - 40, y, 9, font, COLORS.green);
     y -= 14;
     page.drawText("Reste à régler", { x: totalsX, y, size: 10, font: fontBold, color: COLORS.dark });
     drawRight(page, formatEUR(doc.total_ttc_cents - doc.paid_cents), width - 40, y, 10, fontBold, COLORS.dark);
