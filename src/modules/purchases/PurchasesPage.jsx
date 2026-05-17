@@ -126,7 +126,9 @@ export function PurchasesPage({ token, company }) {
       updates.paid_cents = 0;
     }
     const r = await sb.update(token, "purchases", `id=eq.${p.id}`, updates);
-    if (r) {
+    if (r && r[0]) {
+      // Mise a jour optimiste du state local (le Realtime confirmera)
+      setPurchases((prev) => prev.map((x) => x.id === p.id ? { ...x, ...r[0] } : x));
       showToast(`Achat ${newStatus === "paid" ? "marqué payé" : "remis en attente"} ✓`);
       capture("purchase_status_changed", { from: p.status, to: newStatus });
     } else {
@@ -139,6 +141,8 @@ export function PurchasesPage({ token, company }) {
     setActionLoading(p.id);
     const r = await sb.delete(token, "purchases", `id=eq.${p.id}`);
     if (r !== null) {
+      // Mise a jour optimiste du state local (le Realtime fera le reste)
+      setPurchases((prev) => prev.filter((x) => x.id !== p.id));
       showToast("Achat supprimé");
       capture("purchase_deleted");
     } else {
@@ -330,19 +334,17 @@ export function PurchasesPage({ token, company }) {
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        {/* Voir : ouvre le PDF/image si attache, sinon toast info */}
+                        {/* Voir : si fichier → modale viewer, sinon → ouvre l'editeur (consultation) */}
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => viewDocument(p)}
-                          style={{
-                            padding: "5px 10px", fontSize: 11, whiteSpace: "nowrap",
-                            opacity: p.file_url ? 1 : 0.5
-                          }}
-                          title={p.file_url
-                            ? "Voir le document scanné"
-                            : "Aucun document — cliquez sur Modifier pour en attacher un"}
+                          onClick={() => p.file_url ? viewDocument(p) : setEditing(p)}
+                          style={{ padding: "5px 10px", fontSize: 11, whiteSpace: "nowrap" }}
+                          title={p.file_url ? "Voir le document scanné" : "Voir les détails (aucun document attaché)"}
                         >
-                          {p.file_url ? "👁 Voir" : "📎 —"}
+                          👁 Voir
+                          {!p.file_url && (
+                            <span style={{ marginLeft: 4, color: "var(--muted)", fontSize: 9 }} title="Pas de document attaché">📎</span>
+                          )}
                         </button>
 
                         {/* Action rapide : SEULEMENT pour les non payées (Payé sur 1 clic) */}
