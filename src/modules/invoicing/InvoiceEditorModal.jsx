@@ -43,6 +43,12 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
   const [terms, setTerms] = useState(invoice?.terms || "");
   const [currency, setCurrency] = useState(invoice?.currency || "EUR");
   const [vatCategory, setVatCategory] = useState(invoice?.vat_category || "standard");
+  // Toggle IBAN : si on édite, on garde la valeur stockée (NULL traité comme TRUE).
+  // Si nouvelle facture, on prend le default société (show_payment_iban_default, TRUE par défaut).
+  const [showPaymentIban, setShowPaymentIban] = useState(() => {
+    if (invoice) return invoice.show_payment_iban !== false;
+    return company.show_payment_iban_default !== false;
+  });
   const [lines, setLines] = useState([newEmptyLine({ vat_rate: company.vat_default_rate || 20 })]);
 
   const [loading, setLoading] = useState(!isNew);
@@ -94,10 +100,10 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
     if (!isNew) return;
     if (draftToRestore) return;
     const t = setTimeout(() => {
-      saveDraft({ clientId, issueDate, dueDate, paymentTermsDays, notes, terms, currency, vatCategory, lines });
+      saveDraft({ clientId, issueDate, dueDate, paymentTermsDays, notes, terms, currency, vatCategory, showPaymentIban, lines });
     }, 1000);
     return () => clearTimeout(t);
-  }, [isNew, draftToRestore, clientId, issueDate, dueDate, paymentTermsDays, notes, terms, currency, vatCategory, lines]);
+  }, [isNew, draftToRestore, clientId, issueDate, dueDate, paymentTermsDays, notes, terms, currency, vatCategory, showPaymentIban, lines]);
 
   function applyDraft(draft) {
     setClientId(draft.clientId || null);
@@ -108,6 +114,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
     setTerms(draft.terms || "");
     setCurrency(draft.currency || "EUR");
     setVatCategory(draft.vatCategory || "standard");
+    if (typeof draft.showPaymentIban === "boolean") setShowPaymentIban(draft.showPaymentIban);
     if (draft.lines && draft.lines.length > 0) setLines(draft.lines);
     setDraftToRestore(null);
   }
@@ -157,6 +164,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
       currency,
       vat_category: vatCategory,
       vat_legal_mention: cat.legal_mention || null,
+      show_payment_iban: showPaymentIban,
       notes: notes || null,
       terms: terms || null
     };
@@ -407,6 +415,46 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
           </div>
 
           <TotalsBlock totals={totals} currency={currency} />
+
+          {/* Toggle IBAN sur PDF */}
+          {company.iban ? (
+            <div style={{
+              marginTop: 14,
+              padding: "10px 14px",
+              border: "1px solid var(--border, rgba(255,255,255,0.08))",
+              borderRadius: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              background: "rgba(212,168,67,0.04)"
+            }}>
+              <input
+                type="checkbox"
+                id="show_iban"
+                checked={showPaymentIban}
+                onChange={(e) => setShowPaymentIban(e.target.checked)}
+                disabled={isReadonly}
+                style={{ accentColor: "var(--gold)", width: 16, height: 16 }}
+              />
+              <label htmlFor="show_iban" style={{ flex: 1, cursor: isReadonly ? "default" : "pointer", fontSize: 13 }}>
+                <div style={{ fontWeight: 500 }}>Afficher l'IBAN sur la facture</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  Décochez pour les paiements en espèces, CB ou chèque.
+                </div>
+              </label>
+            </div>
+          ) : (
+            <div style={{
+              marginTop: 14,
+              padding: "10px 14px",
+              border: "1px dashed var(--border, rgba(255,255,255,0.08))",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "var(--muted)"
+            }}>
+              💡 Ajoutez votre IBAN dans <strong>Paramètres → Profil → Coordonnées bancaires</strong> pour qu'il apparaisse sur les factures.
+            </div>
+          )}
 
           <div className="form-row" style={{ marginTop: 16, marginBottom: 12 }}>
             <label className="form-label">Notes (apparaîtront sur la facture)</label>

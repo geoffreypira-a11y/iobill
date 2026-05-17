@@ -140,6 +140,28 @@ function ProfileTab({ token, company, setCompany }) {
         <Field label="BIC / SWIFT" value={data.bic} onChange={(v) => update("bic", (v || "").toUpperCase().replace(/\s/g, ""))} />
         <Field label="IBAN" value={data.iban} onChange={(v) => update("iban", (v || "").toUpperCase())} full />
       </div>
+      <div style={{
+        marginTop: 12,
+        padding: "10px 14px",
+        border: "1px solid var(--border, rgba(255,255,255,0.08))",
+        borderRadius: 8,
+        display: "flex", alignItems: "center", gap: 12,
+        background: "rgba(212,168,67,0.04)"
+      }}>
+        <input
+          type="checkbox"
+          id="iban_default"
+          checked={data.show_payment_iban_default !== false}
+          onChange={(e) => update("show_payment_iban_default", e.target.checked)}
+          style={{ accentColor: "var(--gold)", width: 16, height: 16 }}
+        />
+        <label htmlFor="iban_default" style={{ flex: 1, cursor: "pointer", fontSize: 13 }}>
+          <div style={{ fontWeight: 500 }}>Afficher l'IBAN par défaut sur les nouvelles factures</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            Vous pourrez toujours décocher au cas par cas dans l'éditeur de facture.
+          </div>
+        </label>
+      </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Régime fiscal</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -312,40 +312,78 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     y -= 18;
   }
 
-  // ─── Bloc IBAN (factures non entièrement payées uniquement) ───
+  // ─── Bloc IBAN (factures, paiement par virement) ───
+  // Conditions d'affichage :
+  //   • Type = facture (pas devis/avoir)
+  //   • Toggle show_payment_iban !== false (NULL ou TRUE → afficher)
+  //   • IBAN renseigné
+  //   • Facture pas encore intégralement payée ni annulée
   const coIban = doc.company_snapshot || company || {};
+  const ibanToggle = doc.show_payment_iban !== false;
   const hasIban = docType === "invoice"
+    && ibanToggle
     && coIban.iban
     && doc.status !== "paid"
     && doc.status !== "canceled";
   if (hasIban) {
-    // Encadré gold à gauche, dans la zone des totaux pour cohérence visuelle
+    // Calcul des lignes effectivement à dessiner
+    const infoLines = [];
+    if (coIban.bank_name) infoLines.push(coIban.bank_name);
+    infoLines.push(`IBAN : ${coIban.iban}`);
+    if (coIban.bic) infoLines.push(`BIC : ${coIban.bic}`);
+
+    // Dimensions
     const bx = 40, bw = 280;
-    // Hauteur dynamique selon nombre de lignes (titre + jusqu'à 3 lignes infos)
-    const lineCount = 1 + (coIban.bank_name ? 1 : 0) + 1 + (coIban.bic ? 1 : 0);
-    const bh = 18 + lineCount * 12 + 8;
-    // Cadre fond très léger gold (rgb diluée)
+    const padX = 12, padTop = 12, padBottom = 14;
+    const titleSize = 9;
+    const lineSize = 8.5;
+    const titleGap = 10;       // espace après le titre
+    const lineHeight = 12;     // entre lignes infos
+    const bh = padTop + titleSize + titleGap + (infoLines.length * lineHeight) + padBottom - lineHeight;
+    // Bord supérieur de l'encadré aligné au début des totaux
+    const boxTop = y + 12;     // léger overhang au-dessus de y pour aérer
+    const boxBottom = boxTop - bh;
+
+    // 1) Fond légèrement teinté gold (un peu plus visible qu'avant)
     page.drawRectangle({
-      x: bx, y: y - bh + 10, width: bw, height: bh,
-      borderColor: brandRgb, borderWidth: 0.5,
-      color: rgb(brandRgb.red, brandRgb.green, brandRgb.blue), opacity: 0.04
+      x: bx, y: boxBottom, width: bw, height: bh,
+      color: rgb(brandRgb.red, brandRgb.green, brandRgb.blue),
+      opacity: 0.06
     });
-    let iy = y;
+    // 2) Bordure gold fine
+    page.drawRectangle({
+      x: bx, y: boxBottom, width: bw, height: bh,
+      borderColor: brandRgb, borderWidth: 0.8,
+      color: rgb(1, 1, 1), opacity: 0  // pas de fill, juste la bordure
+    });
+    // 3) Barre verticale gold accent à gauche (touche pro)
+    page.drawRectangle({
+      x: bx, y: boxBottom, width: 3, height: bh,
+      color: brandRgb
+    });
+
+    // 4) Titre
+    let iy = boxTop - padTop - titleSize + 2;
     page.drawText("Paiement par virement bancaire", {
-      x: bx + 10, y: iy, size: 9, font: fontBold, color: brandRgb
+      x: bx + padX, y: iy, size: titleSize, font: fontBold, color: brandRgb
     });
-    iy -= 14;
-    if (coIban.bank_name) {
-      page.drawText(coIban.bank_name, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
-      iy -= 12;
+    // Ligne fine de séparation sous le titre
+    iy -= 5;
+    page.drawLine({
+      start: { x: bx + padX, y: iy },
+      end: { x: bx + bw - padX, y: iy },
+      thickness: 0.3, color: brandRgb, opacity: 0.4
+    });
+
+    // 5) Lignes infos
+    iy -= titleGap;
+    for (const line of infoLines) {
+      page.drawText(line, {
+        x: bx + padX, y: iy, size: lineSize, font, color: COLORS.dark
+      });
+      iy -= lineHeight;
     }
-    page.drawText(`IBAN : ${coIban.iban}`, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
-    iy -= 12;
-    if (coIban.bic) {
-      page.drawText(`BIC : ${coIban.bic}`, { x: bx + 10, y: iy, size: 8, font, color: COLORS.dark });
-      iy -= 12;
-    }
-    // Ne pas avancer y (on a écrit à gauche, le côté droit était les totaux)
+    // On ne touche pas à `y` (l'encadré est à gauche, les totaux à droite)
   }
 
   // ─── Notes / Conditions ───
