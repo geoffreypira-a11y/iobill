@@ -4,112 +4,40 @@ import { sb } from "../lib/supabase.js";
 import { fmtDate } from "../lib/helpers.js";
 
 /**
- * NotificationBell — badge cloche dans la sidebar.
- * Agrege en lecture seule (poll toutes les 60s) :
- *  - invitations en attente (firm_clients accepted_at NULL)
- *  - paiements recents (payments dans les 24h)
- *  - factures qui viennent de passer overdue
- *  - SMS envoyes recents
+ * NotificationBell — cloche de notifications.
+ *
+ * Lit la table public.notifications (alimentee par triggers SQL et l'API).
+ * Le dropdown est rendu en position:fixed avec calcul de coordonnees pour
+ * passer par-dessus n'importe quel parent ayant overflow:hidden.
  */
 export function NotificationBell({ token, company, user }) {
   const [items, setItems] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  // Position fixed du dropdown (calculee au clic)
+  const [pos, setPos] = useState(null);
+  const buttonRef = useRef(null);
 
+  // ── Chargement et polling ──
   useEffect(() => {
     let alive = true;
     let timer = null;
 
     async function load() {
-      const now = new Date();
-      const yesterday = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
-
-      const [pendingFirmInvites, recentPayments, newOverdue, recentSms] = await Promise.all([
-        // Invitations cabinet en attente que l'utilisateur peut accepter
-        sb.select(token, "firm_clients", {
-          filter: `company_id=eq.${company.id}&accepted_at=is.null&revoked_at=is.null`,
-          select: "id,firm_id,invited_at,access_level",
-          limit: 10
-        }),
-        // Paiements recus dans les dernieres 24h
-        sb.select(token, "payments", {
-          filter: `company_id=eq.${company.id}&paid_at=gte.${yesterday}`,
-          select: "id,invoice_id,amount_cents,method,paid_at",
-          order: "paid_at.desc",
-          limit: 5
-        }),
-        // Factures qui viennent de passer overdue (status overdue + last_reminder dans les 24h)
-        sb.select(token, "invoices", {
-          filter: `company_id=eq.${company.id}&status=eq.overdue&last_reminder_sent_at=gte.${yesterday}`,
-          select: "id,number,total_ttc_cents,paid_cents,client_snapshot",
-          limit: 5
-        }),
-        // SMS envoyes
-        sb.select(token, "sms_log", {
-          filter: `company_id=eq.${company.id}&sent_at=gte.${yesterday}&status=eq.sent`,
-          select: "id,recipient_phone,sent_at",
-          limit: 3
-        }).catch(() => [])
-      ]);
-
-      if (!alive) return;
-
-      const aggregated = [];
-      (pendingFirmInvites || []).forEach((inv) => {
-        aggregated.push({
-          id: "firminv-" + inv.id,
-          icon: "🏛️",
-          title: "Demande de supervision cabinet",
-          body: `Un cabinet souhaite accéder à vos dossiers (${inv.access_level === "editor" ? "édition" : "lecture"})`,
-          time: inv.invited_at,
-          url: `/firm-invite/${inv.id}`,
-          severity: "gold"
+      try {
+        const rows = await sb.select(token, "notifications", {
+          filter: `company_id=eq.${company.id}`,
+          select: "id,notif_type,title,body,url,severity,icon,metadata,read_at,created_at",
+          order: "created_at.desc",
+          limit: 20
         });
-      });
-      (recentPayments || []).forEach((p) => {
-        aggregated.push({
-          id: "pay-" + p.id,
-          icon: "💰",
-          title: "Paiement reçu",
-          body: `${(p.amount_cents / 100).toLocaleString("fr-FR", { style: "currency", currency: "EUR" })} via ${p.method || "—"}`,
-          time: p.paid_at,
-          url: p.invoice_id ? `/invoices/${p.invoice_id}` : null,
-          severity: "green"
-        });
-      });
-      (newOverdue || []).forEach((inv) => {
-        const remaining = (inv.total_ttc_cents || 0) - (inv.paid_cents || 0);
-        const cs = inv.client_snapshot;
-        const name = cs?.legal_name || `${cs?.first_name || ""} ${cs?.last_name || ""}`.trim() || "Client";
-        aggregated.push({
-          id: "overdue-" + inv.id,
-          icon: "⚠️",
-          title: `Facture ${inv.number} en retard`,
-          body: `${name} · ${(remaining / 100).toLocaleString("fr-FR", { style: "currency", currency: "EUR" })} dû`,
-          time: null,
-          url: `/invoices/${inv.id}`,
-          severity: "red"
-        });
-      });
-      (recentSms || []).forEach((s) => {
-        aggregated.push({
-          id: "sms-" + s.id,
-          icon: "📱",
-          title: "SMS de relance envoyé",
-          body: s.recipient_phone,
-          time: s.sent_at,
-          url: null,
-          severity: "muted"
-        });
-      });
-
-      // Tri par date desc
-      aggregated.sort((a, b) => {
-        if (!a.time) return -1;
-        if (!b.time) return 1;
-        return new Date(b.time) - new Date(a.time);
-      });
-      setItems(aggregated);
+        if (!alive) return;
+        const list = rows || [];
+        setItems(list);
+        setUnreadCount(list.filter((n) => !n.read_at).length);
+      } catch {
+        // silent
+      }
     }
 
     load();
@@ -118,21 +46,83 @@ export function NotificationBell({ token, company, user }) {
     return () => { alive = false; if (timer) clearInterval(timer); };
   }, [token, company.id]);
 
-  // Click outside
+  // ── Fermeture sur clic exterieur / scroll / resize ──
   useEffect(() => {
-    function onClick(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    if (open) document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    if (!open) return;
+    function close() { setOpen(false); }
+    const t = setTimeout(() => {
+      document.addEventListener("mousedown", close);
+      window.addEventListener("scroll", close, true);
+      window.addEventListener("resize", close);
+    }, 50);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
   }, [open]);
 
-  const count = items.length;
+  function toggleOpen(e) {
+    e.stopPropagation();
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dropdownW = 360;
+    let left = rect.left;
+    // Si on est dans la sidebar (gauche), on aligne le bord gauche du dropdown
+    // sur le bord droit du bouton + un peu d'espace pour ne pas chevaucher
+    if (rect.left < 200) {
+      left = rect.right + 12;
+    }
+    // Clip pour pas deborder a droite
+    if (left + dropdownW > window.innerWidth - 12) {
+      left = window.innerWidth - dropdownW - 12;
+    }
+    setPos({
+      top: rect.top + window.scrollY,
+      left
+    });
+    setOpen(true);
+  }
+
+  async function markAllRead() {
+    if (unreadCount === 0) return;
+    try {
+      await sb.rpc(token, "mark_all_notifications_read");
+      setItems((prev) => prev.map((n) => n.read_at ? n : { ...n, read_at: new Date().toISOString() }));
+      setUnreadCount(0);
+    } catch {
+      // silent
+    }
+  }
+
+  async function markOneRead(id) {
+    try {
+      await sb.update(token, "notifications", `id=eq.${id}`, {
+        read_at: new Date().toISOString()
+      });
+      setItems((prev) => prev.map((n) => n.id === id ? { ...n, read_at: new Date().toISOString() } : n));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      // silent
+    }
+  }
+
+  const severityColor = {
+    info: "var(--gold)",
+    success: "var(--green)",
+    warning: "var(--orange)",
+    critical: "var(--red)"
+  };
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <>
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={buttonRef}
+        onClick={toggleOpen}
         title="Notifications"
         style={{
           position: "relative", background: "transparent", border: "1px solid var(--border2)",
@@ -144,7 +134,7 @@ export function NotificationBell({ token, company, user }) {
         onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
       >
         🔔
-        {count > 0 && (
+        {unreadCount > 0 && (
           <span style={{
             position: "absolute", top: -2, right: -2,
             background: "var(--red)", color: "#fff",
@@ -154,71 +144,135 @@ export function NotificationBell({ token, company, user }) {
             padding: "0 4px",
             border: "2px solid var(--bg)"
           }}>
-            {count > 9 ? "9+" : count}
+            {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
       </button>
 
-      {open && (
+      {open && pos && (
         <div
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: "absolute", top: "calc(100% + 6px)", right: 0,
-            background: "var(--card)", border: "1px solid var(--border2)", borderRadius: 8,
-            zIndex: 100, width: 340, maxHeight: 460, overflow: "auto",
-            boxShadow: "0 12px 32px rgba(0,0,0,0.5)"
+            position: "fixed",
+            top: pos.top,
+            left: pos.left,
+            background: "var(--card)", border: "1px solid var(--border2)", borderRadius: 10,
+            zIndex: 9999, width: 360, maxHeight: 480, overflow: "hidden",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+            display: "flex", flexDirection: "column"
           }}
         >
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "var(--muted)", fontWeight: 600 }}>
-              Notifications
+          <div style={{
+            padding: "10px 14px", borderBottom: "1px solid var(--border)",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            flexShrink: 0
+          }}>
+            <div style={{
+              fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase",
+              color: "var(--muted)", fontWeight: 600
+            }}>
+              Notifications {unreadCount > 0 && <span style={{ color: "var(--gold)" }}>· {unreadCount} non lues</span>}
             </div>
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>{count} récentes</div>
-          </div>
-          {count === 0 ? (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--muted)" }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>✨</div>
-              <div style={{ fontSize: 12 }}>Tout est à jour</div>
-            </div>
-          ) : (
-            items.map((it) => {
-              const colorMap = { gold: "var(--gold)", green: "var(--green)", red: "var(--red)", muted: "var(--muted)" };
-              const Inner = (
-                <div style={{
-                  padding: "12px 14px", borderBottom: "1px solid var(--border)",
-                  display: "flex", gap: 10, alignItems: "flex-start", cursor: it.url ? "pointer" : "default",
-                  transition: "background 0.15s"
+            {unreadCount > 0 && (
+              <button
+                onClick={markAllRead}
+                style={{
+                  background: "transparent", border: "none", color: "var(--gold)",
+                  fontSize: 10, cursor: "pointer", padding: "2px 6px",
+                  fontFamily: "inherit", textDecoration: "underline"
                 }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--card2)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
-                  <div style={{ fontSize: 18, flexShrink: 0, marginTop: -2 }}>{it.icon}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: colorMap[it.severity] || "var(--text)", marginBottom: 2 }}>
-                      {it.title}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--muted2)", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {it.body}
-                    </div>
-                    {it.time && (
-                      <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 4 }}>
-                        {fmtRelative(it.time)}
-                      </div>
+              >
+                Tout marquer lu
+              </button>
+            )}
+          </div>
+          <div style={{ flex: 1, overflow: "auto" }}>
+            {items.length === 0 ? (
+              <div style={{ padding: 36, textAlign: "center", color: "var(--muted)" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>✨</div>
+                <div style={{ fontSize: 12 }}>Tout est à jour</div>
+              </div>
+            ) : (
+              items.map((it) => {
+                const isUnread = !it.read_at;
+                const color = severityColor[it.severity] || "var(--text)";
+                const Inner = (
+                  <div style={{
+                    padding: "12px 14px",
+                    borderBottom: "1px solid var(--border)",
+                    display: "flex", gap: 10, alignItems: "flex-start",
+                    cursor: it.url ? "pointer" : "default",
+                    transition: "background 0.15s",
+                    background: isUnread ? "rgba(212,168,67,0.05)" : "transparent",
+                    position: "relative"
+                  }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--card2)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = isUnread ? "rgba(212,168,67,0.05)" : "transparent"}
+                  >
+                    {isUnread && (
+                      <div style={{
+                        position: "absolute", left: 4, top: "50%", transform: "translateY(-50%)",
+                        width: 6, height: 6, borderRadius: "50%", background: "var(--gold)"
+                      }} />
                     )}
+                    <div style={{ fontSize: 18, flexShrink: 0, marginTop: -2, marginLeft: 4 }}>
+                      {it.icon || "🔔"}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 12, fontWeight: 600, color,
+                        marginBottom: 2
+                      }}>
+                        {it.title}
+                      </div>
+                      {it.body && (
+                        <div style={{
+                          fontSize: 11, color: "var(--muted2)", lineHeight: 1.5,
+                          overflow: "hidden", textOverflow: "ellipsis"
+                        }}>
+                          {it.body}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 4 }}>
+                        {fmtRelative(it.created_at)}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              );
-              return it.url ? (
-                <Link key={it.id} to={it.url} onClick={() => setOpen(false)} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-                  {Inner}
-                </Link>
-              ) : (
-                <div key={it.id}>{Inner}</div>
-              );
-            })
-          )}
+                );
+                return it.url ? (
+                  <Link
+                    key={it.id}
+                    to={it.url}
+                    onClick={() => { markOneRead(it.id); setOpen(false); }}
+                    style={{ textDecoration: "none", color: "inherit", display: "block" }}
+                  >
+                    {Inner}
+                  </Link>
+                ) : (
+                  <div key={it.id} onClick={() => isUnread && markOneRead(it.id)}>{Inner}</div>
+                );
+              })
+            )}
+          </div>
+          <div style={{
+            padding: "8px 14px", borderTop: "1px solid var(--border)",
+            textAlign: "center", flexShrink: 0
+          }}>
+            <Link
+              to="/settings"
+              onClick={() => setOpen(false)}
+              style={{
+                fontSize: 10, color: "var(--muted)", textDecoration: "none",
+                letterSpacing: 1, textTransform: "uppercase"
+              }}
+            >
+              ⚙ Préférences notifications
+            </Link>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

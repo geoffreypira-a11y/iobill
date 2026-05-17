@@ -21,6 +21,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
       <div className="tabs" style={{ marginBottom: 22, flexWrap: "wrap" }}>
         <button className={"tab" + (tab === "profile" ? " active" : "")} onClick={() => setTab("profile")}>Profil société</button>
         <button className={"tab" + (tab === "modules" ? " active" : "")} onClick={() => setTab("modules")}>Modules</button>
+        <button className={"tab" + (tab === "notifications" ? " active" : "")} onClick={() => setTab("notifications")}>🔔 Notifications</button>
         <button className={"tab" + (tab === "billing" ? " active" : "")} onClick={() => setTab("billing")}>Abonnement</button>
         <button className={"tab" + (tab === "inbox" ? " active" : "")} onClick={() => setTab("inbox")}>📧 Inbox OCR</button>
         <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => setTab("pdp")}>🏛️ PDP</button>
@@ -30,6 +31,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
 
       {tab === "profile" && <ProfileTab token={token} company={company} setCompany={setCompany} />}
       {tab === "modules" && <ModulesTab token={token} company={company} setCompany={setCompany} />}
+      {tab === "notifications" && <NotificationsTab token={token} company={company} />}
       {tab === "billing" && <BillingTab token={token} company={company} setCompany={setCompany} />}
       {tab === "inbox" && <InboxTab token={token} company={company} setCompany={setCompany} />}
       {tab === "pdp" && <PdpTab token={token} company={company} setCompany={setCompany} />}
@@ -660,6 +662,264 @@ function BillingTab({ token, company, setCompany }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ─── Notifications ─────────────────────────────────── */
+function NotificationsTab({ token, company }) {
+  const [prefs, setPrefs] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(null);
+  const [msg, setMsg] = useState("");
+
+  // Liste des types de notifications avec metadata UI
+  const NOTIF_TYPES = [
+    {
+      key: "quote_accepted",
+      icon: "✍️",
+      title: "Devis accepté par un client",
+      desc: "Quand un client signe un devis sur la page publique",
+      defaultEmail: true
+    },
+    {
+      key: "quote_refused",
+      icon: "❌",
+      title: "Devis refusé par un client",
+      desc: "Quand un client refuse un devis (avec motif s'il y en a)",
+      defaultEmail: true
+    },
+    {
+      key: "quote_viewed",
+      icon: "👁",
+      title: "Devis/facture consulté",
+      desc: "Quand un client ouvre le lien public pour la première fois",
+      defaultEmail: false
+    },
+    {
+      key: "invoice_payment_clicked",
+      icon: "💳",
+      title: "Clic sur paiement",
+      desc: "Quand un client clique sur le bouton de paiement en ligne",
+      defaultEmail: false
+    },
+    {
+      key: "invoice_issued",
+      icon: "🔒",
+      title: "Facture émise",
+      desc: "Quand vous émettez une facture (verrouillage + Factur-X)",
+      defaultEmail: false
+    },
+    {
+      key: "invoice_pdp_transmitted",
+      icon: "🏛️",
+      title: "Facture transmise à l'administration",
+      desc: "Quand une facture est envoyée via votre PDP",
+      defaultEmail: true
+    },
+    {
+      key: "invoice_overdue",
+      icon: "⚠️",
+      title: "Facture en retard",
+      desc: "Quand une facture dépasse sa date d'échéance",
+      defaultEmail: true
+    },
+    {
+      key: "quote_expiring_soon",
+      icon: "📅",
+      title: "Devis bientôt expiré",
+      desc: "Quand un devis envoyé approche de sa date de validité (3 jours)",
+      defaultEmail: false
+    },
+    {
+      key: "vat_threshold_warning",
+      icon: "🎯",
+      title: "Seuil franchise TVA",
+      desc: "Quand vous approchez du seuil de franchise (80%, 90%, 100%)",
+      defaultEmail: true
+    },
+    {
+      key: "vat_declaration_due",
+      icon: "📊",
+      title: "Échéance déclaration TVA",
+      desc: "7 jours avant la date de déclaration TVA (CA3)",
+      defaultEmail: true
+    },
+    {
+      key: "urssaf_due",
+      icon: "📊",
+      title: "Échéance URSSAF",
+      desc: "5 jours avant la date d'échéance URSSAF",
+      defaultEmail: true
+    },
+    {
+      key: "client_created",
+      icon: "🆕",
+      title: "Nouveau client créé",
+      desc: "Quand un client est ajouté à votre annuaire",
+      defaultEmail: false
+    }
+  ];
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const rows = await sb.select(token, "notification_preferences", {
+        filter: `company_id=eq.${company.id}`
+      });
+      if (!alive) return;
+      const map = {};
+      (rows || []).forEach((r) => { map[r.notif_type] = { in_app: r.in_app, email: r.email }; });
+      // Defaut pour les types non encore en base
+      NOTIF_TYPES.forEach((t) => {
+        if (!map[t.key]) {
+          map[t.key] = { in_app: true, email: t.defaultEmail };
+        }
+      });
+      setPrefs(map);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [token, company.id]);
+
+  async function toggle(type, channel) {
+    setSaving(type + "-" + channel);
+    const current = prefs[type] || { in_app: true, email: false };
+    const next = { ...current, [channel]: !current[channel] };
+
+    // Upsert : on supprime puis on cree (PostgREST n'a pas d'UPSERT simple sans on conflict)
+    // On utilise plutot insert avec on_conflict
+    try {
+      const r = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/notification_preferences?on_conflict=company_id,notif_type`,
+        {
+          method: "POST",
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=representation"
+          },
+          body: JSON.stringify({
+            company_id: company.id,
+            notif_type: type,
+            in_app: next.in_app,
+            email: next.email,
+            updated_at: new Date().toISOString()
+          })
+        }
+      );
+      if (r.ok) {
+        setPrefs((p) => ({ ...p, [type]: next }));
+        setMsg("✓ Préférence enregistrée");
+        setTimeout(() => setMsg(""), 2000);
+      } else {
+        setMsg("Erreur enregistrement");
+      }
+    } catch (e) {
+      setMsg("Erreur : " + e.message);
+    }
+    setSaving(null);
+  }
+
+  if (loading) {
+    return <div className="card card-pad" style={{ textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;
+  }
+
+  return (
+    <div className="card card-pad">
+      {msg && (
+        <div className={msg.startsWith("✓") ? "auth-success" : "auth-error"} style={{ marginBottom: 16 }}>
+          {msg}
+        </div>
+      )}
+
+      <SectionTitle>Notifications</SectionTitle>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
+        Choisissez les notifications que vous souhaitez recevoir et par quel canal.
+        <br />
+        <strong style={{ color: "var(--gold)" }}>🔔 Dans l'app</strong> : affiché dans la cloche en haut à gauche.
+        <br />
+        <strong style={{ color: "var(--gold)" }}>📧 Email</strong> : envoyé à votre adresse email.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {NOTIF_TYPES.map((t) => {
+          const p = prefs[t.key] || { in_app: true, email: false };
+          return (
+            <div
+              key={t.key}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "auto 1fr auto auto",
+                gap: 16,
+                alignItems: "center",
+                padding: "12px 14px",
+                background: "var(--card2)",
+                border: "1px solid var(--border)",
+                borderRadius: 8
+              }}
+            >
+              <div style={{ fontSize: 22, lineHeight: 1 }}>{t.icon}</div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.title}</div>
+                <div style={{ fontSize: 11, color: "var(--muted2)", lineHeight: 1.4 }}>{t.desc}</div>
+              </div>
+              <ToggleSwitch
+                checked={p.in_app}
+                onChange={() => toggle(t.key, "in_app")}
+                disabled={saving === t.key + "-in_app"}
+                label="🔔"
+                title="Notification dans l'app"
+              />
+              <ToggleSwitch
+                checked={p.email}
+                onChange={() => toggle(t.key, "email")}
+                disabled={saving === t.key + "-email"}
+                label="📧"
+                title="Email"
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ToggleSwitch({ checked, onChange, disabled, label, title }) {
+  return (
+    <label
+      title={title}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+        cursor: disabled ? "wait" : "pointer", opacity: disabled ? 0.5 : 1,
+        minWidth: 38
+      }}
+    >
+      <span style={{ fontSize: 14 }}>{label}</span>
+      <span style={{
+        position: "relative", display: "inline-block",
+        width: 32, height: 18,
+        background: checked ? "var(--gold)" : "var(--border2)",
+        borderRadius: 10, transition: "background 0.2s"
+      }}>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onChange}
+          disabled={disabled}
+          style={{ opacity: 0, position: "absolute", inset: 0, cursor: "inherit" }}
+        />
+        <span style={{
+          position: "absolute",
+          top: 2, left: checked ? 16 : 2,
+          width: 14, height: 14,
+          background: "#fff", borderRadius: "50%",
+          transition: "left 0.2s",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.3)"
+        }} />
+      </span>
+    </label>
   );
 }
 

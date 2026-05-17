@@ -106,14 +106,149 @@ export default async function handler(req, res) {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // ENVOI EMAILS pour les notifications non lues + pref email=true
+  // ═══════════════════════════════════════════════════════════
+  let notifEmailsSent = 0;
+  try {
+    // 1) Recuperer les notifs eligibles : non lues, pas encore emailees,
+    //    creees dans les dernieres 24h (pour eviter le spam si la fonction
+    //    a ete down)
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const pendingNotifs = await sbAdmin.select("notifications", {
+      filter: `read_at=is.null&email_sent_at=is.null&created_at=gte.${since}`,
+      order: "created_at.asc",
+      limit: 50
+    });
+
+    // 2) Pour chaque notif : verifier la preference email, recuperer email user, envoyer
+    for (const notif of (pendingNotifs || [])) {
+      try {
+        // Charger la pref pour cette company + ce type
+        const prefRows = await sbAdmin.select("notification_preferences", {
+          filter: `company_id=eq.${notif.company_id}&notif_type=eq.${notif.notif_type}`,
+          limit: 1
+        });
+        const pref = (prefRows && prefRows[0]) || null;
+        // Si pref existe et email=false → on skip
+        if (pref && pref.email === false) {
+          // Marquer comme "traite" pour pas reessayer 1000 fois
+          await sbAdmin.update("notifications", `id=eq.${notif.id}`, {
+            email_sent_at: new Date().toISOString()
+          });
+          continue;
+        }
+        // Si pas de pref enregistree, on respecte le defaut : envoyer
+
+        // Recuperer email de la company (l'utilisateur)
+        const companyRow = await sbAdmin.selectOne("companies", `id=eq.${notif.company_id}`);
+        if (!companyRow) continue;
+
+        // L'email peut etre dans company.email OU faut le chercher via auth.users (service_role)
+        let userEmail = companyRow.email;
+        if (!userEmail && companyRow.user_id) {
+          // Appel direct API auth admin
+          try {
+            const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+            const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+            const ur = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${companyRow.user_id}`, {
+              headers: { apikey: SERVICE_ROLE, Authorization: "Bearer " + SERVICE_ROLE }
+            });
+            if (ur.ok) {
+              const user = await ur.json();
+              userEmail = user?.email;
+            }
+          } catch {}
+        }
+        if (!userEmail) continue;
+
+        // Envoi via Resend
+        await sendNotifEmail({ notif, company: companyRow, recipientEmail: userEmail });
+        await sbAdmin.update("notifications", `id=eq.${notif.id}`, {
+          email_sent_at: new Date().toISOString()
+        });
+        notifEmailsSent++;
+      } catch (e) {
+        // Continuer avec la suivante en cas d'erreur
+        console.error("[cron] notif email error", e.message);
+      }
+    }
+  } catch (e) {
+    console.error("[cron] notif scan error", e.message);
+  }
+
   return json(res, 200, {
     ok: true,
     scanned: (allOverdue || []).length,
     marked_overdue: updated,
     reminders_sent: sent,
+    notif_emails_sent: notifEmailsSent,
     errors,
     detail: reminders
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Envoi email de notification (helper)
+// ═══════════════════════════════════════════════════════════
+async function sendNotifEmail({ notif, company, recipientEmail }) {
+  const RESEND_API_KEY = process.env.RESEND_API_KEY;
+  if (!RESEND_API_KEY) return false;
+
+  const FROM = (process.env.RESEND_FROM || "notifications@iobill.online")
+    .replace(/.*<([^>]+)>.*/, "$1")
+    .trim();
+  const brandColor = company.brand_color || "#d4a843";
+  const appUrl = "https://app.iobill.online" + (notif.url || "/");
+  const icon = notif.icon || "🔔";
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #fff; color: #0b0c10">
+      <div style="margin-bottom: 24px">
+        <div style="font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #888; margin-bottom: 8px">
+          IO BILL
+        </div>
+        <h1 style="font-size: 20px; font-weight: 700; margin: 0; color: #0b0c10">
+          ${icon} ${escapeHtml(notif.title)}
+        </h1>
+      </div>
+      ${notif.body ? `<p style="font-size: 14px; line-height: 1.6; color: #333; margin: 0 0 24px 0">${escapeHtml(notif.body)}</p>` : ""}
+      ${notif.url ? `
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 16px 0">
+        <tr>
+          <td bgcolor="${brandColor}" style="background-color:${brandColor};border-radius:8px;padding:0">
+            <a href="${appUrl}" style="display:inline-block;background-color:${brandColor};color:#0b0c10 !important;padding:12px 24px;text-decoration:none !important;border-radius:8px;font-weight:600;font-size:13px">
+              <span style="color:#0b0c10 !important;text-decoration:none !important">Voir dans IO BILL →</span>
+            </a>
+          </td>
+        </tr>
+      </table>` : ""}
+      <div style="margin-top: 36px; padding-top: 16px; border-top: 1px solid #eee; font-size: 11px; color: #999; line-height: 1.6">
+        Vous recevez cet email parce que vous avez activé les notifications pour "${escapeHtml(notif.title)}".<br/>
+        <a href="https://app.iobill.online/settings" style="color: #999">Gérer vos préférences</a> · IO BILL — OWL'S INDUSTRY
+      </div>
+    </div>
+  `;
+
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + RESEND_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: `IO BILL <${FROM}>`,
+      to: [recipientEmail],
+      subject: `${icon} ${notif.title}`,
+      html
+    })
+  });
+  return r.ok;
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function buildReminderSubject(template, inv) {

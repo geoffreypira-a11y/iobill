@@ -26,7 +26,34 @@ export default async function handler(req, res) {
   if (!consumed || !consumed[0]) {
     return json(res, 404, { error: "Token invalid, expired or revoked" });
   }
-  const { company_id, scope, resource_id } = consumed[0];
+  const { company_id, scope, resource_id, use_count } = consumed[0];
+
+  // ─── NOTIF : 1ere consultation du document (use_count == 1 apres consume) ───
+  // On notifie une seule fois pour eviter le spam.
+  // Seulement pour les scopes quote et invoice (pas portal pour pas spammer).
+  if (req.method === "GET" && (scope === "quote" || scope === "invoice") && use_count === 1) {
+    try {
+      const docTable = scope === "quote" ? "quotes" : "invoices";
+      const doc = await sbAdmin.selectOne(docTable, `id=eq.${resource_id}`);
+      if (doc) {
+        const cs = doc.client_snapshot || {};
+        const clientName = cs.legal_name ||
+          `${cs.first_name || ""} ${cs.last_name || ""}`.trim() ||
+          "Le client";
+        const label = scope === "quote" ? "devis" : "facture";
+        await sbAdmin.rpc("create_notification", {
+          p_company_id: company_id,
+          p_notif_type: "quote_viewed",
+          p_title: `${scope === "quote" ? "Devis" : "Facture"} consulté`,
+          p_body: `${clientName} a ouvert le ${label} ${doc.number || ""} pour la première fois`,
+          p_url: `/${scope === "quote" ? "quotes" : "invoices"}/${resource_id}`,
+          p_severity: "info",
+          p_icon: "👁",
+          p_metadata: { [`${scope}_id`]: resource_id, number: doc.number, client: clientName, ip }
+        }).catch(() => {});
+      }
+    } catch {}
+  }
 
   // ─── ACTION : Accepter un devis (signature simple, pas de Yousign) ───
   if (action === "accept_quote") {
