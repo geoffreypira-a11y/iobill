@@ -20,6 +20,7 @@
 //   ne se synchroniseront plus.
 
 import { sbAdmin, authenticate, json } from "./_lib/supabase-admin.js";
+import { notifyAdmin } from "./_lib/monitor.js";
 import crypto from "crypto";
 
 export const config = {
@@ -45,6 +46,11 @@ export default async function handler(req, res) {
     return await handleCheckout(req, res, rawBody);
   } catch (e) {
     console.error("[stripe] UNCAUGHT", e?.stack || e?.message);
+    notifyAdmin({
+      level: "critical",
+      subject: "Stripe endpoint plante",
+      details: { error: e?.message, stack: (e?.stack || "").slice(0, 1000) }
+    }).catch(() => {});
     return json(res, 500, { error: "Erreur serveur : " + (e?.message || "inconnue") });
   }
 }
@@ -65,6 +71,12 @@ async function handleCheckout(req, res, rawBody) {
     try { body = JSON.parse(rawBody); } catch { body = {}; }
   }
 
+  // ─── Routage : checkout firm ou company ───────────────
+  if (body?.plan === "firm" || body?.firm_id) {
+    return await handleFirmCheckout(req, res, auth, body);
+  }
+
+  // ─── Checkout company classique ───────────────────────
   const plan = body?.plan || "pro_monthly";
   const priceId = plan === "pro_yearly"
     ? process.env.STRIPE_PRICE_PRO_YEARLY
@@ -72,7 +84,6 @@ async function handleCheckout(req, res, rawBody) {
 
   if (!priceId) return json(res, 503, { error: "STRIPE_PRICE_PRO_* not configured" });
 
-  // Créer ou récupérer le customer Stripe
   let customerId = auth.company.stripe_customer_id;
   if (!customerId) {
     const customerRes = await stripeCall("/v1/customers", "POST", {
@@ -112,6 +123,106 @@ async function handleCheckout(req, res, rawBody) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// FIRM CHECKOUT — cabinet comptable, 49€/mois
+// 10 premiers cabinets gratuits via coupon 100% off à vie
+// ═══════════════════════════════════════════════════════════
+async function handleFirmCheckout(req, res, auth, body) {
+  const firmId = body?.firm_id;
+  if (!firmId) return json(res, 400, { error: "firm_id requis" });
+
+  // Vérifier que l'user est bien membre du firm
+  const firmUser = await sbAdmin.selectOne(
+    "firm_users",
+    `firm_id=eq.${firmId}&user_id=eq.${auth.user.id}`
+  );
+  if (!firmUser) return json(res, 403, { error: "Vous n'êtes pas membre de ce cabinet" });
+
+  const firm = await sbAdmin.selectOne("firms", `id=eq.${firmId}`);
+  if (!firm) return json(res, 404, { error: "Cabinet introuvable" });
+
+  const priceId = process.env.STRIPE_PRICE_FIRM_MONTHLY;
+  if (!priceId) return json(res, 503, { error: "STRIPE_PRICE_FIRM_MONTHLY non configuré" });
+
+  // ─── Créer customer Stripe pour le cabinet ────────────
+  let customerId = firm.stripe_customer_id;
+  if (!customerId) {
+    const customerRes = await stripeCall("/v1/customers", "POST", {
+      email: firm.email || auth.user.email,
+      "metadata[firm_id]": firmId,
+      "metadata[type]": "firm",
+      name: firm.legal_name || firm.trade_name || "Cabinet"
+    });
+    if (!customerRes.ok) return json(res, 500, { error: "Customer creation failed" });
+    customerId = customerRes.data.id;
+    await sbAdmin.update("firms", "id=eq." + firmId, { stripe_customer_id: customerId });
+  }
+
+  // ─── Réclamer une place dans les 10 gratuits ──────────
+  // Appel RPC à la fonction claim_firm_free_slot()
+  // Retourne le rang (1-10) ou NULL si offre épuisée
+  let freeRank = null;
+  try {
+    const SUPA_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const r = await fetch(`${SUPA_URL}/rest/v1/rpc/claim_firm_free_slot`, {
+      method: "POST",
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ p_firm_id: firmId })
+    });
+    if (r.ok) freeRank = await r.json(); // null ou number
+  } catch (e) {
+    console.warn("[stripe firm] claim_firm_free_slot a planté:", e?.message);
+  }
+
+  // ─── Construction de la session Stripe ────────────────
+  const origin = req.headers.origin
+    || req.headers.referer?.split("/").slice(0, 3).join("/")
+    || "https://iobill.fr";
+
+  const sessionParams = {
+    mode: "subscription",
+    customer: customerId,
+    "line_items[0][price]": priceId,
+    "line_items[0][quantity]": "1",
+    success_url: origin + "/firm?checkout=success",
+    cancel_url: origin + "/firm?checkout=cancel",
+    "subscription_data[metadata][firm_id]": firmId,
+    "subscription_data[metadata][type]": "firm",
+    locale: "fr",
+    allow_promotion_codes: "true"
+  };
+
+  // Si rang attribué, appliquer le coupon 100% à vie
+  if (freeRank !== null && freeRank !== undefined) {
+    if (!process.env.STRIPE_COUPON_FIRM_LIFETIME_FREE) {
+      console.warn("[stripe firm] STRIPE_COUPON_FIRM_LIFETIME_FREE manquant — le firm sera facturé normalement !");
+      notifyAdmin({
+        level: "critical",
+        subject: "Coupon firm gratuit manquant",
+        details: { firm_id: firmId, rank: freeRank, note: "Créer un coupon Stripe 100% off forever et mettre l'ID dans STRIPE_COUPON_FIRM_LIFETIME_FREE" }
+      }).catch(() => {});
+    } else {
+      sessionParams["discounts[0][coupon]"] = process.env.STRIPE_COUPON_FIRM_LIFETIME_FREE;
+      sessionParams["subscription_data[metadata][free_rank]"] = String(freeRank);
+    }
+  }
+
+  const sessionRes = await stripeCall("/v1/checkout/sessions", "POST", sessionParams);
+  if (!sessionRes.ok) {
+    return json(res, 500, { error: "Firm checkout creation failed", details: sessionRes.data });
+  }
+
+  return json(res, 200, {
+    url: sessionRes.data.url,
+    free_rank: freeRank,  // pour info côté frontend (UI peut féliciter "vous êtes le 3e cabinet à profiter de l'offre")
+    pricing: freeRank ? "free_lifetime" : "49_eur_monthly"
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
 // WEBHOOK — réception des événements Stripe
 // ═══════════════════════════════════════════════════════════
 async function handleWebhook(req, res, rawBody, sig) {
@@ -134,6 +245,12 @@ async function handleWebhook(req, res, rawBody, sig) {
               stripe_sub_id: session.subscription,
               stripe_sub_status: "active"
             });
+            // Email bienvenue cabinet
+            await sendWelcomeEmail({
+              to: session.customer_email || session.customer_details?.email,
+              type: "firm",
+              freeRank: session.metadata?.free_rank ? parseInt(session.metadata.free_rank, 10) : null
+            }).catch(() => {});
           }
         } else {
           // Company subscription (plan Pro standard)
@@ -146,6 +263,11 @@ async function handleWebhook(req, res, rawBody, sig) {
               subscribed_at: new Date().toISOString(),
               payment_failed_at: null
             });
+            // Email bienvenue Pro
+            await sendWelcomeEmail({
+              to: session.customer_email || session.customer_details?.email,
+              type: "pro"
+            }).catch(() => {});
           }
           // Paiement d'une facture client via Payment Link
           const invoiceId = session.metadata?.invoice_id;
@@ -316,4 +438,84 @@ async function stripeCall(path, method, body) {
     body: method !== "GET" ? params : undefined
   });
   return { ok: r.ok, data: await r.json() };
+}
+
+// ═══════════════════════════════════════════════════════════
+// EMAIL DE BIENVENUE
+// ═══════════════════════════════════════════════════════════
+async function sendWelcomeEmail({ to, type, freeRank }) {
+  if (!to || !process.env.RESEND_API_KEY) return;
+
+  const isFirm = type === "firm";
+  const subject = isFirm
+    ? (freeRank
+        ? `🎉 Bienvenue sur IO BILL — Vous êtes le ${freeRank}e cabinet à profiter de l'offre de lancement`
+        : "🎉 Bienvenue sur IO BILL — Plan Cabinet activé")
+    : "🎉 Bienvenue sur IO BILL Pro";
+
+  const lines = isFirm
+    ? [
+        freeRank
+          ? `Félicitations, vous êtes le <strong>${freeRank}e cabinet</strong> à rejoindre IO BILL ! Votre abonnement Cabinet est <strong>gratuit à vie</strong> dans le cadre de notre offre de lancement (10 premiers cabinets).`
+          : "Votre abonnement Cabinet est désormais actif (49 € HT/mois).",
+        "<h3>Premiers pas</h3>",
+        "<ol><li>Configurez votre cabinet dans <strong>Mon cabinet</strong>",
+        "<li>Invitez vos collaborateurs",
+        "<li>Ajoutez vos sociétés clientes",
+        "<li>Consultez le tableau de bord cabinet pour piloter tout votre portefeuille</li></ol>",
+        "<p>Toutes les fonctionnalités Pro (Factur-X 2026/2027, hash chain DGFiP, signature électronique, OCR factures fournisseur) sont incluses pour vous et vos sociétés clientes.</p>"
+      ]
+    : [
+        "Votre abonnement IO BILL Pro est désormais actif. Vous avez accès à toutes les fonctionnalités.",
+        "<h3>Premiers pas</h3>",
+        "<ol><li>Complétez votre <strong>profil société</strong> (Paramètres → Profil) — n'oubliez pas votre IBAN si vous facturez par virement",
+        "<li>Ajoutez vos <strong>premiers clients</strong>",
+        "<li>Créez votre <strong>première facture</strong> Factur-X conforme",
+        "<li>Activez le <strong>Mode avancé</strong> dans Paramètres → Modules pour accéder à l'audit, l'API développeur, etc.</li></ol>",
+        "<p><strong>Besoin d'aide ?</strong> Cliquez sur votre profil en bas à gauche puis <em>« Signaler un problème »</em> pour ouvrir un ticket.</p>"
+      ];
+
+  const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1d22;">
+  <table style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+    <tr><td style="background:#1a1d22;padding:24px;text-align:center;">
+      <div style="font-size:28px;color:#d4a843;font-weight:700;letter-spacing:1px;">IO BILL</div>
+      <div style="font-size:11px;color:#888;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">${isFirm ? "Plan Cabinet" : "Plan Pro"}</div>
+    </td></tr>
+    <tr><td style="padding:30px;">
+      <h2 style="margin:0 0 16px 0;">${isFirm ? "Bienvenue sur IO BILL Cabinet !" : "Bienvenue sur IO BILL Pro !"}</h2>
+      ${lines.join("\n")}
+      <div style="margin-top:24px;text-align:center;">
+        <a href="https://app.iobill.online" style="display:inline-block;background:#d4a843;color:#1a1d22;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">
+          Accéder à IO BILL →
+        </a>
+      </div>
+    </td></tr>
+    <tr><td style="background:#f9f9fa;padding:16px 30px;font-size:11px;color:#888;text-align:center;">
+      OWL'S INDUSTRY · IO BILL · Facturation Factur-X 2026/2027 conforme<br>
+      Vous avez reçu cet email parce que vous venez de souscrire à un abonnement.
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: `IO BILL <${process.env.RESEND_FROM || "noreply@iobill.online"}>`,
+        to: [to],
+        subject,
+        html
+      })
+    });
+    if (!r.ok) {
+      console.warn("[welcome email] Resend non-ok:", r.status);
+    }
+  } catch (e) {
+    console.warn("[welcome email] failed:", e?.message);
+  }
 }

@@ -5,6 +5,7 @@
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
 import { AFRelationship } from "pdf-lib";
 import { buildDocumentPdf, uploadToStorage, signedUrl } from "./_lib/pdf-builder.js";
+import { notifyAdmin } from "./_lib/monitor.js";
 
 // Mapping document_type → config table/colonnes
 const DOC_CONFIG = {
@@ -42,6 +43,11 @@ export default async function handler(req, res) {
   } catch (e) {
     // Catch global pour éviter les 500 HTML Vercel : on retourne toujours du JSON
     console.error("[generate-facturx] UNCAUGHT", e?.stack || e?.message || e);
+    notifyAdmin({
+      level: "critical",
+      subject: "generate-facturx plante",
+      details: { error: e?.message, stack: (e?.stack || "").slice(0, 1000) }
+    }).catch(() => {});
     return json(res, 500, {
       error: "Erreur serveur : " + (e?.message || "inconnue"),
       stack_top: (e?.stack || "").split("\n").slice(0, 3).join(" | ")

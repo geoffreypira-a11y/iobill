@@ -13,12 +13,13 @@
 // Authorization: Bearer <CRON_SECRET>.
 
 import { sbAdmin, json } from "./_lib/supabase-admin.js";
+import { notifyAdmin } from "./_lib/monitor.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
 export default async function handler(req, res) {
   // Auth Vercel Cron : header `x-vercel-cron: 1` automatiquement injecte par Vercel.
-  // En complement, on accepte un Bearer si configure.
+  // En complement, on accepte un Bearer si configure (utilise par pg_net pour le mode single notif).
   const isVercelCron = req.headers["x-vercel-cron"] === "1";
   const auth = req.headers.authorization || "";
   const hasSecret = CRON_SECRET && auth === `Bearer ${CRON_SECRET}`;
@@ -26,6 +27,76 @@ export default async function handler(req, res) {
   if (!isVercelCron && !hasSecret) {
     return json(res, 401, { error: "Unauthorized" });
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // MODE "single notif" : appele depuis Postgres via pg_net
+  // pour envoyer un email instantanement apres creation d'une notif.
+  // Body: { notif_id: "uuid" }
+  // ═══════════════════════════════════════════════════════════
+  let body = req.body;
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+  const singleNotifId = body?.notif_id;
+
+  if (singleNotifId) {
+    try {
+      const notif = await sbAdmin.selectOne("notifications", `id=eq.${singleNotifId}`);
+      if (!notif) return json(res, 404, { error: "notif not found" });
+      if (notif.email_sent_at) return json(res, 200, { ok: true, skipped: "already sent" });
+
+      // Verifier la preference email pour ce type
+      const prefRows = await sbAdmin.select("notification_preferences", {
+        filter: `company_id=eq.${notif.company_id}&notif_type=eq.${notif.notif_type}`,
+        limit: 1
+      });
+      const pref = (prefRows && prefRows[0]) || null;
+      if (pref && pref.email === false) {
+        // Pref desactivee : marquer comme traite pour ne pas reessayer
+        await sbAdmin.update("notifications", `id=eq.${singleNotifId}`, {
+          email_sent_at: new Date().toISOString()
+        });
+        return json(res, 200, { ok: true, skipped: "email disabled in prefs" });
+      }
+
+      // Recuperer email recipient
+      const companyRow = await sbAdmin.selectOne("companies", `id=eq.${notif.company_id}`);
+      if (!companyRow) return json(res, 404, { error: "company not found" });
+      let userEmail = companyRow.email;
+      if (!userEmail && companyRow.user_id) {
+        try {
+          const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+          const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          const ur = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${companyRow.user_id}`, {
+            headers: { apikey: SERVICE_ROLE, Authorization: "Bearer " + SERVICE_ROLE }
+          });
+          if (ur.ok) {
+            const user = await ur.json();
+            userEmail = user?.email;
+          }
+        } catch {}
+      }
+      if (!userEmail) return json(res, 400, { error: "no email for user" });
+
+      const sent = await sendNotifEmail({ notif, company: companyRow, recipientEmail: userEmail });
+      if (sent) {
+        await sbAdmin.update("notifications", `id=eq.${singleNotifId}`, {
+          email_sent_at: new Date().toISOString()
+        });
+      }
+      return json(res, 200, { ok: sent, recipient: userEmail });
+    } catch (e) {
+      console.error("[cron] single notif error", e.message);
+      notifyAdmin({
+        level: "warn",
+        subject: "Cron single notif a planté",
+        details: { notif_id: singleNotifId, error: e?.message }
+      }).catch(() => {});
+      return json(res, 500, { error: e.message });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MODE CRON normal (sans body) : relances factures + emails notifs en attente
+  // ═══════════════════════════════════════════════════════════
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -319,9 +390,6 @@ async function sendReminderEmail(inv, subject, message) {
 
 function formatEUR(cents) {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format((cents || 0) / 100);
-}
-function escapeHtml(s) {
-  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // ──────────────────────────────────────────────────────────────

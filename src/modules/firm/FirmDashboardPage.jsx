@@ -153,18 +153,22 @@ export function FirmDashboardPage({ token, user }) {
               className="btn btn-primary"
               onClick={async () => {
                 try {
-                  const r = await fetch("/api/firm-stripe-checkout", {
+                  const r = await fetch("/api/stripe", {
                     method: "POST",
                     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                    body: JSON.stringify({ firm_id: firm.id, period: "monthly" })
+                    body: JSON.stringify({ plan: "firm", firm_id: firm.id })
                   });
                   const j = await r.json();
-                  if (j.checkout_url) window.location.href = j.checkout_url;
+                  if (j.free_rank) {
+                    const ok = confirm(`🎉 Félicitations !\n\nVous êtes le ${j.free_rank}e cabinet à profiter de notre offre de lancement : votre abonnement Cabinet sera GRATUIT À VIE.\n\nValidez la souscription Stripe pour activer votre cabinet (0,00 € débité).`);
+                    if (!ok) return;
+                  }
+                  if (j.url) window.location.href = j.url;
                   else alert(j.error || "Erreur Stripe");
                 } catch { alert("Erreur réseau"); }
               }}
             >
-              💳 S'abonner (19,90 €/mois)
+              💳 S'abonner Cabinet (49 €/mois)
             </button>
           )}
           <Link to="/firm/team" className="btn btn-ghost">

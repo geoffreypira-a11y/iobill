@@ -48,6 +48,8 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
 import { AdminPage } from "./modules/admin/AdminPage.jsx";
 import { AdminModeToggle, getAdminMode, useIsAdminMode } from "./components/AdminModeToggle.jsx";
+import { LegalPage } from "./modules/legal/LegalPage.jsx";
+import { LegalFooter } from "./components/LegalFooter.jsx";
 
 // Onboarding tour
 import { OnboardingTour } from "./components/OnboardingTour.jsx";
@@ -202,6 +204,10 @@ export default function App() {
         {/* API publique */}
         <Route path="developers" element={<ApiKeysPage token={session.token} company={company} />} />
 
+        {/* Pages légales */}
+        <Route path="legal/:kind" element={<LegalPage />} />
+        <Route path="legal" element={<LegalPage />} />
+
         {/* Admin dashboard — gestion abonnés + tickets */}
         <Route path="admin" element={<AdminPage token={session.token} company={company} />} />
 
@@ -235,6 +241,7 @@ function AuthedLayout({ session, company, onSignOut }) {
       <Sidebar token={session.token} company={company} user={session.user} onSignOut={onSignOut} />
       <main className="content">
         <Outlet />
+        <LegalFooter />
       </main>
       <AdminModeToggle isAdmin={!!company?.is_admin} />
       <OnboardingTour user={session.user} company={company} />

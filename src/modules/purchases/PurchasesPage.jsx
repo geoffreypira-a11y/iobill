@@ -4,6 +4,7 @@ import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
 import { CameraCapture } from "../../components/CameraCapture.jsx";
 import { fmtEUR, fmtDate, todayISO, toCents, fromCents, uid } from "../../lib/helpers.js";
+import { compressForUpload, fmtBytes } from "../../lib/upload-compress.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 const PURCHASE_STATUTS = {
@@ -883,16 +884,31 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
     // 1. Si fichier, on upload vers Storage
     let fileUrl = purchase?.file_url || null;
     if (file) {
+      // ─── Compression avant upload (économie quota Storage) ───
+      let processedFile = file;
+      try {
+        const result = await compressForUpload(file);
+        processedFile = result.file;
+        if (result.ratio < 0.8) {
+          console.log(`[purchases] compression : ${fmtBytes(result.originalSize)} → ${fmtBytes(result.newSize)} (${Math.round((1 - result.ratio) * 100)}% gain)`);
+        }
+      } catch (compressErr) {
+        // Fichier trop gros ou format non supporté
+        setErr("⚠️ " + (compressErr.message || "Fichier non supporté"));
+        setSaving(false);
+        return;
+      }
+
       // Sanitize le nom de fichier : enleve espaces, accents, caracteres speciaux
       // pour eviter les problemes d'encodage URL avec Supabase Storage.
-      const safeName = file.name
+      const safeName = processedFile.name
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")   // supprime les accents
         .replace(/[^a-zA-Z0-9._-]/g, "_")  // remplace tout caractere non-safe par _
         .replace(/_+/g, "_")               // dedoublonne les underscores
         .substring(0, 80);                 // limite longueur
       const path = `${company.id}/${uid()}-${safeName}`;
-      const uploaded = await sb.uploadFile(token, "purchases-attach", path, file);
+      const uploaded = await sb.uploadFile(token, "purchases-attach", path, processedFile);
       if (uploaded) {
         fileUrl = path;
       } else {
