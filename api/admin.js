@@ -66,6 +66,16 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true, ticket: inserted[0] });
   }
 
+  // ─── ACTION OUVERTE : liste de MES tickets (utilisateur) ───
+  if (action === "my_tickets") {
+    const tickets = await sbAdmin.select("support_tickets", {
+      filter: `user_id=eq.${user.id}`,
+      order: "created_at.desc",
+      limit: 100
+    });
+    return json(res, 200, { tickets: tickets || [] });
+  }
+
   // ─── À PARTIR D'ICI : ADMIN UNIQUEMENT ────────────────────
   if (company.is_admin !== true) {
     return json(res, 403, { error: "Accès refusé (admin uniquement)" });

@@ -47,6 +47,7 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 // API publique developpeur
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
 import { AdminPage } from "./modules/admin/AdminPage.jsx";
+import { AdminModeToggle, getAdminMode } from "./components/AdminModeToggle.jsx";
 
 // Onboarding tour
 import { OnboardingTour } from "./components/OnboardingTour.jsx";
@@ -157,7 +158,11 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AuthedLayout session={session} company={company} onSignOut={handleSignOut} />}>
-        <Route index element={<DashboardPage token={session.token} company={company} />} />
+        <Route index element={
+          (company?.is_admin && getAdminMode() === "admin")
+            ? <Navigate to="/admin" replace />
+            : <DashboardPage token={session.token} company={company} />
+        } />
 
         {/* CRM Clients */}
         <Route path="clients" element={<ClientsListPage token={session.token} company={company} setCompany={setCompany} />} />
@@ -233,6 +238,7 @@ function AuthedLayout({ session, company, onSignOut }) {
       <main className="content">
         <Outlet />
       </main>
+      <AdminModeToggle isAdmin={!!company?.is_admin} />
       <OnboardingTour user={session.user} company={company} />
     </div>
   );

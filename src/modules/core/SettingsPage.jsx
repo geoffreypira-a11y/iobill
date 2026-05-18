@@ -7,7 +7,7 @@ import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
 import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePush } from "../../lib/push.js";
 
-const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security"];
+const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security", "tickets"];
 
 export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -50,6 +50,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
         <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => selectTab("pdp")}>🏛️ PDP</button>
         <button className={"tab" + (tab === "sms" ? " active" : "")} onClick={() => selectTab("sms")}>📱 SMS</button>
         <button className={"tab" + (tab === "security" ? " active" : "")} onClick={() => selectTab("security")}>Sécurité</button>
+        <button className={"tab" + (tab === "tickets" ? " active" : "")} onClick={() => selectTab("tickets")}>🎫 Mes tickets</button>
       </div>
 
       {tab === "profile" && <ProfileTab token={token} company={company} setCompany={setCompany} />}
@@ -60,6 +61,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
       {tab === "pdp" && <PdpTab token={token} company={company} setCompany={setCompany} />}
       {tab === "sms" && <SmsTab token={token} company={company} setCompany={setCompany} />}
       {tab === "security" && <SecurityTab token={token} user={user} onSignOut={onSignOut} />}
+      {tab === "tickets" && <TicketsTab token={token} />}
     </div>
   );
 }
@@ -1433,6 +1435,123 @@ function SmsTab({ token, company, setCompany }) {
         Les SMS sont envoyés uniquement aux relances <em>second</em> (J+30) et <em>final</em> (J+60),
         et seulement si le client a un numéro de téléphone enregistré.
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// TicketsTab — Suivi des tickets de support de l'utilisateur
+// ═══════════════════════════════════════════════════════════
+function TicketsTab({ token }) {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+
+  const TYPES = {
+    incident: { label: "🔴 Incident", color: "var(--red, #e0556a)" },
+    amelioration: { label: "💡 Amélioration", color: "var(--gold, #d4a843)" },
+    question: { label: "❓ Question", color: "var(--muted2, #888)" },
+    facturation: { label: "💳 Facturation", color: "var(--orange)" }
+  };
+  const STATUS_LABEL = {
+    new: { label: "🔴 Nouveau", desc: "Le support n'a pas encore pris en charge" },
+    in_progress: { label: "🟡 En cours", desc: "Le support travaille sur ce ticket" },
+    resolved: { label: "🟢 Résolu", desc: "Solution apportée — vérifiez et fermez si OK" },
+    closed: { label: "⚫ Fermé", desc: "Ticket clos" }
+  };
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "my_tickets" })
+      });
+      const j = await r.json();
+      setTickets(j.tickets || []);
+    } catch {
+      setTickets([]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [token]);
+
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Mes tickets de support</h3>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+            Historique de vos demandes et leur statut. Pour ouvrir un nouveau ticket,
+            utilisez le menu utilisateur en bas à gauche → "🎫 Signaler un problème".
+          </div>
+        </div>
+        <button className="btn btn-ghost" onClick={load} style={{ fontSize: 12 }}>
+          🔄 Actualiser
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>Chargement...</div>
+      ) : tickets.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>
+          <div style={{ fontSize: 30, marginBottom: 8 }}>🎫</div>
+          Aucun ticket pour le moment.
+          <div style={{ fontSize: 11, marginTop: 8 }}>
+            Si vous rencontrez un problème, n'hésitez pas à nous le signaler.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {tickets.map((t) => {
+            const tt = TYPES[t.type] || { label: t.type, color: "var(--muted)" };
+            const ss = STATUS_LABEL[t.status] || { label: t.status, desc: "" };
+            return (
+              <div key={t.id} style={{
+                padding: 12,
+                border: "1px solid var(--border, rgba(255,255,255,0.08))",
+                borderRadius: 8,
+                background: t.status === "new" ? "rgba(212,168,67,0.04)" : "transparent"
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ color: tt.color, fontSize: 12, fontWeight: 600 }}>{tt.label}</span>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>· {fmtDate(t.created_at)}</span>
+                  </div>
+                  <span style={{
+                    fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                    background: "rgba(255,255,255,0.05)"
+                  }}>
+                    {ss.label}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap", marginBottom: 6 }}>
+                  {t.message}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                  {ss.desc}
+                </div>
+                {t.admin_notes && (
+                  <div style={{
+                    marginTop: 10, padding: 10,
+                    background: "rgba(62,207,122,0.06)",
+                    border: "1px solid rgba(62,207,122,0.2)",
+                    borderRadius: 6,
+                    fontSize: 12
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--green, #3ecf7a)" }}>
+                      💬 Réponse du support
+                    </div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{t.admin_notes}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

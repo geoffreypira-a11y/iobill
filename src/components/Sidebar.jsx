@@ -8,9 +8,11 @@ import { useT } from "../lib/i18n.js";
 import { CompanySwitcher } from "./CompanySwitcher.jsx";
 import { NotificationBell } from "./NotificationBell.jsx";
 import { SupportTicketModal } from "./SupportTicketModal.jsx";
+import { useIsAdminMode } from "./AdminModeToggle.jsx";
 
 export function Sidebar({ token, company, user, onSignOut }) {
   const t = useT();
+  const isAdminMode = useIsAdminMode(!!company?.is_admin);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [ticketModalOpen, setTicketModalOpen] = useState(false);
@@ -173,7 +175,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
             <Icon name="settings" className="nav-icon" />
             API Développeur
           </NavLink>
-          {company?.is_admin && (
+          {company?.is_admin && isAdminMode && (
             <>
               <NavLink to="/admin" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                 <Icon name="settings" className="nav-icon" />
