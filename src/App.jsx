@@ -46,6 +46,7 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 
 // API publique developpeur
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
+import { AdminPage } from "./modules/admin/AdminPage.jsx";
 
 // Onboarding tour
 import { OnboardingTour } from "./components/OnboardingTour.jsx";
@@ -197,6 +198,9 @@ export default function App() {
 
         {/* API publique */}
         <Route path="developers" element={<ApiKeysPage token={session.token} company={company} />} />
+
+        {/* Admin dashboard — gestion abonnés + tickets */}
+        <Route path="admin" element={<AdminPage token={session.token} company={company} />} />
 
         {/* Admin platform stats — uniquement si is_admin */}
         <Route path="admin/stats" element={<AdminStatsPage token={session.token} company={company} />} />

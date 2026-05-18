@@ -653,14 +653,14 @@ function BillingTab({ token, company, setCompany }) {
 
   async function startCheckout() {
     try {
-      const r = await fetch("/api/stripe-checkout", {
+      const r = await fetch("/api/stripe", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ company_id: company.id, plan: "pro_monthly" })
       });
       const j = await r.json();
       if (j?.url) window.location.href = j.url;
-      else alert("API non câblée. À implémenter dans api/stripe-checkout.js");
+      else alert("API non câblée. À implémenter dans api/stripe.js");
     } catch {
       alert("API non câblée.");
     }

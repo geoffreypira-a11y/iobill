@@ -7,11 +7,13 @@ import { initials } from "../lib/helpers.js";
 import { useT } from "../lib/i18n.js";
 import { CompanySwitcher } from "./CompanySwitcher.jsx";
 import { NotificationBell } from "./NotificationBell.jsx";
+import { SupportTicketModal } from "./SupportTicketModal.jsx";
 
 export function Sidebar({ token, company, user, onSignOut }) {
   const t = useT();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [ticketModalOpen, setTicketModalOpen] = useState(false);
   const userMenuRef = useRef(null);
   const [isFirmMember, setIsFirmMember] = useState(false);
   const [hasTeammates, setHasTeammates] = useState(false);
@@ -172,10 +174,16 @@ export function Sidebar({ token, company, user, onSignOut }) {
             API Développeur
           </NavLink>
           {company?.is_admin && (
-            <NavLink to="/admin/stats" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="dashboard" className="nav-icon" />
-              {t("Stats plateforme")}
-            </NavLink>
+            <>
+              <NavLink to="/admin" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="settings" className="nav-icon" />
+                🛡 Admin
+              </NavLink>
+              <NavLink to="/admin/stats" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="dashboard" className="nav-icon" />
+                {t("Stats plateforme")}
+              </NavLink>
+            </>
           )}
         </div>
 
@@ -241,6 +249,25 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 </button>
                 <div style={{ height: 1, background: "var(--border, rgba(255,255,255,0.06))" }} />
                 <button
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    close();
+                    setTicketModalOpen(true);
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    width: "100%", padding: "10px 14px",
+                    background: "transparent", border: 0, cursor: "pointer",
+                    color: "var(--text)", fontSize: 13, textAlign: "left"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <span style={{ fontSize: 14 }}>🎫</span>
+                  Signaler un problème
+                </button>
+                <div style={{ height: 1, background: "var(--border, rgba(255,255,255,0.06))" }} />
+                <button
                   onClick={async () => {
                     setUserMenuOpen(false);
                     close();
@@ -263,6 +290,9 @@ export function Sidebar({ token, company, user, onSignOut }) {
           </div>
         </div>
       </aside>
+      {ticketModalOpen && (
+        <SupportTicketModal token={token} onClose={() => setTicketModalOpen(false)} />
+      )}
     </>
   );
 }
