@@ -720,6 +720,50 @@ function BillingTab({ token, company, setCompany }) {
           ✅ PWA installable · ✅ Conformité 2026/2027
         </div>
       </div>
+
+      {/* ─── Encart Cabinet comptable ─── */}
+      <div style={{
+        marginTop: 24,
+        padding: 18,
+        background: "rgba(62,207,122,0.04)",
+        border: "1px solid rgba(62,207,122,0.3)",
+        borderRadius: 10
+      }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <span style={{ fontSize: 28 }}>📊</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
+              Vous êtes cabinet comptable ?
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted2)", lineHeight: 1.5, marginBottom: 10 }}>
+              Activez le plan <strong>IO BILL Cabinet</strong> pour gérer plusieurs sociétés
+              clientes depuis un seul espace, inviter vos collaborateurs et profiter d'un
+              tableau de bord consolidé.
+            </div>
+            <div style={{
+              padding: "6px 10px",
+              background: "rgba(62,207,122,0.15)",
+              borderRadius: 6,
+              fontSize: 11,
+              color: "var(--green, #3ecf7a)",
+              fontWeight: 600,
+              marginBottom: 12,
+              display: "inline-block"
+            }}>
+              🎁 Offre de lancement : les 10 premiers cabinets sont GRATUITS À VIE
+            </div>
+            <div>
+              <a
+                href="/firm/onboarding"
+                className="btn btn-ghost"
+                style={{ fontSize: 12, color: "var(--green, #3ecf7a)", borderColor: "rgba(62,207,122,0.4)" }}
+              >
+                📊 Créer mon cabinet →
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
