@@ -227,7 +227,8 @@ function ModulesTab({ token, company, setCompany }) {
     { code: "accounting", label: "Export comptable", description: "FEC, CSV, connecteurs Pennylane / Tiime" },
     { code: "banking", label: "Lettrage bancaire PSD2", description: "Connexion Bridge pour lettrage automatique" },
     { code: "client_portal", label: "Portail client", description: "Accès public sécurisé pour vos clients" },
-    { code: "esign", label: "Signature électronique", description: "Signature interne (clic) ou Yousign (eIDAS)" }
+    { code: "esign", label: "Signature électronique", description: "Signature interne (clic) ou Yousign (eIDAS)" },
+    { code: "advanced", label: "🔧 Mode avancé", description: "Affiche la section « Avancé » dans le menu : Cabinet, Équipe, Journal d'audit, API Développeur. Réservé aux utilisateurs expérimentés." }
   ];
 
   function toggle(code) {

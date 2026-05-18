@@ -47,7 +47,7 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 // API publique developpeur
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
 import { AdminPage } from "./modules/admin/AdminPage.jsx";
-import { AdminModeToggle, getAdminMode } from "./components/AdminModeToggle.jsx";
+import { AdminModeToggle, getAdminMode, useIsAdminMode } from "./components/AdminModeToggle.jsx";
 
 // Onboarding tour
 import { OnboardingTour } from "./components/OnboardingTour.jsx";
@@ -159,9 +159,7 @@ export default function App() {
     <Routes>
       <Route element={<AuthedLayout session={session} company={company} onSignOut={handleSignOut} />}>
         <Route index element={
-          (company?.is_admin && getAdminMode() === "admin")
-            ? <Navigate to="/admin" replace />
-            : <DashboardPage token={session.token} company={company} />
+          <IndexRoute session={session} company={company} />
         } />
 
         {/* CRM Clients */}
@@ -242,4 +240,17 @@ function AuthedLayout({ session, company, onSignOut }) {
       <OnboardingTour user={session.user} company={company} />
     </div>
   );
+}
+
+/**
+ * IndexRoute : redirige vers /admin si l'utilisateur est admin ET en mode admin.
+ * Sinon affiche le dashboard normal. Utilise useIsAdminMode pour réagir aux
+ * changements de mode (le toggle déclenche un event admin-mode-changed).
+ */
+function IndexRoute({ session, company }) {
+  const isAdminMode = useIsAdminMode(!!company?.is_admin);
+  if (isAdminMode) {
+    return <Navigate to="/admin" replace />;
+  }
+  return <DashboardPage token={session.token} company={company} />;
 }

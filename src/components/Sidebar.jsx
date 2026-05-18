@@ -85,7 +85,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
           // ═══════════════════════════════════════════════════════
           <div className="nav-section">
             <div className="nav-label">Administration</div>
-            <NavLink to="/admin" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+            <NavLink to="/admin" end className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
               <Icon name="settings" className="nav-icon" />
               🛡 Dashboard Admin
             </NavLink>
@@ -172,30 +172,33 @@ export function Sidebar({ token, company, user, onSignOut }) {
               )}
             </div>
 
-            {/* Cabinet / Équipe / Audit / API Dev — admin retiré */}
-            <div className="nav-section">
-              <div className="nav-label">{t("Avancé")}</div>
-              {isFirmMember && (
-                <NavLink to="/firm" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                  <Icon name="user" className="nav-icon" />
-                  {t("Cabinet")}
+            {/* Section Avancé : visible uniquement si modules.advanced = true.
+                Active par défaut OFF — l'abonné l'active depuis Paramètres → Modules. */}
+            {modules.advanced === true && (
+              <div className="nav-section">
+                <div className="nav-label">{t("Avancé")}</div>
+                {isFirmMember && (
+                  <NavLink to="/firm" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                    <Icon name="user" className="nav-icon" />
+                    {t("Cabinet")}
+                  </NavLink>
+                )}
+                {hasTeammates && (
+                  <NavLink to="/team" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                    <Icon name="handshake" className="nav-icon" />
+                    {t("Équipe")}
+                  </NavLink>
+                )}
+                <NavLink to="/audit" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="check" className="nav-icon" />
+                  {t("Journal d'audit")}
                 </NavLink>
-              )}
-              {hasTeammates && (
-                <NavLink to="/team" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                  <Icon name="user" className="nav-icon" />
-                  {t("Équipe")}
+                <NavLink to="/developers" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="settings" className="nav-icon" />
+                  API Développeur
                 </NavLink>
-              )}
-              <NavLink to="/audit" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                <Icon name="check" className="nav-icon" />
-                {t("Journal d'audit")}
-              </NavLink>
-              <NavLink to="/developers" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                <Icon name="settings" className="nav-icon" />
-                API Développeur
-              </NavLink>
-            </div>
+              </div>
+            )}
           </>
         )}
 
