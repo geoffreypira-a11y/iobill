@@ -79,115 +79,125 @@ export function Sidebar({ token, company, user, onSignOut }) {
           <NotificationBell token={token} company={company} user={user} />
         </div>
 
-        <div className="nav-section">
-          <div className="nav-label">{t("Pilotage")}</div>
-          <NavLink to="/" end className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-            <Icon name="dashboard" className="nav-icon" />
-            {t("Tableau de bord")}
-          </NavLink>
-
-          {modules.quotes !== false && (
-            <NavLink to="/quotes" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="quote" className="nav-icon" />
-              {t("Devis")}
+        {isAdminMode ? (
+          // ═══════════════════════════════════════════════════════
+          // MODE ADMIN : uniquement Admin + Stats plateforme
+          // ═══════════════════════════════════════════════════════
+          <div className="nav-section">
+            <div className="nav-label">Administration</div>
+            <NavLink to="/admin" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+              <Icon name="settings" className="nav-icon" />
+              🛡 Dashboard Admin
             </NavLink>
-          )}
-
-          {modules.invoicing !== false && (
-            <NavLink to="/invoices" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="invoice" className="nav-icon" />
-              {t("Factures")}
+            <NavLink to="/admin/stats" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+              <Icon name="dashboard" className="nav-icon" />
+              📊 Stats plateforme
             </NavLink>
-          )}
-
-          {modules.credit_notes !== false && (
-            <NavLink to="/credit-notes" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="quote" className="nav-icon" />
-              {t("Avoirs")}
-            </NavLink>
-          )}
-
-          {modules.purchases !== false && (
-            <NavLink to="/purchases" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="cart" className="nav-icon" />
-              {t("Achats")}
-            </NavLink>
-          )}
-
-          <NavLink to="/clients" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-            <Icon name="users" className="nav-icon" />
-            {t("Clients")}
-          </NavLink>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">{t("Conformité") || "Conformité"}</div>
-
-          {modules.vat && (
-            <NavLink to="/vat" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="euro" className="nav-icon" />
-              {t("TVA")}
-            </NavLink>
-          )}
-
-          {modules.urssaf && (
-            <NavLink to="/urssaf" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="clock" className="nav-icon" />
-              {t("URSSAF")}
-            </NavLink>
-          )}
-
-          {modules.accounting !== false && (
-            <NavLink to="/accounting" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="download" className="nav-icon" />
-              {t("Export compta")}
-            </NavLink>
-          )}
-
-          {modules.banking && (
-            <NavLink to="/banking" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="bank" className="nav-icon" />
-              {t("Banque")}
-            </NavLink>
-          )}
-        </div>
-
-        {/* Cabinet / Equipe / Audit / Admin */}
-        <div className="nav-section">
-          <div className="nav-label">{t("Avancé")}</div>
-          {isFirmMember && (
-            <NavLink to="/firm" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="user" className="nav-icon" />
-              {t("Cabinet")}
-            </NavLink>
-          )}
-          {(hasTeammates || company?.is_admin) && (
-            <NavLink to="/team" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-              <Icon name="user" className="nav-icon" />
-              {t("Équipe")}
-            </NavLink>
-          )}
-          <NavLink to="/audit" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-            <Icon name="check" className="nav-icon" />
-            {t("Journal d'audit")}
-          </NavLink>
-          <NavLink to="/developers" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-            <Icon name="settings" className="nav-icon" />
-            API Développeur
-          </NavLink>
-          {company?.is_admin && isAdminMode && (
-            <>
-              <NavLink to="/admin" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                <Icon name="settings" className="nav-icon" />
-                🛡 Admin
-              </NavLink>
-              <NavLink to="/admin/stats" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+          </div>
+        ) : (
+          // ═══════════════════════════════════════════════════════
+          // MODE UTILISATEUR : navigation classique (sans admin)
+          // ═══════════════════════════════════════════════════════
+          <>
+            <div className="nav-section">
+              <div className="nav-label">{t("Pilotage")}</div>
+              <NavLink to="/" end className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                 <Icon name="dashboard" className="nav-icon" />
-                {t("Stats plateforme")}
+                {t("Tableau de bord")}
               </NavLink>
-            </>
-          )}
-        </div>
+
+              {modules.quotes !== false && (
+                <NavLink to="/quotes" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="quote" className="nav-icon" />
+                  {t("Devis")}
+                </NavLink>
+              )}
+
+              {modules.invoicing !== false && (
+                <NavLink to="/invoices" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="invoice" className="nav-icon" />
+                  {t("Factures")}
+                </NavLink>
+              )}
+
+              {modules.credit_notes !== false && (
+                <NavLink to="/credit-notes" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="quote" className="nav-icon" />
+                  {t("Avoirs")}
+                </NavLink>
+              )}
+
+              {modules.purchases !== false && (
+                <NavLink to="/purchases" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="cart" className="nav-icon" />
+                  {t("Achats")}
+                </NavLink>
+              )}
+
+              <NavLink to="/clients" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="users" className="nav-icon" />
+                {t("Clients")}
+              </NavLink>
+            </div>
+
+            <div className="nav-section">
+              <div className="nav-label">{t("Conformité") || "Conformité"}</div>
+
+              {modules.vat && (
+                <NavLink to="/vat" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="euro" className="nav-icon" />
+                  {t("TVA")}
+                </NavLink>
+              )}
+
+              {modules.urssaf && (
+                <NavLink to="/urssaf" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="clock" className="nav-icon" />
+                  {t("URSSAF")}
+                </NavLink>
+              )}
+
+              {modules.accounting !== false && (
+                <NavLink to="/accounting" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="download" className="nav-icon" />
+                  {t("Export compta")}
+                </NavLink>
+              )}
+
+              {modules.banking && (
+                <NavLink to="/banking" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="bank" className="nav-icon" />
+                  {t("Banque")}
+                </NavLink>
+              )}
+            </div>
+
+            {/* Cabinet / Équipe / Audit / API Dev — admin retiré */}
+            <div className="nav-section">
+              <div className="nav-label">{t("Avancé")}</div>
+              {isFirmMember && (
+                <NavLink to="/firm" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="user" className="nav-icon" />
+                  {t("Cabinet")}
+                </NavLink>
+              )}
+              {hasTeammates && (
+                <NavLink to="/team" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="user" className="nav-icon" />
+                  {t("Équipe")}
+                </NavLink>
+              )}
+              <NavLink to="/audit" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="check" className="nav-icon" />
+                {t("Journal d'audit")}
+              </NavLink>
+              <NavLink to="/developers" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="settings" className="nav-icon" />
+                API Développeur
+              </NavLink>
+            </div>
+          </>
+        )}
 
         <div className="sidebar-footer">
           <NavLink
