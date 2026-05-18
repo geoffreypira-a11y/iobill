@@ -250,12 +250,23 @@ function AuthedLayout({ session, company, onSignOut }) {
 }
 
 /**
- * IndexRoute : redirige vers /admin si l'utilisateur est admin ET en mode admin.
- * Sinon affiche le dashboard normal. Utilise useIsAdminMode pour réagir aux
- * changements de mode (le toggle déclenche un event admin-mode-changed).
+ * IndexRoute : redirige selon le contexte :
+ *   - flag pending_firm_setup → /firm/onboarding (nouvel inscrit cabinet)
+ *   - admin + mode admin → /admin
+ *   - sinon → dashboard normal
  */
 function IndexRoute({ session, company }) {
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
+
+  // Si un nouveau cabinet vient de s'inscrire (flag posé par AuthPage),
+  // on le redirige vers la création de son cabinet.
+  let pendingFirm = false;
+  try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
+  if (pendingFirm) {
+    try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
+    return <Navigate to="/firm/onboarding" replace />;
+  }
+
   if (isAdminMode) {
     return <Navigate to="/admin" replace />;
   }
