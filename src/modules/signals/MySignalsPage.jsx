@@ -11,6 +11,8 @@ export function MySignalsPage({ token, user, company }) {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("open");
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewTitle, setPreviewTitle] = useState("");
 
   async function load() {
     if (!company?.id) { setLoading(false); return; }
@@ -28,9 +30,9 @@ export function MySignalsPage({ token, user, company }) {
       let targetDoc = null;
       if (s.target_id) {
         if (s.target_type === "invoice") {
-          targetDoc = await sb.selectOne(token, "invoices", `id=eq.${s.target_id}`, "number,total_ttc_cents,issue_date");
+          targetDoc = await sb.selectOne(token, "invoices", `id=eq.${s.target_id}`, "number,total_ttc_cents,issue_date,pdf_url,facturx_pdf_url");
         } else if (s.target_type === "purchase") {
-          targetDoc = await sb.selectOne(token, "purchases", `id=eq.${s.target_id}`, "number,vendor_name,total_ttc_cents,issue_date");
+          targetDoc = await sb.selectOne(token, "purchases", `id=eq.${s.target_id}`, "number,vendor_name,total_ttc_cents,issue_date,pdf_url");
         }
       }
       out.push({ ...s, _firmName: firm?.name, _targetDoc: targetDoc });
@@ -97,13 +99,45 @@ export function MySignalsPage({ token, user, company }) {
           </div>
         </div>
       ) : (
-        filtered.map((s) => <SignalCard key={s.id} signal={s} onAction={action} />)
+        filtered.map((s) => (
+          <SignalCard 
+            key={s.id} 
+            signal={s} 
+            onAction={action}
+            onPreview={(url, title) => { setPreviewUrl(url); setPreviewTitle(title); }}
+          />
+        ))
+      )}
+
+      {previewUrl && (
+        <PdfPreviewModal url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
       )}
     </div>
   );
 }
 
-function SignalCard({ signal, onAction }) {
+function PdfPreviewModal({ url, title, onClose }) {
+  return (
+    <div style={pdfModalBackdrop} onClick={onClose}>
+      <div className="card" style={pdfModalBox} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <strong style={{ fontSize: 13 }}>{title}</strong>
+          <div style={{ display: "flex", gap: 6 }}>
+            <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>
+              ⤴ Ouvrir
+            </a>
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>✕ Fermer</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, background: "#fff", overflow: "hidden" }}>
+          <iframe src={url} title={title} style={{ width: "100%", height: "100%", border: "none" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignalCard({ signal, onAction, onPreview }) {
   const [responding, setResponding] = useState(false);
   const [responseText, setResponseText] = useState("");
 
@@ -113,6 +147,14 @@ function SignalCard({ signal, onAction }) {
     setResponding(false);
     setResponseText("");
   }
+
+  const pdfUrl = signal._targetDoc?.facturx_pdf_url || signal._targetDoc?.pdf_url || null;
+  const docLabel = signal._targetDoc?.number || signal._targetDoc?.vendor_name || "";
+  const targetLabel = signal.target_type === "invoice" 
+    ? `Facture ${docLabel}` 
+    : signal.target_type === "purchase" 
+      ? `Achat ${docLabel}` 
+      : "Document";
 
   return (
     <div className="card" style={{ padding: 14, marginBottom: 8, border: `1px solid ${SEV_BORDER[signal.severity]}` }}>
@@ -145,9 +187,27 @@ function SignalCard({ signal, onAction }) {
         </div>
         {signal.status === "open" && !responding && (
           <div style={{ display: "flex", gap: 4 }}>
+            {pdfUrl && (
+              <button 
+                className="btn btn-ghost btn-sm" 
+                onClick={() => onPreview(pdfUrl, targetLabel)}
+                title="Voir le document"
+              >
+                👁 Voir
+              </button>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={() => setResponding(true)}>💬 Répondre</button>
             <button className="btn btn-primary btn-sm" onClick={() => onAction(signal.id, "signal_resolve")}>✅ Résoudre</button>
           </div>
+        )}
+        {signal.status !== "open" && pdfUrl && (
+          <button 
+            className="btn btn-ghost btn-sm" 
+            onClick={() => onPreview(pdfUrl, targetLabel)}
+            title="Voir le document"
+          >
+            👁 Voir
+          </button>
         )}
       </div>
 
@@ -196,3 +256,6 @@ const TARGET_LABEL = {
   general: "Général"
 };
 const loadingStyle = { minHeight: 400, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 13 };
+
+const pdfModalBackdrop = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 400, padding: 20 };
+const pdfModalBox = { width: "100%", maxWidth: 1100, height: "92vh", display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 };
