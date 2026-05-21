@@ -53,7 +53,7 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 // API publique developpeur
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
 import { AdminPage } from "./modules/admin/AdminPage.jsx";
-import { AdminModeToggle, getAdminMode, useIsAdminMode, useIsComptableMode } from "./components/AdminModeToggle.jsx";
+import { AdminModeToggle, getAdminMode, useIsAdminMode } from "./components/AdminModeToggle.jsx";
 import { LegalPage } from "./modules/legal/LegalPage.jsx";
 import { LegalFooter } from "./components/LegalFooter.jsx";
 import { TrialExpiredPage } from "./modules/core/TrialExpiredPage.jsx";
@@ -101,6 +101,29 @@ export default function App() {
   useEffect(() => {
     initTelemetry();
     (async () => {
+      // HOTFIX v8.23.1 : capter le retour de confirmation email Supabase.
+      // Quand l'user clique le lien dans l'email de confirmation, il revient sur
+      // app.iobill.online/#access_token=...&refresh_token=...&type=signup
+      // On extrait ces tokens, on les sauvegarde, on nettoie l'URL.
+      const hash = window.location.hash || "";
+      if (hash.length > 1 && hash.includes("access_token=")) {
+        try {
+          const params = new URLSearchParams(hash.substring(1));
+          const accessToken = params.get("access_token");
+          const refreshToken = params.get("refresh_token");
+          if (accessToken) {
+            const userFromToken = await sb.getUser(accessToken);
+            if (userFromToken && userFromToken.id) {
+              saveSession(accessToken, refreshToken || "", userFromToken);
+              // Nettoyer l'URL pour ne pas laisser le token visible
+              window.history.replaceState(null, "", window.location.pathname);
+            }
+          }
+        } catch (e) {
+          console.warn("[auth-callback] hash parse error:", e?.message);
+        }
+      }
+
       const s = loadSession();
       if (!s.token) { setBootstrapping(false); return; }
       const user = await sb.getUser(s.token);
@@ -320,17 +343,16 @@ function AuthedLayout({ session, company, onSignOut }) {
 
 /**
  * IndexRoute : redirige selon le contexte :
- *   - flag pending_firm_setup → /firm
- *   - admin + mode admin       → /admin
- *   - admin + mode comptable   → /firm (v8.24)
- *   - sinon                    → dashboard normal
+ *   - flag pending_firm_setup → /firm (membership puis onboarding auto via FirmRoute)
+ *   - admin + mode admin → /admin
+ *   - sinon → dashboard normal
  */
 function IndexRoute({ session, company }) {
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
-  const isComptableMode = useIsComptableMode(!!company?.is_admin);
 
   // Si un nouveau cabinet vient de s'inscrire (flag posé par AuthPage),
-  // on le redirige vers /firm.
+  // on le redirige vers /firm. FirmRoute se chargera d'afficher
+  // l'onboarding si pas encore membre, ou le dashboard si déjà créé.
   let pendingFirm = false;
   try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
   if (pendingFirm) {
@@ -338,9 +360,9 @@ function IndexRoute({ session, company }) {
     return <Navigate to="/firm" replace />;
   }
 
-  if (isAdminMode) return <Navigate to="/admin" replace />;
-  if (isComptableMode) return <Navigate to="/firm" replace />;
-
+  if (isAdminMode) {
+    return <Navigate to="/admin" replace />;
+  }
   return <DashboardPage token={session.token} company={company} />;
 }
 
