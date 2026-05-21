@@ -41,10 +41,10 @@ import { FirmInviteClientPage } from "./modules/firm2/FirmInviteClientPage.jsx";
 // v8.27 : vraies pages Sprint 3 (vue lecture + signalements)
 import { FirmClientFichePage } from "./modules/firm2/FirmClientFichePage.jsx";
 import { FirmAnomaliesPage } from "./modules/firm2/FirmAnomaliesPage.jsx";
-// Placeholders pour Sprint 4-7 encore en dev
+import { FirmMessagesPage } from "./modules/firm2/FirmMessagesPage.jsx";
+// Placeholders pour Sprint 5-7 encore en dev
 import {
   FirmMarathonPage,
-  FirmMessagesPage,
   FirmSettingsPage
 } from "./modules/firm2/FirmPlaceholders.jsx";
 import { MyFirmSettingsPage } from "./modules/settings/MyFirmSettingsPage.jsx";
@@ -52,6 +52,7 @@ import { MySignalsPage } from "./modules/signals/MySignalsPage.jsx";
 import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
+import { ChatBubble } from "./components/ChatBubble.jsx";
 
 // Audit log
 import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
@@ -351,6 +352,7 @@ function AuthedLayout({ session, company, onSignOut }) {
       </main>
       <AdminModeToggle isAdmin={!!company?.is_admin} />
       <OnboardingTour user={session.user} company={company} />
+      <ChatBubble token={session.token} user={session.user} company={company} />
     </div>
   );
 }
