@@ -81,11 +81,6 @@ export function MyFirmSettingsPage({ token, user, company }) {
         Donnez à votre cabinet comptable un accès en lecture à votre comptabilité.
       </div>
 
-      {/* Debug info (à retirer une fois OK) */}
-      <div style={{ fontSize: 10, color: "var(--muted2)", marginBottom: 16, padding: 8, background: "rgba(255,255,255,0.02)", borderRadius: 4, fontFamily: "monospace" }}>
-        Debug : user={user?.email} · company={company?.id || "aucune"} · liens trouvés={links.length}
-      </div>
-
       {/* Invitations en attente */}
       {pending.length > 0 && (
         <div style={{ marginBottom: 24 }}>
