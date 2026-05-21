@@ -38,9 +38,11 @@ import { FirmRoute, FirmOnboardingRoute } from "./modules/firm2/FirmRoute.jsx";
 // v8.26 : vraies pages Sprint 2 (invitation bidirectionnelle)
 import { FirmClientsListPage } from "./modules/firm2/FirmClientsListPage.jsx";
 import { FirmInviteClientPage } from "./modules/firm2/FirmInviteClientPage.jsx";
-// Placeholders pour Sprint 3-7 encore en dev
+// v8.27 : vraies pages Sprint 3 (vue lecture + signalements)
+import { FirmClientFichePage } from "./modules/firm2/FirmClientFichePage.jsx";
+import { FirmAnomaliesPage } from "./modules/firm2/FirmAnomaliesPage.jsx";
+// Placeholders pour Sprint 4-7 encore en dev
 import {
-  FirmClientFichePage,
   FirmMarathonPage,
   FirmMessagesPage,
   FirmSettingsPage
@@ -224,7 +226,8 @@ export default function App() {
           <Route path="firm/onboarding" element={<FirmOnboardingRoute token={session.token} user={session.user} company={null} />} />
           <Route path="firm/clients" element={<FirmClientsListPage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/clients/new" element={<FirmInviteClientPage token={session.token} user={session.user} company={null} />} />
-          <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/clients/:linkId" element={<FirmClientFichePage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/anomalies" element={<FirmAnomaliesPage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/marathon" element={<FirmMarathonPage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/messages" element={<FirmMessagesPage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/settings" element={<FirmSettingsPage token={session.token} user={session.user} company={null} />} />
@@ -285,7 +288,8 @@ export default function App() {
         <Route path="firm/onboarding" element={<FirmOnboardingRoute token={session.token} user={session.user} company={company} />} />
         <Route path="firm/clients" element={<FirmClientsListPage token={session.token} user={session.user} company={company} />} />
         <Route path="firm/clients/new" element={<FirmInviteClientPage token={session.token} user={session.user} company={company} />} />
-        <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/clients/:linkId" element={<FirmClientFichePage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/anomalies" element={<FirmAnomaliesPage token={session.token} user={session.user} company={company} />} />
         <Route path="firm/marathon" element={<FirmMarathonPage token={session.token} user={session.user} company={company} />} />
         <Route path="firm/messages" element={<FirmMessagesPage token={session.token} user={session.user} company={company} />} />
         <Route path="firm/settings" element={<FirmSettingsPage token={session.token} user={session.user} company={company} />} />

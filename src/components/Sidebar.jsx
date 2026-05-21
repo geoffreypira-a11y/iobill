@@ -123,6 +123,10 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 <Icon name="user" className="nav-icon" />
                 Mes clients
               </NavLink>
+              <NavLink to="/firm/anomalies" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="warning" className="nav-icon" />
+                Signalements
+              </NavLink>
               <NavLink to="/firm/marathon" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                 <Icon name="invoice" className="nav-icon" />
                 Mode Marathon
@@ -216,15 +220,6 @@ export function Sidebar({ token, company, user, onSignOut }) {
                   {t("Banque")}
                 </NavLink>
               )}
-            </div>
-
-            {/* Section Mon comptable (v8.26.3 — toujours visible pour les Pros) */}
-            <div className="nav-section">
-              <div className="nav-label">Comptable</div>
-              <NavLink to="/settings/firm-link" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                <Icon name="handshake" className="nav-icon" />
-                Mon comptable
-              </NavLink>
             </div>
 
             {/* Section Avancé : visible uniquement si modules.advanced = true.
