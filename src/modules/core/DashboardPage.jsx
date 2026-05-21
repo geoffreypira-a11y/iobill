@@ -6,6 +6,7 @@ import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
 import { Icon } from "../../components/Icon.jsx";
 import { useT } from "../../lib/i18n.js";
 import { DashboardCharts, TopClientsChart } from "./DashboardCharts.jsx";
+import { TrialBanner } from "../../components/TrialBanner.jsx";
 
 export function DashboardPage({ token, company }) {
   const t = useT();
@@ -88,6 +89,7 @@ export function DashboardPage({ token, company }) {
 
   return (
     <div className="page">
+      <TrialBanner token={token} company={company} />
       <div className="page-header">
         <div>
           <div className="page-title">{t("Tableau de bord").toUpperCase()}</div>
@@ -131,12 +133,16 @@ export function DashboardPage({ token, company }) {
               <div className="kpi-foot" style={{ fontSize: 10 }}>
                 {loading ? "" : (
                   <>
-                    {fmtEUR(collected)} collectée − {fmtEUR(deductible)} déductible
+                    {fmtEUR(collected)} collectée − {fmtEUR(deductible)} déductible*
                     <br />
                     {isCredit
                       ? <span style={{ color: "var(--green)" }}>🟢 Crédit en votre faveur</span>
                       : <span style={{ color: "var(--gold)" }}>À reverser à l'État</span>
                     }
+                    <br />
+                    <span style={{ color: "var(--muted)", fontSize: 9, fontStyle: "italic" }}>
+                      * sur achats payés uniquement (CGI art. 271)
+                    </span>
                   </>
                 )}
               </div>

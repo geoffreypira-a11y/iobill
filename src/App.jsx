@@ -46,6 +46,8 @@ import { AdminPage } from "./modules/admin/AdminPage.jsx";
 import { AdminModeToggle, getAdminMode, useIsAdminMode } from "./components/AdminModeToggle.jsx";
 import { LegalPage } from "./modules/legal/LegalPage.jsx";
 import { LegalFooter } from "./components/LegalFooter.jsx";
+import { TrialExpiredPage } from "./modules/core/TrialExpiredPage.jsx";
+import { isTrialExpired } from "./components/TrialBanner.jsx";
 
 // Onboarding tour
 import { OnboardingTour } from "./components/OnboardingTour.jsx";
@@ -152,6 +154,20 @@ export default function App() {
 
   if (!session) return <AuthPage onAuthed={handleAuthed} />;
   if (!company) return <Onboarding token={session.token} user={session.user} onDone={handleOnboardingDone} />;
+
+  // Trial expiré : page de blocage en plein écran.
+  // Exception : l'admin IO BILL en mode admin garde l'accès complet
+  // (pour pouvoir tester / dépanner). Les autres sont redirigés.
+  const adminBypass = company.is_admin === true && getAdminMode() === "admin";
+  if (isTrialExpired(company) && !adminBypass) {
+    return (
+      <TrialExpiredPage
+        token={session.token}
+        company={company}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
 
   return (
     <Routes>
