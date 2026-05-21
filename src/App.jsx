@@ -53,7 +53,7 @@ import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
 // API publique developpeur
 import { ApiKeysPage } from "./modules/developers/ApiKeysPage.jsx";
 import { AdminPage } from "./modules/admin/AdminPage.jsx";
-import { AdminModeToggle, getAdminMode, useIsAdminMode } from "./components/AdminModeToggle.jsx";
+import { AdminModeToggle, getAdminMode, useIsAdminMode, useIsComptableMode } from "./components/AdminModeToggle.jsx";
 import { LegalPage } from "./modules/legal/LegalPage.jsx";
 import { LegalFooter } from "./components/LegalFooter.jsx";
 import { TrialExpiredPage } from "./modules/core/TrialExpiredPage.jsx";
@@ -320,16 +320,17 @@ function AuthedLayout({ session, company, onSignOut }) {
 
 /**
  * IndexRoute : redirige selon le contexte :
- *   - flag pending_firm_setup → /firm (membership puis onboarding auto via FirmRoute)
- *   - admin + mode admin → /admin
- *   - sinon → dashboard normal
+ *   - flag pending_firm_setup → /firm
+ *   - admin + mode admin       → /admin
+ *   - admin + mode comptable   → /firm (v8.24)
+ *   - sinon                    → dashboard normal
  */
 function IndexRoute({ session, company }) {
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
+  const isComptableMode = useIsComptableMode(!!company?.is_admin);
 
   // Si un nouveau cabinet vient de s'inscrire (flag posé par AuthPage),
-  // on le redirige vers /firm. FirmRoute se chargera d'afficher
-  // l'onboarding si pas encore membre, ou le dashboard si déjà créé.
+  // on le redirige vers /firm.
   let pendingFirm = false;
   try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
   if (pendingFirm) {
@@ -337,9 +338,9 @@ function IndexRoute({ session, company }) {
     return <Navigate to="/firm" replace />;
   }
 
-  if (isAdminMode) {
-    return <Navigate to="/admin" replace />;
-  }
+  if (isAdminMode) return <Navigate to="/admin" replace />;
+  if (isComptableMode) return <Navigate to="/firm" replace />;
+
   return <DashboardPage token={session.token} company={company} />;
 }
 

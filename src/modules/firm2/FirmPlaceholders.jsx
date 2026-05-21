@@ -1,17 +1,29 @@
 import React from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useMyFirm } from "../../components/FirmMode.jsx";
+import { useIsComptableMode } from "../../components/AdminModeToggle.jsx";
 
 /**
  * Pages placeholder pour les Sprints 2-7 du Mode Comptable.
- * Toutes protégées : un user qui n'est pas firm_member est redirigé.
+ * v8.24 : autorise aussi l'admin en mode comptable (aperçu).
  */
 
 function useGuardedFirm(token, user, company) {
+  const isComptableMode = useIsComptableMode(!!company?.is_admin);
   const { loading, firm } = useMyFirm(token, user?.id);
+
   if (loading) return { loading: true, firm: null, redirect: null };
+
+  // v8.24 : admin en mode comptable → aperçu autorisé
+  if (isComptableMode) {
+    return {
+      loading: false,
+      firm: firm || { id: "__admin_preview__", name: "Mode Comptable (aperçu admin)" },
+      redirect: null
+    };
+  }
+
   if (!firm) {
-    // Pas firm_member : si company existe → Pro, redirige vers /. Sinon onboarding cabinet.
     return {
       loading: false,
       firm: null,
