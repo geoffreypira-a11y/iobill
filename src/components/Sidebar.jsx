@@ -8,12 +8,11 @@ import { useT } from "../lib/i18n.js";
 import { CompanySwitcher } from "./CompanySwitcher.jsx";
 import { NotificationBell } from "./NotificationBell.jsx";
 import { SupportTicketModal } from "./SupportTicketModal.jsx";
-import { useIsAdminMode, useIsComptableMode } from "./AdminModeToggle.jsx";
+import { useIsAdminMode } from "./AdminModeToggle.jsx";
 
 export function Sidebar({ token, company, user, onSignOut }) {
   const t = useT();
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
-  const isComptableMode = useIsComptableMode(!!company?.is_admin);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [ticketModalOpen, setTicketModalOpen] = useState(false);
@@ -61,6 +60,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
       const members = await sb.select(token, "firm_members", {
         filter: `user_id=eq.${user.id}`,
         select: "firm_id,role",
+        order: "joined_at.desc",
         limit: 1
       });
       if (!alive) return;
@@ -108,10 +108,9 @@ export function Sidebar({ token, company, user, onSignOut }) {
               📊 Stats plateforme
             </NavLink>
           </div>
-        ) : (myFirm || isComptableMode) ? (
+        ) : myFirm ? (
           // ═══════════════════════════════════════════════════════
-          // MODE COMPTABLE : navigation cabinet (v8.23 / v8.24)
-          // Affiché si l'user est firm_member OU si admin en mode comptable
+          // MODE COMPTABLE : navigation cabinet (v8.23)
           // ═══════════════════════════════════════════════════════
           <>
             <div className="nav-section">

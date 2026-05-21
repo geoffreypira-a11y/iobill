@@ -27,6 +27,7 @@ export function useMyFirm(token, userId) {
         const members = await sb.select(token, "firm_members", {
           filter: `user_id=eq.${userId}`,
           select: "firm_id,role,receive_email_notifications,joined_at",
+          order: "joined_at.desc",
           limit: 1
         });
         if (!alive) return;
