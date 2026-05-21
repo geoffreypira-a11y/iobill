@@ -35,14 +35,17 @@ import { PublicQuotePage, PublicInvoicePage, PublicPortalPage } from "./modules/
 // Cabinet expert-comptable + Equipe + Admin
 // Cabinet (Firm) v8.19 retiré en v8.21 — sera reconstruit en v8.23 (Mode Comptable)
 import { FirmRoute, FirmOnboardingRoute } from "./modules/firm2/FirmRoute.jsx";
+// v8.26 : vraies pages Sprint 2 (invitation bidirectionnelle)
+import { FirmClientsListPage } from "./modules/firm2/FirmClientsListPage.jsx";
+import { FirmInviteClientPage } from "./modules/firm2/FirmInviteClientPage.jsx";
+// Placeholders pour Sprint 3-7 encore en dev
 import {
-  FirmClientsListPage,
   FirmClientFichePage,
-  FirmInviteClientPage,
   FirmMarathonPage,
   FirmMessagesPage,
   FirmSettingsPage
 } from "./modules/firm2/FirmPlaceholders.jsx";
+import { MyFirmSettingsPage } from "./modules/settings/MyFirmSettingsPage.jsx";
 import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
@@ -289,6 +292,9 @@ export default function App() {
 
         {/* Multi-utilisateurs (equipe) */}
         <Route path="team" element={<TeamPage token={session.token} company={company} user={session.user} />} />
+
+        {/* Mon cabinet comptable (v8.26 Sprint 2) */}
+        <Route path="settings/firm-link" element={<MyFirmSettingsPage token={session.token} user={session.user} company={company} />} />
 
         {/* Audit log */}
         <Route path="audit" element={<AuditLogPage token={session.token} company={company} />} />
