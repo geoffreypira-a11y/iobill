@@ -216,7 +216,7 @@ export default function App() {
     }
     return (
       <Routes>
-        <Route element={<AuthedLayout session={session} company={null} onSignOut={handleSignOut} />}>
+        <Route element={<FirmLayout session={session} onSignOut={handleSignOut} />}>
           <Route path="firm" element={<FirmRoute token={session.token} user={session.user} company={null} />} />
           <Route path="firm/onboarding" element={<FirmOnboardingRoute token={session.token} user={session.user} company={null} />} />
           <Route path="firm/clients" element={<FirmClientsListPage token={session.token} user={session.user} company={null} />} />
@@ -337,6 +337,52 @@ function AuthedLayout({ session, company, onSignOut }) {
       </main>
       <AdminModeToggle isAdmin={!!company?.is_admin} />
       <OnboardingTour user={session.user} company={company} />
+    </div>
+  );
+}
+
+/**
+ * FirmLayout — Layout minimal pour les utilisateurs sans company (comptables).
+ * Pas de NotificationBell, pas d'OnboardingTour, pas d'AdminModeToggle.
+ * Juste une sidebar simplifiée et le contenu.
+ */
+function FirmLayout({ session, onSignOut }) {
+  return (
+    <div className="shell">
+      <OfflineBanner />
+      <aside className="sidebar" style={{ minWidth: 220 }}>
+        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--border2)" }}>
+          <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 20, color: "var(--gold)" }}>
+            IO BILL
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+            Mode Cabinet
+          </div>
+        </div>
+        <nav style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          <a href="/firm" className="nav-item">📊 Tableau de bord</a>
+          <a href="/firm/clients" className="nav-item">👥 Mes clients</a>
+          <a href="/firm/marathon" className="nav-item">🚀 Mode Marathon</a>
+          <a href="/firm/messages" className="nav-item">💬 Messages</a>
+          <a href="/firm/settings" className="nav-item">⚙ Réglages cabinet</a>
+        </nav>
+        <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border2)" }}>
+          <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 8, padding: "0 8px" }}>
+            {session.user?.email}
+          </div>
+          <button
+            onClick={onSignOut}
+            className="btn btn-ghost btn-sm"
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </aside>
+      <main className="content">
+        <Outlet />
+        <LegalFooter />
+      </main>
     </div>
   );
 }
