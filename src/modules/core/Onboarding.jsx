@@ -66,7 +66,7 @@ export function Onboarding({ token, user, onDone }) {
       micro_activity: activity,
       micro_threshold: legalForm === "micro" ? thresholdFor(activity) : null,
       modules: modulesFromAnswers(),
-      trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      trial_ends_at: new Date(Date.now() + 7 * 86400000).toISOString(),
       sub_status: "trialing"
     };
     const created = await sb.insert(token, "companies", company);

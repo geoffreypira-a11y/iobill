@@ -33,11 +33,7 @@ import { BankingPage } from "./modules/banking/BankingPage.jsx";
 import { PublicQuotePage, PublicInvoicePage, PublicPortalPage } from "./modules/public/PublicPages.jsx";
 
 // Cabinet expert-comptable + Equipe + Admin
-import { FirmDashboardPage } from "./modules/firm/FirmDashboardPage.jsx";
-import { FirmOnboardingPage } from "./modules/firm/FirmOnboardingPage.jsx";
-import { FirmInviteClientPage } from "./modules/firm/FirmInviteClientPage.jsx";
-import { FirmInviteAcceptPage } from "./modules/firm/FirmInviteAcceptPage.jsx";
-import { FirmClientFichePage } from "./modules/firm/FirmClientFichePage.jsx";
+// Cabinet (Firm) v8.19 retiré en v8.21 — sera reconstruit en v8.23 (Mode Comptable)
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
 
@@ -189,11 +185,7 @@ export default function App() {
         <Route path="banking" element={<BankingPage token={session.token} company={company} />} />
 
         {/* Cabinet expert-comptable */}
-        <Route path="firm" element={<FirmDashboardPage token={session.token} user={session.user} />} />
-        <Route path="firm/onboarding" element={<FirmOnboardingPage token={session.token} user={session.user} />} />
-        <Route path="firm/clients/new" element={<FirmInviteClientPage token={session.token} user={session.user} />} />
-        <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} />} />
-        <Route path="firm-invite/:inviteId" element={<FirmInviteAcceptPage token={session.token} user={session.user} company={company} />} />
+        {/* Routes Cabinet (Firm) v8.19 retirées en v8.21 */}
 
         {/* Multi-utilisateurs (equipe) */}
         <Route path="team" element={<TeamPage token={session.token} company={company} user={session.user} />} />
@@ -251,21 +243,17 @@ function AuthedLayout({ session, company, onSignOut }) {
 
 /**
  * IndexRoute : redirige selon le contexte :
- *   - flag pending_firm_setup → /firm/onboarding (nouvel inscrit cabinet)
  *   - admin + mode admin → /admin
  *   - sinon → dashboard normal
+ *
+ * Note v8.21 : la redirection firm a été retirée (cabinet v8.19 abandonné).
+ * Sera réintroduit en v8.23 avec le Mode Comptable.
  */
 function IndexRoute({ session, company }) {
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
 
-  // Si un nouveau cabinet vient de s'inscrire (flag posé par AuthPage),
-  // on le redirige vers la création de son cabinet.
-  let pendingFirm = false;
-  try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
-  if (pendingFirm) {
-    try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
-    return <Navigate to="/firm/onboarding" replace />;
-  }
+  // Cleanup d'éventuels flags résiduels de v8.20
+  try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
 
   if (isAdminMode) {
     return <Navigate to="/admin" replace />;

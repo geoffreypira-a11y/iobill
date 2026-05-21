@@ -17,7 +17,8 @@ export function Sidebar({ token, company, user, onSignOut }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [ticketModalOpen, setTicketModalOpen] = useState(false);
   const userMenuRef = useRef(null);
-  const [isFirmMember, setIsFirmMember] = useState(false);
+  // isFirmMember retiré en v8.21 (module Cabinet abandonné).
+  // Sera réintroduit en v8.23 avec accounting_firms.
   const [hasTeammates, setHasTeammates] = useState(false);
   const navigate = useNavigate();
   const modules = company?.modules || {};
@@ -43,17 +44,13 @@ export function Sidebar({ token, company, user, onSignOut }) {
     };
   }, [userMenuOpen]);
 
-  // Charge en arriere-plan : appartenance firm + presence d'autres membres
+  // Charge en arriere-plan : presence d'autres membres dans la company
   useEffect(() => {
     if (!token || !user?.id || !company?.id) return;
     let alive = true;
     (async () => {
-      const [fu, cu] = await Promise.all([
-        sb.select(token, "firm_users", { filter: `user_id=eq.${user.id}`, select: "id", limit: 1 }),
-        sb.select(token, "company_users", { filter: `company_id=eq.${company.id}`, select: "id", limit: 5 })
-      ]);
+      const cu = await sb.select(token, "company_users", { filter: `company_id=eq.${company.id}`, select: "id", limit: 5 });
       if (!alive) return;
-      setIsFirmMember((fu || []).length > 0);
       setHasTeammates((cu || []).length > 1); // > 1 → owner + au moins un autre
     })();
     return () => { alive = false; };
@@ -177,12 +174,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
             {modules.advanced === true && (
               <div className="nav-section">
                 <div className="nav-label">{t("Avancé")}</div>
-                {isFirmMember && (
-                  <NavLink to="/firm" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                    <Icon name="user" className="nav-icon" />
-                    {t("Cabinet")}
-                  </NavLink>
-                )}
+                {/* Cabinet retiré en v8.21 — sera reconstruit en v8.23 */}
                 {hasTeammates && (
                   <NavLink to="/team" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                     <Icon name="handshake" className="nav-icon" />
