@@ -40,8 +40,8 @@ function ClientsList({ token, firm, isPreview }) {
     setLoading(true);
     const rows = await sb.select(token, "firm_client_links", {
       filter: `firm_id=eq.${firm.id}`,
-      select: "id,company_id,invited_email,invited_siret,status,initiated_by,invited_at,accepted_at,refused_at,message_invite",
-      order: "invited_at.desc",
+      select: "id,company_id,invited_email,invited_siret,status,initiated_by,created_at,accepted_at,refused_at,message_invite",
+      order: "created_at.desc",
       limit: 100
     });
     // Hydrater avec les noms de companies
@@ -161,7 +161,7 @@ function ClientLinkCard({ link, onRevoke }) {
           <div style={{ fontSize: 10, color: "var(--muted)" }}>
             {link.status === "accepted" ? `Lié le ${fmtDate(link.accepted_at)}` 
               : link.status === "refused" ? `Refusé le ${fmtDate(link.refused_at)}`
-              : `Invité le ${fmtDate(link.invited_at)}`}
+              : `Invité le ${fmtDate(link.created_at)}`}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             {link.status === "accepted" && (

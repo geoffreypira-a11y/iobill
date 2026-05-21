@@ -14,8 +14,8 @@ export function FirmInvitationBanner({ token, company }) {
     if (!company?.id) return;
     const rows = await sb.select(token, "firm_client_links", {
       filter: `company_id=eq.${company.id}&status=eq.pending&initiated_by=eq.firm`,
-      select: "id,firm_id,message_invite,invited_at",
-      order: "invited_at.desc",
+      select: "id,firm_id,message_invite,created_at",
+      order: "created_at.desc",
       limit: 5
     });
     const out = [];

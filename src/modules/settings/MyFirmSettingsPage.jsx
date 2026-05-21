@@ -17,7 +17,7 @@ export function MyFirmSettingsPage({ token, user, company }) {
     const rows = await sb.select(token, "firm_client_links", {
       filter: `company_id=eq.${company.id}`,
       select: "*",
-      order: "invited_at.desc",
+      order: "created_at.desc",
       limit: 20
     });
     // Hydrater avec les noms de firms
@@ -102,7 +102,7 @@ export function MyFirmSettingsPage({ token, user, company }) {
           <div style={{ marginTop: 12 }}>
             {others.map((l) => (
               <div key={l.id} className="card" style={{ padding: 10, marginBottom: 6, fontSize: 12, color: "var(--muted2)" }}>
-                {l._firm?.name || l.invited_email} · <span style={{ textTransform: "capitalize" }}>{l.status}</span> · {fmtDate(l.refused_at || l.revoked_at || l.invited_at)}
+                {l._firm?.name || l.invited_email} · <span style={{ textTransform: "capitalize" }}>{l.status}</span> · {fmtDate(l.refused_at || l.revoked_at || l.created_at)}
               </div>
             ))}
           </div>
@@ -130,7 +130,7 @@ function PendingCard({ link, onAccept, onRefuse }) {
             {link._firm?.name || "Cabinet"}
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)" }}>
-            SIRET {link._firm?.siret} · {link._firm?.email} · Invité le {fmtDate(link.invited_at)}
+            SIRET {link._firm?.siret} · {link._firm?.email} · Invité le {fmtDate(link.created_at)}
           </div>
           {link.message_invite && (
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted2)", fontStyle: "italic", padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 4 }}>

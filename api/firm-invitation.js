@@ -231,7 +231,6 @@ async function handleRequest(req, res) {
       initiated_by: "firm",
       status: "pending",
       message_invite: (message || "").slice(0, 500),
-      invited_at: new Date().toISOString()
     });
 
     if (!link) return json(res, 500, { error: "Échec création invitation (DB)" });
@@ -326,7 +325,6 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
       initiated_by: "client",
       status: "pending",
       message_invite: (message || "").slice(0, 500),
-      invited_at: new Date().toISOString()
     });
 
     if (!link) return json(res, 500, { error: "Échec création invitation (DB)" });
