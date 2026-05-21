@@ -48,10 +48,10 @@ function SignalDetailPanel({ signals, token, onClose, onAction }) {
 
   async function resolve(id) {
     if (!confirm("Marquer ce signalement comme résolu ?")) return;
-    const r = await fetch("/api/firm-signal", {
+    const r = await fetch("/api/firm-invitation", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: "resolve", payload: { signal_id: id } })
+      body: JSON.stringify({ action: "signal_resolve", payload: { signal_id: id } })
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Échec"); return; }
     onAction();
@@ -59,10 +59,10 @@ function SignalDetailPanel({ signals, token, onClose, onAction }) {
 
   async function respond(id) {
     if (!responseText.trim()) return;
-    const r = await fetch("/api/firm-signal", {
+    const r = await fetch("/api/firm-invitation", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: "respond", payload: { signal_id: id, response: responseText.trim() } })
+      body: JSON.stringify({ action: "signal_respond", payload: { signal_id: id, response: responseText.trim() } })
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Échec"); return; }
     setResponding(null);

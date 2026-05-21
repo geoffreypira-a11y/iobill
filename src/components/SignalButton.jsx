@@ -52,11 +52,11 @@ function SignalModal({ token, firm_id, company_id, target_type, target_id, targe
     setErr(null);
     if (!title.trim()) { setErr("Le titre est requis"); return; }
     setLoading(true);
-    const r = await fetch("/api/firm-signal", {
+    const r = await fetch("/api/firm-invitation", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
-        action: "create",
+        action: "signal_create",
         payload: {
           firm_id,
           company_id,

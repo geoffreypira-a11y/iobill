@@ -564,10 +564,10 @@ function SignalsTab({ token, signals, onAction }) {
   async function action(signalId, act) {
     const labels = { resolve: "Marquer comme résolu ?", dismiss: "Classer sans suite ?" };
     if (!confirm(labels[act])) return;
-    const r = await fetch("/api/firm-signal", {
+    const r = await fetch("/api/firm-invitation", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: act, payload: { signal_id: signalId } })
+      body: JSON.stringify({ action: "signal_" + act, payload: { signal_id: signalId } })
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Échec"); return; }
     onAction?.();
