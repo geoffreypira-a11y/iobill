@@ -21,6 +21,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
   // Réintroduit en v8.23 avec accounting_firms (Mode Comptable).
   const [myFirm, setMyFirm] = useState(null);
   const [hasTeammates, setHasTeammates] = useState(false);
+  const [openSignalsCount, setOpenSignalsCount] = useState(0);
   const navigate = useNavigate();
   const modules = company?.modules || {};
 
@@ -68,6 +69,17 @@ export function Sidebar({ token, company, user, onSignOut }) {
         const firm = await sb.selectOne(token, "accounting_firms", `id=eq.${members[0].firm_id}`);
         if (!alive) return;
         setMyFirm(firm);
+      }
+
+      // Signalements ouverts du cabinet sur ma company (v8.27.3)
+      if (company?.id) {
+        const sigs = await sb.select(token, "firm_signals", {
+          filter: `company_id=eq.${company.id}&status=eq.open&visible_to_client=eq.true`,
+          select: "id",
+          limit: 100
+        });
+        if (!alive) return;
+        setOpenSignalsCount((sigs || []).length);
       }
     })();
     return () => { alive = false; };
@@ -188,6 +200,26 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 <Icon name="users" className="nav-icon" />
                 {t("Clients")}
               </NavLink>
+
+              {openSignalsCount > 0 && (
+                <NavLink to="/signals" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                  <Icon name="warning" className="nav-icon" />
+                  Signalements
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "var(--gold)",
+                    color: "#0b0c10",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "1px 6px",
+                    borderRadius: 8,
+                    minWidth: 18,
+                    textAlign: "center"
+                  }}>
+                    {openSignalsCount}
+                  </span>
+                </NavLink>
+              )}
             </div>
 
             <div className="nav-section">

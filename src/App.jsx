@@ -48,6 +48,7 @@ import {
   FirmSettingsPage
 } from "./modules/firm2/FirmPlaceholders.jsx";
 import { MyFirmSettingsPage } from "./modules/settings/MyFirmSettingsPage.jsx";
+import { MySignalsPage } from "./modules/signals/MySignalsPage.jsx";
 import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
@@ -299,6 +300,9 @@ export default function App() {
 
         {/* Mon cabinet comptable (v8.26 Sprint 2) */}
         <Route path="settings/firm-link" element={<MyFirmSettingsPage token={session.token} user={session.user} company={company} />} />
+
+        {/* Signalements côté abonné Pro (v8.27.3 Sprint 3) */}
+        <Route path="signals" element={<MySignalsPage token={session.token} user={session.user} company={company} />} />
 
         {/* Audit log */}
         <Route path="audit" element={<AuditLogPage token={session.token} company={company} />} />

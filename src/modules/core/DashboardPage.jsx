@@ -8,6 +8,7 @@ import { useT } from "../../lib/i18n.js";
 import { DashboardCharts, TopClientsChart } from "./DashboardCharts.jsx";
 import { TrialBanner } from "../../components/TrialBanner.jsx";
 import { FirmInvitationBanner } from "../../components/FirmInvitationBanner.jsx";
+import { SignalsClientBanner } from "../../components/SignalsClientBanner.jsx";
 
 export function DashboardPage({ token, company, user }) {
   const t = useT();
@@ -92,6 +93,7 @@ export function DashboardPage({ token, company, user }) {
     <div className="page">
       <TrialBanner token={token} company={company} />
       <FirmInvitationBanner token={token} user={user} company={company} />
+      <SignalsClientBanner token={token} company={company} />
       <div className="page-header">
         <div>
           <div className="page-title">{t("Tableau de bord").toUpperCase()}</div>
