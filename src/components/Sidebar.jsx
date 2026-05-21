@@ -22,6 +22,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
   const [myFirm, setMyFirm] = useState(null);
   const [hasTeammates, setHasTeammates] = useState(false);
   const [openSignalsCount, setOpenSignalsCount] = useState(0);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
   const navigate = useNavigate();
   const modules = company?.modules || {};
 
@@ -80,6 +81,18 @@ export function Sidebar({ token, company, user, onSignOut }) {
         });
         if (!alive) return;
         setOpenSignalsCount((sigs || []).length);
+      }
+
+      // Messages non lus (v8.28)
+      if (members && members.length > 0) {
+        // Côté cabinet : messages des clients non lus
+        const unread = await sb.select(token, "firm_messages", {
+          filter: `firm_id=eq.${members[0].firm_id}&author_side=eq.client&read_by_firm=eq.false`,
+          select: "id",
+          limit: 100
+        });
+        if (!alive) return;
+        setUnreadMessagesCount((unread || []).length);
       }
     })();
     return () => { alive = false; };
@@ -146,6 +159,21 @@ export function Sidebar({ token, company, user, onSignOut }) {
               <NavLink to="/firm/messages" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                 <Icon name="handshake" className="nav-icon" />
                 Messages
+                {unreadMessagesCount > 0 && (
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "#e54949",
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "1px 6px",
+                    borderRadius: 8,
+                    minWidth: 18,
+                    textAlign: "center"
+                  }}>
+                    {unreadMessagesCount > 9 ? "9+" : unreadMessagesCount}
+                  </span>
+                )}
               </NavLink>
             </div>
             <div className="nav-section">
