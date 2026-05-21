@@ -1,20 +1,29 @@
-// IO BILL — Service Worker v8.27.3
-// Stratégie : network-first pour HTML/JS/CSS, cache-first pour fonts/images
-// Cache versionné pour invalider à chaque release
+// IO BILL — Service Worker v8.27.5 KILL+REINSTALL
+// Étape 1 : ce SW supprime TOUS les caches existants à l'activation
+// Étape 2 : il sert ensuite en network-first (toujours frais)
+// → Une seule visite avec ce SW suffit à invalider l'ancien cache cassé
 
-const CACHE_VERSION = "iobill-v8-27-3";
+const CACHE_VERSION = "iobill-v8-27-5";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
-self.addEventListener("install", () => {
+self.addEventListener("install", (event) => {
+  // Active immédiatement, ne pas attendre que les onglets se ferment
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      // SUPPRIMER TOUS les anciens caches sans exception
       const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k !== STATIC_CACHE).map((k) => caches.delete(k)));
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      // Prendre le contrôle de tous les onglets ouverts
       await self.clients.claim();
+      // Forcer un reload de tous les onglets pour servir le nouveau bundle
+      const clientsList = await self.clients.matchAll({ type: "window" });
+      for (const client of clientsList) {
+        client.navigate(client.url);
+      }
     })()
   );
 });
@@ -24,7 +33,7 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
 
-  // Jamais cacher API, Supabase, services externes
+  // Ne jamais intercepter API, Supabase, services externes
   if (
     url.pathname.startsWith("/api/") ||
     url.hostname.includes("supabase.co") ||
@@ -37,7 +46,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first pour fonts/images
+  // Cache-first uniquement pour fonts/images
   if (url.pathname.match(/\.(woff2?|ttf|otf|eot|png|jpg|jpeg|gif|svg|ico|webp)$/i)) {
     event.respondWith(
       caches.match(req).then((cached) => {
@@ -48,13 +57,13 @@ self.addEventListener("fetch", (event) => {
             caches.open(STATIC_CACHE).then((c) => c.put(req, clone));
           }
           return res;
-        });
+        }).catch(() => cached);
       })
     );
     return;
   }
 
-  // Network-first pour HTML/JS/CSS
+  // Network-first pour HTML/JS/CSS (toujours essayer réseau d'abord)
   event.respondWith(
     fetch(req)
       .then((res) => {
@@ -68,7 +77,6 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// Permet à l'app de demander un skip waiting depuis JS
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
