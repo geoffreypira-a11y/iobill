@@ -34,6 +34,16 @@ import { PublicQuotePage, PublicInvoicePage, PublicPortalPage } from "./modules/
 
 // Cabinet expert-comptable + Equipe + Admin
 // Cabinet (Firm) v8.19 retiré en v8.21 — sera reconstruit en v8.23 (Mode Comptable)
+import { FirmRoute, FirmOnboardingRoute } from "./modules/firm2/FirmRoute.jsx";
+import {
+  FirmClientsListPage,
+  FirmClientFichePage,
+  FirmInviteClientPage,
+  FirmMarathonPage,
+  FirmMessagesPage,
+  FirmSettingsPage
+} from "./modules/firm2/FirmPlaceholders.jsx";
+import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
 
@@ -153,7 +163,51 @@ export default function App() {
   }
 
   if (!session) return <AuthPage onAuthed={handleAuthed} />;
-  if (!company) return <Onboarding token={session.token} user={session.user} onDone={handleOnboardingDone} />;
+
+  // Détection du type d'utilisateur :
+  //   - Pro : a une company, peut avoir is_admin
+  //   - Comptable : pas de company, sera firm_member
+  //
+  // Si l'user vient de s'inscrire en Cabinet (flag posé par AuthPage)
+  // OU si l'user n'a pas de company (vraisemblablement un comptable),
+  // on route vers /firm sans passer par l'onboarding company.
+  let pendingFirm = false;
+  try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
+
+  if (!company) {
+    // Pas de company → comptable (existant ou nouveau) OU nouveau Pro
+    // On regarde le flag pending_firm_setup : s'il est posé, c'est qu'on
+    // sait que l'user a choisi "Cabinet" à l'inscription.
+    // Sinon, on assume Pro et on lance Onboarding company.
+    //
+    // ⚠ Edge case : un comptable existant qui se reconnecte n'a pas le flag.
+    // On a deux options :
+    //   (a) Toujours router vers /firm si pas de company (mais bloque les nouveaux Pro qui ont session sans company encore créée)
+    //   (b) Garder l'Onboarding par défaut et laisser le comptable taper /firm manuellement
+    //
+    // Choix : (a) avec un sous-routage qui laisse Onboarding accessible
+    // via /onboarding pour les nouveaux Pro (peu probable car la session
+    // arrive juste après le Onboarding).
+    if (pendingFirm) {
+      try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
+    }
+    return (
+      <Routes>
+        <Route element={<AuthedLayout session={session} company={null} onSignOut={handleSignOut} />}>
+          <Route path="firm" element={<FirmRoute token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/onboarding" element={<FirmOnboardingRoute token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/clients" element={<FirmClientsListPage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/clients/new" element={<FirmInviteClientPage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/marathon" element={<FirmMarathonPage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/messages" element={<FirmMessagesPage token={session.token} user={session.user} company={null} />} />
+          <Route path="firm/settings" element={<FirmSettingsPage token={session.token} user={session.user} company={null} />} />
+          <Route path="onboarding-company" element={<Onboarding token={session.token} user={session.user} onDone={handleOnboardingDone} />} />
+          <Route path="*" element={<NoCompanyRouter pendingFirm={pendingFirm} session={session} onDone={handleOnboardingDone} />} />
+        </Route>
+      </Routes>
+    );
+  }
 
   // Trial expiré : page de blocage en plein écran.
   // Exception : l'admin IO BILL en mode admin garde l'accès complet
@@ -200,8 +254,15 @@ export default function App() {
         <Route path="accounting" element={<AccountingExportPage token={session.token} company={company} />} />
         <Route path="banking" element={<BankingPage token={session.token} company={company} />} />
 
-        {/* Cabinet expert-comptable */}
-        {/* Routes Cabinet (Firm) v8.19 retirées en v8.21 */}
+        {/* Cabinet — Mode Comptable v8.23 */}
+        <Route path="firm" element={<FirmRoute token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/onboarding" element={<FirmOnboardingRoute token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/clients" element={<FirmClientsListPage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/clients/new" element={<FirmInviteClientPage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/marathon" element={<FirmMarathonPage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/messages" element={<FirmMessagesPage token={session.token} user={session.user} company={company} />} />
+        <Route path="firm/settings" element={<FirmSettingsPage token={session.token} user={session.user} company={company} />} />
 
         {/* Multi-utilisateurs (equipe) */}
         <Route path="team" element={<TeamPage token={session.token} company={company} user={session.user} />} />
@@ -216,11 +277,11 @@ export default function App() {
         <Route path="legal/:kind" element={<LegalPage />} />
         <Route path="legal" element={<LegalPage />} />
 
-        {/* Admin dashboard — gestion abonnés + tickets */}
-        <Route path="admin" element={<AdminPage token={session.token} company={company} />} />
+        {/* Admin dashboard — réservé strict aux is_admin (ni Pro ni Comptable n'y accèdent) */}
+        <Route path="admin" element={<AdminGuard company={company}><AdminPage token={session.token} company={company} /></AdminGuard>} />
 
         {/* Admin platform stats — uniquement si is_admin */}
-        <Route path="admin/stats" element={<AdminStatsPage token={session.token} company={company} />} />
+        <Route path="admin/stats" element={<AdminGuard company={company}><AdminStatsPage token={session.token} company={company} /></AdminGuard>} />
 
         {/* Parametres */}
         <Route
@@ -259,20 +320,57 @@ function AuthedLayout({ session, company, onSignOut }) {
 
 /**
  * IndexRoute : redirige selon le contexte :
+ *   - flag pending_firm_setup → /firm (membership puis onboarding auto via FirmRoute)
  *   - admin + mode admin → /admin
  *   - sinon → dashboard normal
- *
- * Note v8.21 : la redirection firm a été retirée (cabinet v8.19 abandonné).
- * Sera réintroduit en v8.23 avec le Mode Comptable.
  */
 function IndexRoute({ session, company }) {
   const isAdminMode = useIsAdminMode(!!company?.is_admin);
 
-  // Cleanup d'éventuels flags résiduels de v8.20
-  try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
+  // Si un nouveau cabinet vient de s'inscrire (flag posé par AuthPage),
+  // on le redirige vers /firm. FirmRoute se chargera d'afficher
+  // l'onboarding si pas encore membre, ou le dashboard si déjà créé.
+  let pendingFirm = false;
+  try { pendingFirm = localStorage.getItem("iobill_pending_firm_setup") === "1"; } catch {}
+  if (pendingFirm) {
+    try { localStorage.removeItem("iobill_pending_firm_setup"); } catch {}
+    return <Navigate to="/firm" replace />;
+  }
 
   if (isAdminMode) {
     return <Navigate to="/admin" replace />;
   }
   return <DashboardPage token={session.token} company={company} />;
+}
+
+/**
+ * AdminGuard — protège les routes /admin et /admin/stats.
+ *
+ * Seuls les comptes avec company.is_admin = TRUE peuvent accéder.
+ * Les abonnés Pro et les comptables qui tapent /admin sont redirigés vers /.
+ */
+function AdminGuard({ company, children }) {
+  if (!company?.is_admin) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+/**
+ * NoCompanyRouter — Décide où envoyer un user sans company.
+ *
+ *   - Si pendingFirm (flag) ou firm_member existant → /firm
+ *   - Sinon → onboarding company (Pro nouveau)
+ *
+ * Utilise un hook qui détecte le membership cabinet en arrière-plan.
+ */
+function NoCompanyRouter({ pendingFirm, session, onDone }) {
+  const { loading, firm } = useMyFirm(session.token, session.user?.id);
+
+  if (loading) return null;
+  if (firm || pendingFirm) {
+    return <Navigate to="/firm" replace />;
+  }
+  // Pro nouveau : onboarding company
+  return <Onboarding token={session.token} user={session.user} onDone={onDone} />;
 }

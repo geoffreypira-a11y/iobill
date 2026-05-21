@@ -18,7 +18,8 @@ export function Sidebar({ token, company, user, onSignOut }) {
   const [ticketModalOpen, setTicketModalOpen] = useState(false);
   const userMenuRef = useRef(null);
   // isFirmMember retiré en v8.21 (module Cabinet abandonné).
-  // Sera réintroduit en v8.23 avec accounting_firms.
+  // Réintroduit en v8.23 avec accounting_firms (Mode Comptable).
+  const [myFirm, setMyFirm] = useState(null);
   const [hasTeammates, setHasTeammates] = useState(false);
   const navigate = useNavigate();
   const modules = company?.modules || {};
@@ -44,14 +45,29 @@ export function Sidebar({ token, company, user, onSignOut }) {
     };
   }, [userMenuOpen]);
 
-  // Charge en arriere-plan : presence d'autres membres dans la company
+  // Charge en arriere-plan : presence d'autres membres + appartenance cabinet
   useEffect(() => {
-    if (!token || !user?.id || !company?.id) return;
+    if (!token || !user?.id) return;
     let alive = true;
     (async () => {
-      const cu = await sb.select(token, "company_users", { filter: `company_id=eq.${company.id}`, select: "id", limit: 5 });
+      // Co-équipiers de la company courante
+      if (company?.id) {
+        const cu = await sb.select(token, "company_users", { filter: `company_id=eq.${company.id}`, select: "id", limit: 5 });
+        if (!alive) return;
+        setHasTeammates((cu || []).length > 1);
+      }
+      // Appartenance cabinet comptable (v8.23 Mode Comptable)
+      const members = await sb.select(token, "firm_members", {
+        filter: `user_id=eq.${user.id}`,
+        select: "firm_id,role",
+        limit: 1
+      });
       if (!alive) return;
-      setHasTeammates((cu || []).length > 1); // > 1 → owner + au moins un autre
+      if (members && members.length > 0) {
+        const firm = await sb.selectOne(token, "accounting_firms", `id=eq.${members[0].firm_id}`);
+        if (!alive) return;
+        setMyFirm(firm);
+      }
     })();
     return () => { alive = false; };
   }, [token, user?.id, company?.id]);
@@ -91,6 +107,38 @@ export function Sidebar({ token, company, user, onSignOut }) {
               📊 Stats plateforme
             </NavLink>
           </div>
+        ) : myFirm ? (
+          // ═══════════════════════════════════════════════════════
+          // MODE COMPTABLE : navigation cabinet (v8.23)
+          // ═══════════════════════════════════════════════════════
+          <>
+            <div className="nav-section">
+              <div className="nav-label">{t("Cabinet")}</div>
+              <NavLink to="/firm" end className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="dashboard" className="nav-icon" />
+                Tableau de bord
+              </NavLink>
+              <NavLink to="/firm/clients" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="user" className="nav-icon" />
+                Mes clients
+              </NavLink>
+              <NavLink to="/firm/marathon" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="invoice" className="nav-icon" />
+                Mode Marathon
+              </NavLink>
+              <NavLink to="/firm/messages" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="handshake" className="nav-icon" />
+                Messages
+              </NavLink>
+            </div>
+            <div className="nav-section">
+              <div className="nav-label">{t("Réglages")}</div>
+              <NavLink to="/firm/settings" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="settings" className="nav-icon" />
+                Réglages cabinet
+              </NavLink>
+            </div>
+          </>
         ) : (
           // ═══════════════════════════════════════════════════════
           // MODE UTILISATEUR : navigation classique (sans admin)
