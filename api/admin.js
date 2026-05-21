@@ -359,6 +359,110 @@ async function handleRequest(req, res) {
       return json(res, 200, { deleted: (closed || []).length });
     }
 
+    // ─── CABINETS (Mode Comptable) ─────────────────────────
+    case "firms_list": {
+      const firms = await sbAdmin.select("accounting_firms", {
+        order: "created_at.desc",
+        limit: 1000
+      });
+      // Pour chaque cabinet, compter membres et clients
+      const result = [];
+      for (const f of (firms || [])) {
+        let memberCount = 0;
+        let clientCount = 0;
+        try {
+          const members = await sbAdmin.select("firm_members", {
+            filter: `firm_id=eq.${f.id}`,
+            select: "user_id"
+          });
+          memberCount = (members || []).length;
+        } catch {}
+        try {
+          const links = await sbAdmin.select("firm_client_links", {
+            filter: `firm_id=eq.${f.id}&accepted_at=not.is.null&revoked_at=is.null`,
+            select: "id"
+          });
+          clientCount = (links || []).length;
+        } catch {}
+        result.push({ ...f, member_count: memberCount, client_count: clientCount });
+      }
+      return json(res, 200, { firms: result });
+    }
+
+    case "firm_data": {
+      const { firmId } = payload || {};
+      if (!firmId) return json(res, 400, { error: "firmId manquant" });
+      const data = {};
+      try {
+        data.members = await sbAdmin.select("firm_members", {
+          filter: `firm_id=eq.${firmId}`,
+          limit: 200
+        }) || [];
+      } catch { data.members = []; }
+      try {
+        data.client_links = await sbAdmin.select("firm_client_links", {
+          filter: `firm_id=eq.${firmId}`,
+          limit: 500
+        }) || [];
+      } catch { data.client_links = []; }
+      try {
+        data.signals = await sbAdmin.select("firm_signals", {
+          filter: `firm_id=eq.${firmId}`,
+          order: "created_at.desc",
+          limit: 100
+        }) || [];
+      } catch { data.signals = []; }
+      return json(res, 200, { data });
+    }
+
+    case "firm_toggle_suspend": {
+      const { firmId, suspend } = payload || {};
+      if (!firmId || typeof suspend !== "boolean") {
+        return json(res, 400, { error: "Paramètres invalides" });
+      }
+      const updated = await sbAdmin.update("accounting_firms", `id=eq.${firmId}`, {
+        status: suspend ? "suspended" : "active",
+        suspended_at: suspend ? new Date().toISOString() : null
+      });
+      if (!updated) return json(res, 500, { error: "Échec" });
+      return json(res, 200, { ok: true });
+    }
+
+    case "firm_archive": {
+      const { firmId, reason } = payload || {};
+      if (!firmId) return json(res, 400, { error: "firmId manquant" });
+      if (!reason || typeof reason !== "string" || reason.trim().length === 0) {
+        return json(res, 400, { error: "Raison d'archivage requise" });
+      }
+      const updated = await sbAdmin.update("accounting_firms", `id=eq.${firmId}`, {
+        status: "archived",
+        archived_at: new Date().toISOString(),
+        notes_admin: reason.trim().slice(0, 500)
+      });
+      if (!updated) return json(res, 500, { error: "Échec archivage" });
+      return json(res, 200, { ok: true });
+    }
+
+    case "firm_unarchive": {
+      const { firmId } = payload || {};
+      if (!firmId) return json(res, 400, { error: "firmId manquant" });
+      const updated = await sbAdmin.update("accounting_firms", `id=eq.${firmId}`, {
+        status: "active",
+        archived_at: null
+      });
+      if (!updated) return json(res, 500, { error: "Échec désarchivage" });
+      return json(res, 200, { ok: true });
+    }
+
+    case "firm_delete": {
+      const { firmId } = payload || {};
+      if (!firmId) return json(res, 400, { error: "firmId manquant" });
+      // CASCADE supprimera firm_members, firm_client_links, firm_signals, firm_messages
+      const ok = await sbAdmin.delete("accounting_firms", `id=eq.${firmId}`);
+      if (!ok) return json(res, 500, { error: "Échec suppression" });
+      return json(res, 200, { ok: true });
+    }
+
     default:
       return json(res, 400, { error: "Action inconnue : " + action });
   }

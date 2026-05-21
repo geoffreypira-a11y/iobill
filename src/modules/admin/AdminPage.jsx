@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
+import { AdminFirmsTab } from "./AdminFirmsTab.jsx";
 
 /**
  * AdminPage — Panel admin IO BILL
@@ -11,7 +12,7 @@ import { fmtEUR, fmtDate } from "../../lib/helpers.js";
  * Inspiré du pattern IOCar.
  */
 export function AdminPage({ token, company }) {
-  const [tab, setTab] = useState("companies"); // "companies" | "tickets"
+  const [tab, setTab] = useState("companies"); // "companies" | "firms" | "tickets"
 
   // Companies
   const [companies, setCompanies] = useState([]);
@@ -241,6 +242,12 @@ export function AdminPage({ token, company }) {
           🏢 Abonnés ({companies.length})
         </button>
         <button
+          className={"tab" + (tab === "firms" ? " active" : "")}
+          onClick={() => setTab("firms")}
+        >
+          📋 Cabinets
+        </button>
+        <button
           className={"tab" + (tab === "tickets" ? " active" : "")}
           onClick={() => setTab("tickets")}
           style={{ position: "relative" }}
@@ -293,6 +300,11 @@ export function AdminPage({ token, company }) {
             ))
           )}
         </>
+      )}
+
+      {/* ─── ONGLET CABINETS (Mode Comptable) ─── */}
+      {tab === "firms" && (
+        <AdminFirmsTab token={token} />
       )}
 
       {/* ─── ONGLET TICKETS ─── */}
