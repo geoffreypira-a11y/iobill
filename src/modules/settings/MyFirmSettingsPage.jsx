@@ -3,8 +3,8 @@ import { sb } from "../../lib/supabase.js";
 import { fmtDate } from "../../lib/helpers.js";
 
 /**
- * MyFirmSettingsPage — v8.26 — Côté abonné Pro
- * Page /settings/firm-link : voir / inviter / accepter / révoquer son cabinet comptable
+ * MyFirmSettingsPage — v8.26.4
+ * Filtre par invited_email OU company_id (plus robuste)
  */
 export function MyFirmSettingsPage({ token, user, company }) {
   const [links, setLinks] = useState([]);
@@ -12,17 +12,35 @@ export function MyFirmSettingsPage({ token, user, company }) {
   const [showInvite, setShowInvite] = useState(false);
 
   async function load() {
-    if (!company?.id) { setLoading(false); return; }
+    if (!token || !user?.email) { setLoading(false); return; }
     setLoading(true);
-    const rows = await sb.select(token, "firm_client_links", {
-      filter: `company_id=eq.${company.id}`,
+
+    // 1) Par email
+    const byEmail = await sb.select(token, "firm_client_links", {
+      filter: `invited_email=eq.${encodeURIComponent(user.email)}`,
       select: "*",
       order: "created_at.desc",
-      limit: 20
-    });
-    // Hydrater avec les noms de firms
+      limit: 50
+    }) || [];
+
+    // 2) Par company
+    let byCompany = [];
+    if (company?.id) {
+      byCompany = await sb.select(token, "firm_client_links", {
+        filter: `company_id=eq.${company.id}`,
+        select: "*",
+        order: "created_at.desc",
+        limit: 50
+      }) || [];
+    }
+
+    const map = new Map();
+    for (const l of [...byEmail, ...byCompany]) map.set(l.id, l);
+    const merged = Array.from(map.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Hydrater
     const out = [];
-    for (const l of (rows || [])) {
+    for (const l of merged) {
       const firm = await sb.selectOne(token, "accounting_firms", `id=eq.${l.firm_id}`, "id,name,email,siret");
       out.push({ ...l, _firm: firm });
     }
@@ -30,7 +48,7 @@ export function MyFirmSettingsPage({ token, user, company }) {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [company?.id]);
+  useEffect(() => { load(); }, [token, user?.email, company?.id]);
 
   async function action(linkId, act) {
     const labels = { accept: "Accepter ce cabinet ?", refuse: "Refuser cette invitation ?", revoke: "Rompre la liaison avec ce cabinet ?" };
@@ -40,7 +58,11 @@ export function MyFirmSettingsPage({ token, user, company }) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: act, payload: { link_id: linkId } })
     });
-    if (!r.ok) { const d = await r.json(); alert(d.error || "Échec"); return; }
+    if (!r.ok) { 
+      const d = await r.json().catch(() => ({})); 
+      alert(d.error || "Échec"); 
+      return; 
+    }
     load();
   }
 
@@ -57,6 +79,11 @@ export function MyFirmSettingsPage({ token, user, company }) {
       </h1>
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>
         Donnez à votre cabinet comptable un accès en lecture à votre comptabilité.
+      </div>
+
+      {/* Debug info (à retirer une fois OK) */}
+      <div style={{ fontSize: 10, color: "var(--muted2)", marginBottom: 16, padding: 8, background: "rgba(255,255,255,0.02)", borderRadius: 4, fontFamily: "monospace" }}>
+        Debug : user={user?.email} · company={company?.id || "aucune"} · liens trouvés={links.length}
       </div>
 
       {/* Invitations en attente */}

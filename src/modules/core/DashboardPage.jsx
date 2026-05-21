@@ -9,7 +9,7 @@ import { DashboardCharts, TopClientsChart } from "./DashboardCharts.jsx";
 import { TrialBanner } from "../../components/TrialBanner.jsx";
 import { FirmInvitationBanner } from "../../components/FirmInvitationBanner.jsx";
 
-export function DashboardPage({ token, company }) {
+export function DashboardPage({ token, company, user }) {
   const t = useT();
   const [stats, setStats] = useState(null);
   const [microProgress, setMicroProgress] = useState(null);
@@ -91,7 +91,7 @@ export function DashboardPage({ token, company }) {
   return (
     <div className="page">
       <TrialBanner token={token} company={company} />
-      <FirmInvitationBanner token={token} company={company} />
+      <FirmInvitationBanner token={token} user={user} company={company} />
       <div className="page-header">
         <div>
           <div className="page-title">{t("Tableau de bord").toUpperCase()}</div>
