@@ -218,6 +218,15 @@ export function Sidebar({ token, company, user, onSignOut }) {
               )}
             </div>
 
+            {/* Section Mon comptable (v8.26.3 — toujours visible pour les Pros) */}
+            <div className="nav-section">
+              <div className="nav-label">Comptable</div>
+              <NavLink to="/settings/firm-link" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="handshake" className="nav-icon" />
+                Mon comptable
+              </NavLink>
+            </div>
+
             {/* Section Avancé : visible uniquement si modules.advanced = true.
                 Active par défaut OFF — l'abonné l'active depuis Paramètres → Modules. */}
             {modules.advanced === true && (

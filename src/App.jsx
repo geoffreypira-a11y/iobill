@@ -46,6 +46,7 @@ import {
   FirmSettingsPage
 } from "./modules/firm2/FirmPlaceholders.jsx";
 import { MyFirmSettingsPage } from "./modules/settings/MyFirmSettingsPage.jsx";
+import { FirmInvitationLandingPage } from "./modules/firm2/FirmInvitationLandingPage.jsx";
 import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
@@ -227,6 +228,8 @@ export default function App() {
           <Route path="firm/clients/:id" element={<FirmClientFichePage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/marathon" element={<FirmMarathonPage token={session.token} user={session.user} company={null} />} />
           <Route path="firm/messages" element={<FirmMessagesPage token={session.token} user={session.user} company={null} />} />
+          {/* Page d'arrivée depuis email d'invitation (v8.26.3) */}
+          <Route path="firm-invitation" element={<FirmInvitationLandingPage session={session} />} />
           <Route path="firm/settings" element={<FirmSettingsPage token={session.token} user={session.user} company={null} />} />
           <Route path="onboarding-company" element={<Onboarding token={session.token} user={session.user} onDone={handleOnboardingDone} />} />
           <Route path="*" element={<NoCompanyRouter pendingFirm={pendingFirm} session={session} onDone={handleOnboardingDone} />} />
@@ -295,6 +298,9 @@ export default function App() {
 
         {/* Mon cabinet comptable (v8.26 Sprint 2) */}
         <Route path="settings/firm-link" element={<MyFirmSettingsPage token={session.token} user={session.user} company={company} />} />
+
+        {/* Page d'arrivée depuis email d'invitation cabinet (v8.26.3) */}
+        <Route path="firm-invitation" element={<FirmInvitationLandingPage session={session} />} />
 
         {/* Audit log */}
         <Route path="audit" element={<AuditLogPage token={session.token} company={company} />} />
