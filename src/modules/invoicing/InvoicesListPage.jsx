@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
@@ -11,14 +11,18 @@ import { InvoiceEditorModal } from "./InvoiceEditorModal.jsx";
 import { ConfirmModal } from "../../components/ConfirmModal.jsx";
 import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 import { capture } from "../../lib/telemetry.js";
+import { NotifBadge } from "../../components/NotifBadge.jsx";
+import { useSignalCounts } from "../../lib/useSignalCounts.js";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // v8.27.5 — signalements ouverts du cabinet sur chaque facture
+  const { byId: signalsByInvoiceId } = useSignalCounts(token, company?.id, "invoice");
 
   const [editModal, setEditModal] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -338,15 +342,22 @@ export function InvoicesListPage({ token, company }) {
                 const canIssue = inv.status === "draft";
                 const canSend = ["issued", "sent", "partial", "overdue"].includes(inv.status);
                 const canDelete = inv.status === "draft";
-                // Avoir : possible uniquement pour les factures émises (pas brouillon, pas annulée)
-                const canCreateCreditNote = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status);
                 // Transmettre a l'admin : factures emises non encore transmises
                 const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
                 const alreadyTransmitted = !!inv.pdp_transmitted_at;
 
                 return (
                   <tr key={inv.id}>
-                    <td className="mono">{inv.number || <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                    <td className="mono">
+                      {inv.number || <span style={{ color: "var(--muted)" }}>—</span>}
+                      {signalsByInvoiceId[inv.id] && (
+                        <NotifBadge
+                          count={signalsByInvoiceId[inv.id].count}
+                          severity={signalsByInvoiceId[inv.id].maxSeverity}
+                          title={`${signalsByInvoiceId[inv.id].count} signalement(s) ouvert(s) de votre cabinet`}
+                        />
+                      )}
+                    </td>
                     <td>{snapshotDisplayName(inv.client_snapshot)}</td>
                     <td>{fmtDate(inv.issue_date)}</td>
                     <td style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
@@ -424,7 +435,7 @@ export function InvoicesListPage({ token, company }) {
                               invoice: inv,
                               right: window.innerWidth - rect.right,
                               top: rect.bottom + 4,
-                              canEdit, canDelete, canCreateCreditNote
+                              canEdit, canDelete
                             });
                           }}
                           style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
@@ -519,11 +530,6 @@ export function InvoicesListPage({ token, company }) {
           {!openMenu.canEdit && (
             <MenuItemInv onClick={() => { shareLink(openMenu.invoice); setOpenMenu(null); }}>
               🔗 Copier le lien public
-            </MenuItemInv>
-          )}
-          {openMenu.canCreateCreditNote && (
-            <MenuItemInv onClick={() => { navigate(`/credit-notes/new?from_invoice=${openMenu.invoice.id}`); setOpenMenu(null); }}>
-              ↩️ Créer un avoir
             </MenuItemInv>
           )}
           {openMenu.canDelete && (
