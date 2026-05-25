@@ -595,12 +595,14 @@ function VatTab({ token, firm, company }) {
 
     const invoices = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}&status=in.(issued,sent,partial,paid,overdue)`,
-      select: "vat_breakdown,vat_total_cents,subtotal_ht_cents"
+      select: "id,number,issue_date,status,vat_breakdown,vat_total_cents,subtotal_ht_cents,total_ttc_cents,pdf_url,facturx_pdf_url",
+      order: "issue_date.desc"
     });
 
     const purchases = await sb.select(token, "purchases", {
       filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}`,
-      select: "vat_breakdown,vat_total_cents,subtotal_ht_cents"
+      select: "id,number,vendor_name,issue_date,status,vat_breakdown,vat_total_cents,subtotal_ht_cents,total_ttc_cents,pdf_url",
+      order: "issue_date.desc"
     });
 
     // Ventilation TVA par taux + fallback sur les totaux pour les factures
@@ -655,7 +657,9 @@ function VatTab({ token, firm, company }) {
       totalDeductible,
       totalBaseCollectee,
       totalBaseDeductible,
-      totalNet: totalCollectee - totalDeductible
+      totalNet: totalCollectee - totalDeductible,
+      invoices: invoices || [],
+      purchases: purchases || []
     });
   }
 
@@ -731,10 +735,197 @@ function VatTab({ token, firm, company }) {
         </table>
       </div>
 
+      {/* Factures émises */}
+      <VatDocList
+        title="Factures émises"
+        subtitle="TVA collectée"
+        emptyText="Aucune facture émise sur la période"
+        docs={periodData.invoices}
+        kind="invoice"
+        accentColor="var(--gold)"
+        token={token}
+      />
+
+      {/* Achats */}
+      <VatDocList
+        title="Achats"
+        subtitle="TVA déductible"
+        emptyText="Aucun achat sur la période"
+        docs={periodData.purchases}
+        kind="purchase"
+        accentColor="var(--green)"
+        token={token}
+      />
+
       <div className="card card-pad" style={{ fontSize: 11, color: "var(--muted2)" }}>
         <strong>URSSAF</strong> · Cotisations sociales auto-entrepreneurs : 12,3% (vente) ou 21,2% (services) du CA encaissé.
         Calcul détaillé URSSAF/DSN à venir en Sprint 4.
       </div>
+    </div>
+  );
+}
+
+/**
+ * VatDocList — Liste accordéon de documents (factures ou achats)
+ * Chaque ligne se déplie pour montrer HT / Taux / TVA / Voir document
+ */
+function VatDocList({ title, subtitle, emptyText, docs, kind, accentColor, token }) {
+  const [expandedId, setExpandedId] = React.useState(null);
+  const [loadingPdf, setLoadingPdf] = React.useState(null);
+
+  const totalHT = docs.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
+  const totalVAT = docs.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
+
+  async function openPdf(doc) {
+    const storedUrl = doc.facturx_pdf_url || doc.pdf_url;
+    if (!storedUrl) return;
+    setLoadingPdf(doc.id);
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
+      });
+      const j = await r.json();
+      if (r.ok && j.pdf_url) {
+        window.open(j.pdf_url, "_blank", "noopener,noreferrer");
+      } else {
+        // Fallback : tente l'URL stockée (peut marcher si publique, sinon erreur visible)
+        window.open(storedUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      window.open(storedUrl, "_blank", "noopener,noreferrer");
+    }
+    setLoadingPdf(null);
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
+      <div style={{
+        padding: "12px 16px",
+        borderBottom: "1px solid var(--border2)",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center"
+      }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>
+            {title} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({docs.length})</span>
+          </div>
+          <div style={{ fontSize: 10, color: "var(--muted2)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {subtitle}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>Total HT</div>
+          <div style={{ fontSize: 13, fontFamily: "monospace" }}>{fmtEUR(totalHT)}</div>
+          <div style={{ fontSize: 11, color: accentColor, fontFamily: "monospace", marginTop: 2 }}>
+            {fmtEUR(totalVAT)} TVA
+          </div>
+        </div>
+      </div>
+
+      {docs.length === 0 ? (
+        <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+          {emptyText}
+        </div>
+      ) : (
+        <div>
+          {docs.map((d) => {
+            const expanded = expandedId === d.id;
+            const ht = d.subtotal_ht_cents || 0;
+            const vat = d.vat_total_cents || 0;
+            // Calcul taux global : si breakdown existe, on prend le taux le plus représenté.
+            // Sinon, on calcule taux = vat / ht.
+            const breakdown = d.vat_breakdown || [];
+            let rateLabel = "—";
+            if (breakdown.length === 1) {
+              rateLabel = `${breakdown[0].rate}%`;
+            } else if (breakdown.length > 1) {
+              rateLabel = "Multi";
+            } else if (ht > 0 && vat > 0) {
+              const rate = Math.round((vat / ht) * 100);
+              rateLabel = `~${rate}%`;
+            }
+            const pdfUrl = d.facturx_pdf_url || d.pdf_url || null;
+            const label = kind === "invoice"
+              ? (d.number || "Sans n°")
+              : `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`;
+            return (
+              <div key={d.id} style={{ borderBottom: "1px solid var(--border2)" }}>
+                <div
+                  onClick={() => setExpandedId(expanded ? null : d.id)}
+                  style={{
+                    padding: "10px 16px",
+                    display: "grid",
+                    gridTemplateColumns: "20px 1fr auto auto auto",
+                    gap: 12,
+                    alignItems: "center",
+                    cursor: "pointer",
+                    background: expanded ? "rgba(255,255,255,0.02)" : "transparent"
+                  }}
+                >
+                  <span style={{ color: "var(--muted)", fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>{label}</div>
+                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                      {fmtDate(d.issue_date)}
+                      {d.status && <> · <span style={{ textTransform: "capitalize" }}>{d.status}</span></>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--muted2)", minWidth: 90, textAlign: "right" }}>
+                    {fmtEUR(ht)} HT
+                  </div>
+                  <div style={{ fontSize: 11, fontFamily: "monospace", color: accentColor, minWidth: 90, textAlign: "right" }}>
+                    {fmtEUR(vat)}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--muted)", minWidth: 40, textAlign: "right" }}>
+                    {rateLabel}
+                  </div>
+                </div>
+                {expanded && (
+                  <div style={{
+                    padding: "8px 16px 14px 36px",
+                    background: "rgba(0,0,0,0.15)",
+                    fontSize: 11,
+                    display: "flex",
+                    gap: 20,
+                    alignItems: "center",
+                    flexWrap: "wrap"
+                  }}>
+                    <div>
+                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>HT</div>
+                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{fmtEUR(ht)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>Taux</div>
+                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{rateLabel}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>TVA</div>
+                      <div style={{ fontFamily: "monospace", fontSize: 13, color: accentColor }}>{fmtEUR(vat)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>TTC</div>
+                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{fmtEUR(d.total_ttc_cents || 0)}</div>
+                    </div>
+                    {pdfUrl && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openPdf(d); }}
+                        disabled={loadingPdf === d.id}
+                        className="btn btn-ghost btn-xs"
+                        style={{ marginLeft: "auto", fontSize: 11 }}
+                      >
+                        {loadingPdf === d.id ? "⏳ Chargement..." : "👁 Voir document"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
