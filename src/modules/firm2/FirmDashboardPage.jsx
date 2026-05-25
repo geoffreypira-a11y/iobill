@@ -6,6 +6,10 @@ import { Icon } from "../../components/Icon.jsx";
 /**
  * FirmDashboardPage — Dashboard Cabinet Comptable.
  *
+ * v8.30.2 — Fix colonnes firm_messages :
+ *   - author_role → author_side
+ *   - read_at → read_by_firm
+ *
  * Charte IO BILL identique à celle de l'abonné Pro :
  *   - Classes natives : .page, .page-header, .page-title, .page-sub,
  *     .card, .card-pad, .btn, .btn-primary, .btn-ghost, .btn-sm,
@@ -42,7 +46,7 @@ export function FirmDashboardPage({ token, user, firm }) {
           }),
           sb.select(token, "firm_messages", {
             filter: `firm_id=eq.${firm.id}`,
-            select: "id,company_id,author_role,content,created_at,read_at",
+            select: "id,company_id,author_side,content,created_at,read_by_firm",
             order: "created_at.desc",
             limit: 10
           })
@@ -94,7 +98,7 @@ export function FirmDashboardPage({ token, user, firm }) {
     toValidate: 0,
     signalsOpen: signals.length,
     deadlines7: 0,
-    unreadMessages: messages.filter((m) => m.author_role === "client" && !m.read_at).length
+    unreadMessages: messages.filter((m) => m.author_side === "client" && !m.read_by_firm).length
   };
 
   return (
@@ -279,7 +283,7 @@ export function FirmDashboardPage({ token, user, firm }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {messages.slice(0, 5).map((m) => {
                 const co = clients.find((c) => c.company_id === m.company_id);
-                const unread = m.author_role === "client" && !m.read_at;
+                const unread = m.author_side === "client" && !m.read_by_firm;
                 return (
                   <div
                     key={m.id}
