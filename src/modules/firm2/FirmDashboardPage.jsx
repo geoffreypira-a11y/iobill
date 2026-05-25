@@ -45,7 +45,7 @@ export function FirmDashboardPage({ token, user, firm }) {
             limit: 20
           }),
           sb.select(token, "firm_messages", {
-            filter: `firm_id=eq.${firm.id}`,
+            filter: `firm_id=eq.${firm.id}&author_side=eq.client&read_by_firm=eq.false`,
             select: "id,company_id,author_side,content,created_at,read_by_firm",
             order: "created_at.desc",
             limit: 10
@@ -98,7 +98,7 @@ export function FirmDashboardPage({ token, user, firm }) {
     toValidate: 0,
     signalsOpen: signals.length,
     deadlines7: 0,
-    unreadMessages: messages.filter((m) => m.author_side === "client" && !m.read_by_firm).length
+    unreadMessages: messages.length
   };
 
   return (
@@ -261,7 +261,7 @@ export function FirmDashboardPage({ token, user, firm }) {
             alignItems: "center",
             marginBottom: 14
           }}>
-            <div className="kpi-label" style={{ marginBottom: 0 }}>Messages récents</div>
+            <div className="kpi-label" style={{ marginBottom: 0 }}>Messages non lus</div>
             <Link to="/firm/messages" style={{
               fontSize: 11,
               color: "var(--gold)",
@@ -275,22 +275,25 @@ export function FirmDashboardPage({ token, user, firm }) {
             <EmptyState text="Chargement..." />
           ) : messages.length === 0 ? (
             <EmptyState
-              icon="💬"
-              title="Aucun message"
-              text="Vos échanges avec vos clients apparaîtront ici."
+              icon="✓"
+              title="Aucun message non lu"
+              text="Tous les messages de vos clients ont été lus."
             />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {messages.slice(0, 5).map((m) => {
                 const co = clients.find((c) => c.company_id === m.company_id);
-                const unread = m.author_side === "client" && !m.read_by_firm;
                 return (
-                  <div
+                  <Link
                     key={m.id}
+                    to={`/firm/messages?thread_company=${m.company_id}`}
                     className="card"
                     style={{
                       padding: "10px 12px",
-                      borderLeft: unread ? "3px solid var(--gold)" : "1px solid var(--border2)"
+                      borderLeft: "3px solid var(--gold)",
+                      textDecoration: "none",
+                      color: "var(--text)",
+                      display: "block"
                     }}
                   >
                     <div style={{
@@ -300,15 +303,13 @@ export function FirmDashboardPage({ token, user, firm }) {
                     }}>
                       <div style={{ fontSize: 12, fontWeight: 500 }}>
                         {co?.name || "Client"}
-                        {unread && (
-                          <span style={{
-                            marginLeft: 6,
-                            fontSize: 10,
-                            color: "var(--gold)"
-                          }}>
-                            ● non lu
-                          </span>
-                        )}
+                        <span style={{
+                          marginLeft: 6,
+                          fontSize: 10,
+                          color: "var(--gold)"
+                        }}>
+                          ● non lu
+                        </span>
                       </div>
                       <div style={{ fontSize: 10, color: "var(--muted)" }}>
                         {new Date(m.created_at).toLocaleDateString("fr-FR", {
@@ -326,7 +327,7 @@ export function FirmDashboardPage({ token, user, firm }) {
                     }}>
                       {m.content}
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </div>
