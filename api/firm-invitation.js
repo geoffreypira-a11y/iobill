@@ -1,5 +1,6 @@
 // ────────────────────────────────────────────────────────────────
 // IO BILL — API /api/firm-invitation
+// v8.30 — + action attachment_signed_url (URL signée PJ messagerie)
 // v8.29 — + action pdf_refresh_url (régénère URL signée Storage)
 // v8.28 — Messagerie cabinet/abonné (thread_create, message_send,
 //         message_mark_read, thread_close, thread_reopen, thread_archive)
@@ -915,6 +916,60 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     if (!freshUrl) return json(res, 500, { error: "URL signée vide" });
 
     return json(res, 200, { ok: true, pdf_url: freshUrl });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ATTACHMENT_SIGNED_URL : URL signée pour une PJ de message (bucket firm-attachments)
+  //   Entrée : { thread_id, path }   (path = "thread_<id>/<filename>")
+  //   Sortie : { ok: true, url }
+  //   Sécurité : user doit avoir accès au thread (firm_member OU owner de la company)
+  // ═══════════════════════════════════════════════════════════════════
+  if (action === "attachment_signed_url") {
+    const { thread_id, path } = p;
+    if (!thread_id || !path) return json(res, 400, { error: "thread_id et path requis" });
+
+    // Charger le thread
+    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, select: "id,firm_id,company_id", limit: 1 });
+    const thread = threads && threads[0];
+    if (!thread) return json(res, 404, { error: "Thread introuvable" });
+
+    // Vérifier l'accès
+    let allowed = false;
+    const fm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
+    if (fm && fm.length > 0) allowed = true;
+    if (!allowed) {
+      const co = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
+      if (co && co.length > 0) allowed = true;
+    }
+    if (!allowed) return json(res, 403, { error: "Accès refusé" });
+
+    // Vérifier que le path appartient bien à ce thread (sécurité supplémentaire :
+    // empêche un user qui a accès au thread A de demander une PJ du thread B)
+    const expectedPrefix = `thread_${thread_id}/`;
+    if (!path.startsWith(expectedPrefix)) {
+      return json(res, 400, { error: "Path ne correspond pas au thread" });
+    }
+
+    // Générer URL signée 1h
+    const signR = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/firm-attachments/${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SR_KEY}`,
+        apikey: SR_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ expiresIn: 3600 })
+    });
+    if (!signR.ok) {
+      const txt = await signR.text();
+      console.error("[firm-invitation] attachment sign error", signR.status, txt);
+      return json(res, 500, { error: "Échec génération URL signée" });
+    }
+    const signJ = await signR.json();
+    const freshUrl = signJ.signedURL ? `${SUPABASE_URL}/storage/v1${signJ.signedURL}` : null;
+    if (!freshUrl) return json(res, 500, { error: "URL signée vide" });
+
+    return json(res, 200, { ok: true, url: freshUrl });
   }
 
   return json(res, 400, { error: "Action inconnue : " + action });

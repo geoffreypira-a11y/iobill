@@ -41,7 +41,7 @@ export function ThreadComposer({ token, threadId, onSent, disabled, compact }) {
     return {
       name: file.name,
       path,
-      url: `${SUPABASE_URL}/storage/v1/object/public/firm-attachments/${path}`,
+      bucket: "firm-attachments",
       size: file.size,
       type: file.type
     };
@@ -83,7 +83,7 @@ export function ThreadComposer({ token, threadId, onSent, disabled, compact }) {
         payload: {
           thread_id: threadId,
           content: content.trim() || "📎 Pièce jointe",
-          attachments: attachments.map(({ name, url, size, type, path }) => ({ name, url, size, type, path }))
+          attachments: attachments.map(({ name, size, type, path, bucket }) => ({ name, size, type, path, bucket: bucket || "firm-attachments" }))
         }
       })
     });

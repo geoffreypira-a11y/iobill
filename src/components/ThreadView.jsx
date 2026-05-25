@@ -73,7 +73,7 @@ export function ThreadView({ token, user, threadId, side, onBack, compact, onSta
             Aucun message
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} mySide={side} />)
+          messages.map((m) => <MessageBubble key={m.id} message={m} mySide={side} token={token} />)
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -91,7 +91,7 @@ export function ThreadView({ token, user, threadId, side, onBack, compact, onSta
   );
 }
 
-function MessageBubble({ message, mySide }) {
+function MessageBubble({ message, mySide, token }) {
   const isMine = message.author_side === mySide;
   const time = new Date(message.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   const day = fmtDate(message.created_at);
@@ -117,20 +117,84 @@ function MessageBubble({ message, mySide }) {
         {atts.length > 0 && (
           <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
             {atts.map((a, i) => (
-              <a 
-                key={i} 
-                href={a.url} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", background: "rgba(0,0,0,0.2)", borderRadius: 4, fontSize: 10, color: "var(--gold)", textDecoration: "none" }}
-              >
-                {iconFor(a.type)} {a.name}
-              </a>
+              <AttachmentLink key={i} attachment={a} threadId={message.thread_id} token={token} />
             ))}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * AttachmentLink — demande une URL signée à la volée au clic,
+ * puis ouvre dans un nouvel onglet. Compatible avec les anciens messages
+ * qui n'avaient qu'une `url` publique (fallback).
+ */
+function AttachmentLink({ attachment, threadId, token }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function handleClick(e) {
+    e.preventDefault();
+    if (busy) return;
+    setErr(null);
+
+    // Si on a un path, on demande une URL signée
+    if (attachment.path) {
+      setBusy(true);
+      try {
+        const r = await fetch("/api/firm-invitation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            action: "attachment_signed_url",
+            payload: { thread_id: threadId, path: attachment.path }
+          })
+        });
+        const j = await r.json();
+        setBusy(false);
+        if (!r.ok || !j.url) {
+          setErr(j.error || "Lien indisponible");
+          return;
+        }
+        window.open(j.url, "_blank", "noopener,noreferrer");
+      } catch (e) {
+        setBusy(false);
+        setErr("Erreur réseau");
+      }
+      return;
+    }
+
+    // Fallback : ancienne URL publique stockée (messages d'avant v8.30)
+    if (attachment.url) {
+      window.open(attachment.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setErr("Pièce jointe inaccessible");
+  }
+
+  return (
+    <a
+      href="#"
+      onClick={handleClick}
+      title={err || (busy ? "Chargement…" : attachment.name)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "4px 8px",
+        background: "rgba(0,0,0,0.2)",
+        borderRadius: 4,
+        fontSize: 10,
+        color: err ? "var(--red)" : "var(--gold)",
+        textDecoration: "none",
+        opacity: busy ? 0.6 : 1,
+        cursor: busy ? "wait" : "pointer"
+      }}
+    >
+      {busy ? "⏳" : iconFor(attachment.type)} {attachment.name}
+    </a>
   );
 }
 
