@@ -462,10 +462,10 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
   async function load() {
     const rows = await sb.select(token, "purchases", {
       filter: `company_id=eq.${company.id}`,
-      select: "id,number,vendor_name,issue_date,due_date,subtotal_ht_cents,vat_total_cents,total_ttc_cents,category,pdf_url",
       order: "issue_date.desc",
       limit: 100
     });
+    console.log("[Achats cabinet] company_id:", company.id, "rows:", rows?.length, "sample:", rows?.[0]);
     setPurchases(rows || []);
     setLoading(false);
   }
