@@ -3,6 +3,7 @@ import { Routes, Route, Outlet, Navigate } from "react-router-dom";
 import { sb } from "./lib/supabase.js";
 import { saveSession, loadSession, clearSession } from "./lib/session.js";
 import { Sidebar } from "./components/Sidebar.jsx";
+import { VatReminderBanner } from "./components/VatReminderBanner.jsx";
 
 // Core
 import { AuthPage } from "./modules/core/AuthPage.jsx";
@@ -345,6 +346,7 @@ function AuthedLayout({ session, company, onSignOut }) {
   return (
     <div className="shell">
       <OfflineBanner />
+      <VatReminderBanner token={session.token} company={company} />
       <Sidebar token={session.token} company={company} user={session.user} onSignOut={onSignOut} />
       <main className="content">
         <Outlet />

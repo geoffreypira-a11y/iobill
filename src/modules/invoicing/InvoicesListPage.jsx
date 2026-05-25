@@ -11,6 +11,7 @@ import { InvoiceEditorModal } from "./InvoiceEditorModal.jsx";
 import { ConfirmModal } from "../../components/ConfirmModal.jsx";
 import { DocumentPreviewModal } from "../../components/DocumentPreviewModal.jsx";
 import { capture } from "../../lib/telemetry.js";
+import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 import { NotifBadge } from "../../components/NotifBadge.jsx";
 import { useSignalCounts } from "../../lib/useSignalCounts.js";
 
@@ -175,6 +176,8 @@ export function InvoicesListPage({ token, company }) {
         throw new Error(j.error || `Erreur ${r.status} lors de l'emission`);
       }
       capture("invoice_issued", { invoice_id: inv.id });
+      // Sync TVA en arrière-plan (n'attend pas la réponse pour ne pas bloquer l'UI)
+      syncVatCurrentPeriod(token, company);
       await refreshInvoices();
       setPendingIssue(null);
       showToast(`Facture ${inv.number} émise et PDF Factur-X généré !`);

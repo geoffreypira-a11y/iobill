@@ -5,10 +5,11 @@ import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 const VAT_STATUTS = {
-  draft:    { label: "Brouillon", cls: "badge-muted",  icon: "📝" },
-  ready:    { label: "Prête",     cls: "badge-gold",   icon: "📋" },
-  declared: { label: "Déclarée",  cls: "badge-green",  icon: "✅" },
-  paid:     { label: "Payée",     cls: "badge-green",  icon: "💰" }
+  draft:       { label: "Brouillon",  cls: "badge-muted",  icon: "📝" },
+  in_progress: { label: "En cours",   cls: "badge-gold",   icon: "🔄" },
+  ready:       { label: "À valider",  cls: "badge-orange", icon: "⏰" },
+  declared:    { label: "Déclarée",   cls: "badge-green",  icon: "✅" },
+  paid:        { label: "Payée",      cls: "badge-green",  icon: "💰" }
 };
 
 export function VatPage({ token, company }) {
@@ -28,18 +29,24 @@ export function VatPage({ token, company }) {
           order: "issue_date.desc"
         }),
         sb.select(token, "purchases", {
-          filter: `company_id=eq.${company.id}&status=in.(paid,partial)`,
-          order: "paid_at.desc.nullslast"
+          filter: `company_id=eq.${company.id}&status=in.(validated,paid,partial,pending)`,
+          order: "issue_date.desc"
         })
       ]);
       if (!alive) return;
-      setReturns(r || []);
+      const allReturns = r || [];
       setInvoices(i || []);
       setPurchases(p || []);
+
+      // Auto-bascule : déclarations in_progress dont le mois est passé → ready
+      const period = computeCurrentVatPeriod(company.vat_regime);
+      const synced = await autoBasculeExpired(token, allReturns, period);
+      if (!alive) return;
+      setReturns(synced);
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [token, company.id]);
+  }, [token, company.id, company.vat_regime]);
 
   // Calcule période en cours (selon régime)
   const currentPeriod = useMemo(() => computeCurrentVatPeriod(company.vat_regime), [company.vat_regime]);
@@ -60,20 +67,19 @@ export function VatPage({ token, company }) {
     const collectedHT = invoices
       .filter((i) => filterDate(i.issue_date))
       .reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
-    // TVA déductible : règle CGI art. 271-I-2
-    // → exigibilité = date de PAIEMENT, pas date de facture fournisseur.
-    // On filtre donc sur paid_at (status paid) ou payment_partial_at (status partial).
+    // TVA déductible : règle CGI art. 271
+    // → on ne déduit que la TVA des achats PAYÉS (ou la part payée pour les partiels)
     const deductibleVAT = purchases
+      .filter((p) => filterDate(p.issue_date))
       .reduce((s, p) => {
-        if (p.status === "paid" && p.paid_at && filterDate(p.paid_at)) {
+        if (p.status === "paid") {
           return s + (p.vat_total_cents || 0);
         }
-        if (p.status === "partial" && p.payment_partial_at
-            && filterDate(p.payment_partial_at) && p.total_ttc_cents > 0) {
+        if (p.status === "partial" && p.total_ttc_cents > 0) {
           const ratio = (p.paid_cents || 0) / p.total_ttc_cents;
           return s + Math.round((p.vat_total_cents || 0) * ratio);
         }
-        return s; // pending, validated, archived, ou hors période de paiement
+        return s; // pending, validated, archived → pas deductible tant que pas paye
       }, 0);
     const breakdown = {};
     invoices
@@ -95,11 +101,97 @@ export function VatPage({ token, company }) {
     };
   }, [invoices, purchases, currentPeriod]);
 
+  // SYNC AUTO de la déclaration in_progress du mois en cours
+  // Dès qu'il y a au moins une facture ou un achat dans la période, on crée/MAJ
+  useEffect(() => {
+    if (loading || !currentPeriod || !stats) return;
+    // Skip si déjà déclarée/payée (verrouillée)
+    const lockedExisting = returns.find(
+      (r) =>
+        r.period_start === currentPeriod.start &&
+        r.period_end === currentPeriod.end &&
+        (r.status === "declared" || r.status === "paid" || r.status === "ready")
+    );
+    if (lockedExisting) return;
+
+    // Skip si rien dans la période
+    const hasActivity = stats.collectedHT > 0 || stats.deductibleVAT > 0;
+    if (!hasActivity) return;
+
+    let cancelled = false;
+    (async () => {
+      const formType = company.vat_regime === "simplified" ? "CA12" : "CA3";
+      const existing = returns.find(
+        (r) =>
+          r.period_start === currentPeriod.start &&
+          r.period_end === currentPeriod.end &&
+          r.status === "in_progress"
+      );
+      const payload = {
+        company_id: company.id,
+        period_start: currentPeriod.start,
+        period_end: currentPeriod.end,
+        form_type: formType,
+        collected_vat_cents: stats.collectedVAT,
+        deductible_vat_cents: stats.deductibleVAT,
+        net_vat_cents: stats.netVAT,
+        taxable_base_cents: stats.collectedHT,
+        breakdown: stats.breakdown,
+        status: "in_progress",
+        snapshot: {
+          invoices_count: invoices.filter((i) => {
+            const d = new Date(i.issue_date);
+            return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
+          }).length,
+          purchases_count: purchases.filter((p) => {
+            const d = new Date(p.issue_date);
+            return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
+          }).length,
+          updated_at: new Date().toISOString()
+        }
+      };
+      let result;
+      if (existing) {
+        result = await sb.update(token, "vat_returns", `id=eq.${existing.id}`, payload);
+      } else {
+        result = await sb.insert(token, "vat_returns", payload);
+      }
+      if (cancelled || !result || !result[0]) return;
+      if (existing) {
+        setReturns((prev) => prev.map((x) => (x.id === existing.id ? result[0] : x)));
+      } else {
+        setReturns((prev) => [result[0], ...prev]);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, stats?.collectedVAT, stats?.deductibleVAT, currentPeriod?.start, currentPeriod?.end]);
+
+
+  // Bouton "Mettre à jour maintenant" — utile si l'utilisateur veut forcer
+  // le recalcul (en pratique l'auto-sync devrait avoir déjà fait le job)
   async function generateReturn() {
     if (!currentPeriod || !stats) return;
     setGenerating(true);
     const formType = company.vat_regime === "simplified" ? "CA12" : "CA3";
-    const created = await sb.insert(token, "vat_returns", {
+
+    const existing = returns.find(
+      (r) =>
+        r.period_start === currentPeriod.start &&
+        r.period_end === currentPeriod.end
+    );
+
+    if (existing && (existing.status === "declared" || existing.status === "paid")) {
+      setGenerating(false);
+      alert("Cette déclaration a déjà été transmise/payée. Impossible de la modifier.");
+      return;
+    }
+
+    // On force le statut in_progress si on est sur le mois en cours et qu'il n'est pas fini
+    const isMonthOver = new Date(currentPeriod.end) < new Date(new Date().toISOString().slice(0, 10));
+    const newStatus = isMonthOver ? "ready" : "in_progress";
+
+    const payload = {
       company_id: company.id,
       period_start: currentPeriod.start,
       period_end: currentPeriod.end,
@@ -109,35 +201,42 @@ export function VatPage({ token, company }) {
       net_vat_cents: stats.netVAT,
       taxable_base_cents: stats.collectedHT,
       breakdown: stats.breakdown,
-      status: "ready",
+      status: newStatus,
       snapshot: {
         invoices_count: invoices.filter((i) => {
           const d = new Date(i.issue_date);
           return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
         }).length,
         purchases_count: purchases.filter((p) => {
-          // On compte les achats déductibles sur la période (date d'exigibilité = paiement)
-          const payDate = p.status === "paid" ? p.paid_at
-                        : p.status === "partial" ? p.payment_partial_at
-                        : null;
-          if (!payDate) return false;
-          const d = new Date(payDate);
+          const d = new Date(p.issue_date);
           return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
         }).length,
         generated_at: new Date().toISOString()
       }
-    });
+    };
+
+    let result;
+    if (existing) {
+      result = await sb.update(token, "vat_returns", `id=eq.${existing.id}`, payload);
+    } else {
+      result = await sb.insert(token, "vat_returns", payload);
+    }
+
     setGenerating(false);
-    if (created && created[0]) {
-      setReturns([created[0], ...returns]);
+    if (result && result[0]) {
+      if (existing) {
+        setReturns(returns.map((x) => (x.id === existing.id ? result[0] : x)));
+      } else {
+        setReturns([result[0], ...returns]);
+      }
       capture("vat_return_generated", {
         form_type: formType,
         period_start: currentPeriod.start,
         period_end: currentPeriod.end,
-        net_vat: stats.netVAT / 100
+        net_vat: stats.netVAT / 100,
+        regenerated: !!existing
       });
       bumpModuleUsage(token, company.id, "vat");
-      alert("Déclaration TVA prête. Reportez les montants sur impots.gouv.fr.");
     }
   }
 
@@ -184,6 +283,20 @@ export function VatPage({ token, company }) {
     );
   }
 
+  // Déclaration de la période en cours (si elle existe)
+  const existingCurrent = currentPeriod
+    ? returns.find(
+        (r) =>
+          r.period_start === currentPeriod.start &&
+          r.period_end === currentPeriod.end
+      )
+    : null;
+  const existingIsLocked =
+    existingCurrent && (existingCurrent.status === "declared" || existingCurrent.status === "paid");
+
+  // Déclarations en attente de validation (mois fini, statut ready)
+  const pendingReturns = returns.filter((r) => r.status === "ready");
+
   return (
     <div className="page">
       <div className="page-header">
@@ -192,11 +305,48 @@ export function VatPage({ token, company }) {
           <div className="page-sub">
             Régime : {regimeLabel(company.vat_regime)}
             {currentPeriod && <> · Période en cours : {fmtDate(currentPeriod.start)} → {fmtDate(currentPeriod.end)}</>}
+            {existingCurrent && existingCurrent.status === "in_progress" && (
+              <> · <span style={{ color: "var(--gold)" }}>🔄 Mise à jour automatique</span></>
+            )}
+            {existingIsLocked && (
+              <> · <span style={{ color: "var(--muted)" }}>Déjà transmise</span></>
+            )}
           </div>
         </div>
-        <button className="btn btn-primary" onClick={generateReturn} disabled={generating}>
-          <Icon name="plus" size={14} /> {generating ? "Génération..." : "Générer la déclaration"}
+        <button className="btn btn-primary" onClick={generateReturn} disabled={generating || existingIsLocked}>
+          <Icon name="plus" size={14} /> {generating
+            ? "Mise à jour..."
+            : (existingCurrent ? "Recalculer maintenant" : "Initialiser la déclaration")}
         </button>
+      </div>
+
+      {/* Bandeau orange : déclarations à valider (mois fini) */}
+      {pendingReturns.length > 0 && (
+        <div style={{
+          background: "rgba(255, 165, 0, 0.12)",
+          border: "1px solid var(--orange)",
+          borderLeft: "4px solid var(--orange)",
+          borderRadius: 6,
+          padding: "12px 16px",
+          marginBottom: 18,
+          display: "flex",
+          alignItems: "center",
+          gap: 12
+        }}>
+          <span style={{ fontSize: 20 }}>🔔</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--orange)" }}>
+              {pendingReturns.length === 1
+                ? "1 déclaration TVA à valider"
+                : `${pendingReturns.length} déclarations TVA à valider`}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted2)", marginTop: 2 }}>
+              {pendingReturns.map((r) => `${fmtDate(r.period_start)} → ${fmtDate(r.period_end)}`).join(" · ")}
+              {" — "}reportez les montants sur impots.gouv.fr puis cliquez « Marquer déclarée ».
+            </div>
+          </div>
+        </div>
+      )}
       </div>
 
       {/* KPI période courante */}
@@ -305,6 +455,35 @@ function regimeLabel(r) {
     normal_quarterly: "Réel normal trimestriel (CA3)",
     simplified: "Réel simplifié (CA12 annuelle)"
   })[r] || r;
+}
+
+/**
+ * Au chargement de la page, bascule en "ready" les déclarations
+ * "in_progress" dont la période est passée (mois fini).
+ * Renvoie la liste des déclarations à jour.
+ */
+async function autoBasculeExpired(token, returns, currentPeriod) {
+  if (!returns || returns.length === 0) return returns;
+  const today = new Date().toISOString().slice(0, 10);
+  const toUpdate = returns.filter(
+    (r) =>
+      r.status === "in_progress" &&
+      r.period_end < today &&
+      // Sécurité : on ne bascule pas la période en cours
+      !(currentPeriod && r.period_start === currentPeriod.start && r.period_end === currentPeriod.end)
+  );
+  if (toUpdate.length === 0) return returns;
+
+  const updates = await Promise.all(
+    toUpdate.map((r) =>
+      sb.update(token, "vat_returns", `id=eq.${r.id}`, { status: "ready" })
+    )
+  );
+  const updatedById = new Map();
+  updates.forEach((u, i) => {
+    if (u && u[0]) updatedById.set(toUpdate[i].id, u[0]);
+  });
+  return returns.map((r) => updatedById.get(r.id) || r);
 }
 
 function computeCurrentVatPeriod(regime) {
