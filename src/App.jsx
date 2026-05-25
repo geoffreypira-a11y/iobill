@@ -371,12 +371,10 @@ function FirmLayout({ session, onSignOut }) {
     <div className="shell">
       <OfflineBanner />
       <aside className="sidebar" style={{ minWidth: 220, display: "flex", flexDirection: "column" }}>
-        {/* Haut : Logo IO BILL + Owl's Industry + "Mode Cabinet" */}
-        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--border2)" }}>
-          <LogoFull size={36} />
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, paddingLeft: 4 }}>
-            Mode Cabinet
-          </div>
+        {/* Haut : identique à la sidebar abonné */}
+        <LogoFull />
+        <div style={{ padding: "0 16px 14px", marginTop: -4, fontSize: 11, color: "var(--muted)" }}>
+          Mode Cabinet
         </div>
 
         {/* Menu */}
