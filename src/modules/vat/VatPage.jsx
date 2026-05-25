@@ -347,7 +347,6 @@ export function VatPage({ token, company }) {
           </div>
         </div>
       )}
-      </div>
 
       {/* KPI période courante */}
       {stats && (
