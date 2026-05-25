@@ -870,31 +870,47 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const companyId = path.split("/")[0];
     if (!companyId) return json(res, 400, { error: "company_id introuvable dans le path" });
 
-    // Vérifier l'autorisation
+    // Vérifier l'autorisation : on tente d'abord la voie owner direct,
+    // puis on délègue à la fonction SQL firm_can_read qui couvre tous les cas
+    // (owner, admin, firm_member via lien accepté).
     let allowed = false;
 
-    // Cas 1 : user owns this company
+    console.log(`[pdf_refresh_url] user=${user.id} company=${companyId} bucket=${bucket}`);
+
+    // Cas 1 : user owns this company (rapide, évite l'appel RPC)
     const ownCo = await sbSelect("companies", { id: `eq.${companyId}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
-    if (ownCo && ownCo.length > 0) allowed = true;
+    if (ownCo && ownCo.length > 0) { allowed = true; console.log("[pdf_refresh_url] allowed via owner"); }
 
-    // Cas 2 : user est admin
+    // Cas 2 : on demande à PostgREST d'invoquer firm_can_read avec le token user.
+    // Cette fonction est SECURITY DEFINER et gère tous les cas (admin, firm_member, etc.)
     if (!allowed) {
-      const adminP = await sbSelect("profiles", { user_id: `eq.${user.id}`, is_admin: "eq.true", select: "user_id", limit: 1 });
-      if (adminP && adminP.length > 0) allowed = true;
-    }
-
-    // Cas 3 : user est membre d'un cabinet lié à cette company (lien accepté)
-    if (!allowed) {
-      const links = await sbSelect("firm_client_links", { company_id: `eq.${companyId}`, status: "eq.accepted", select: "firm_id" });
-      if (links && links.length > 0) {
-        for (const l of links) {
-          const fm = await sbSelect("firm_members", { firm_id: `eq.${l.firm_id}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
-          if (fm && fm.length > 0) { allowed = true; break; }
+      try {
+        const rpcR = await fetch(`${SUPABASE_URL}/rest/v1/rpc/firm_can_read`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: SR_KEY,
+            Authorization: `Bearer ${token}`  // token user, pas service role
+          },
+          body: JSON.stringify({ p_company_id: companyId })
+        });
+        if (rpcR.ok) {
+          const can = await rpcR.json();
+          console.log(`[pdf_refresh_url] firm_can_read returned: ${JSON.stringify(can)}`);
+          if (can === true) allowed = true;
+        } else {
+          const txt = await rpcR.text();
+          console.warn(`[pdf_refresh_url] firm_can_read RPC failed ${rpcR.status}: ${txt}`);
         }
+      } catch (e) {
+        console.warn("[pdf_refresh_url] firm_can_read exception:", e.message);
       }
     }
 
-    if (!allowed) return json(res, 403, { error: "Accès refusé à ce document" });
+    if (!allowed) {
+      console.warn(`[pdf_refresh_url] DENIED user=${user.id} company=${companyId}`);
+      return json(res, 403, { error: "Accès refusé à ce document" });
+    }
 
     // Générer une URL signée fraîche (1h)
     const signR = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`, {

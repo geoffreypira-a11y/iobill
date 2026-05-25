@@ -473,8 +473,10 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
   useEffect(() => { load(); }, [company?.id]);
 
   function openPreview(p) {
-    if (!p.pdf_url) { alert("PDF non disponible pour cet achat"); return; }
-    setPreviewUrl(p.pdf_url);
+    if (!p.file_url) { alert("PDF non disponible pour cet achat"); return; }
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+    const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${p.file_url}`;
+    setPreviewUrl(storedUrl);
     setPreviewTitle(`Achat ${p.vendor_name} · ${fmtDate(p.issue_date)}`);
   }
 
@@ -518,12 +520,12 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
                   <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(p.vat_total_cents || 0)}</td>
                   <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fmtEUR(p.total_ttc_cents || 0)}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    {p.pdf_url && (
+                    {p.file_url && (
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={() => openPreview(p)}
                         style={{ padding: "4px 8px", marginRight: 4 }}
-                        title="Voir le PDF"
+                        title="Voir le document scanné"
                       >
                         👁
                       </button>
