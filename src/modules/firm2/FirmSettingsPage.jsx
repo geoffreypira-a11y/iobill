@@ -40,6 +40,7 @@ export function FirmSettingsPage({ token, user }) {
       const memberships = await sb.select(token, "firm_members", {
         filter: `user_id=eq.${user.id}`,
         select: "firm_id,role",
+        order: "",
         limit: 1
       });
       console.log("[FirmSettings] memberships:", memberships);
