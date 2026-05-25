@@ -105,12 +105,12 @@ export function VatPage({ token, company }) {
   // Dès qu'il y a au moins une facture ou un achat dans la période, on crée/MAJ
   useEffect(() => {
     if (loading || !currentPeriod || !stats) return;
-    // Skip si déjà déclarée/payée (verrouillée)
+    // Skip si déjà déclarée/payée (verrouillée définitivement)
     const lockedExisting = returns.find(
       (r) =>
         r.period_start === currentPeriod.start &&
         r.period_end === currentPeriod.end &&
-        (r.status === "declared" || r.status === "paid" || r.status === "ready")
+        (r.status === "declared" || r.status === "paid")
     );
     if (lockedExisting) return;
 
@@ -125,7 +125,7 @@ export function VatPage({ token, company }) {
         (r) =>
           r.period_start === currentPeriod.start &&
           r.period_end === currentPeriod.end &&
-          r.status === "in_progress"
+          (r.status === "in_progress" || r.status === "ready")
       );
       const payload = {
         company_id: company.id,

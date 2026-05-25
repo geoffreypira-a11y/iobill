@@ -39,9 +39,9 @@ export function VatReminderBanner({ token, company }) {
         );
       }
 
-      // 2) Charger les déclarations à valider (ready)
+      // 2) Charger les déclarations à valider (ready) dont la période est passée
       const rs = await sb.select(token, "vat_returns", {
-        filter: `company_id=eq.${company.id}&status=eq.ready`,
+        filter: `company_id=eq.${company.id}&status=eq.ready&period_end=lt.${today}`,
         select: "id,period_start,period_end",
         order: "period_start.desc",
         limit: 10

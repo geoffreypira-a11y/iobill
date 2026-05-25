@@ -346,9 +346,9 @@ function AuthedLayout({ session, company, onSignOut }) {
   return (
     <div className="shell">
       <OfflineBanner />
-      <VatReminderBanner token={session.token} company={company} />
       <Sidebar token={session.token} company={company} user={session.user} onSignOut={onSignOut} />
       <main className="content">
+        <VatReminderBanner token={session.token} company={company} />
         <Outlet />
         <LegalFooter />
       </main>

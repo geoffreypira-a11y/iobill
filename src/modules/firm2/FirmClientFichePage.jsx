@@ -3,6 +3,7 @@ import { useParams, useNavigate, Navigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { useMyFirm } from "../../components/FirmMode.jsx";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
+import { computeCurrentVatPeriod } from "../../lib/vat-sync.js";
 import { SignalButton } from "../../components/SignalButton.jsx";
 
 /**
@@ -561,12 +562,36 @@ function VatTab({ token, firm, company }) {
   const [periodData, setPeriodData] = useState(null);
 
   async function load() {
-    // Trimestre en cours
+    // Période en cours selon le régime TVA de l'abonné (mensuel / trimestriel / annuel)
+    const period = computeCurrentVatPeriod(company.vat_regime);
+    if (!period) {
+      // Régime franchise ou inconnu : pas de calcul
+      setPeriodData({
+        label: "Franchise TVA",
+        periode: "—",
+        ventilation: [],
+        totalCollectee: 0,
+        totalDeductible: 0,
+        totalNet: 0
+      });
+      return;
+    }
+    const firstDay = period.start;
+    const lastDay = period.end;
+
+    // Calcul du label en fonction du régime
     const now = new Date();
-    const quarter = Math.floor(now.getMonth() / 3);
-    const firstMonth = quarter * 3;
-    const firstDay = new Date(now.getFullYear(), firstMonth, 1).toISOString().slice(0, 10);
-    const lastDay = new Date(now.getFullYear(), firstMonth + 3, 0).toISOString().slice(0, 10);
+    let label;
+    if (company.vat_regime === "normal_monthly") {
+      label = now.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    } else if (company.vat_regime === "normal_quarterly") {
+      const quarter = Math.floor(now.getMonth() / 3) + 1;
+      label = `T${quarter} ${now.getFullYear()}`;
+    } else if (company.vat_regime === "simplified") {
+      label = `Année ${now.getFullYear()}`;
+    } else {
+      label = "Période en cours";
+    }
 
     const invoices = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}&status=in.(issued,sent,partial,paid,overdue)`,
@@ -604,7 +629,7 @@ function VatTab({ token, firm, company }) {
     }
 
     setPeriodData({
-      label: `T${quarter + 1} ${now.getFullYear()}`,
+      label,
       periode: `${fmtDate(firstDay)} → ${fmtDate(lastDay)}`,
       ventilation: Object.values(ventilation).sort((a, b) => b.rate - a.rate),
       totalCollectee,

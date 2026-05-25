@@ -104,12 +104,12 @@ export async function syncVatCurrentPeriod(token, company) {
     });
     const existingRow = existing && existing[0];
 
-    // Ne pas toucher si déjà declared/paid/ready
+    // Ne pas toucher si déjà declared/paid (transmis irrévocablement)
+    // Si la ligne est en "ready" mais que la période est encore en cours,
+    // on la rebascule en "in_progress" et on MAJ les montants.
     if (
       existingRow &&
-      (existingRow.status === "declared" ||
-        existingRow.status === "paid" ||
-        existingRow.status === "ready")
+      (existingRow.status === "declared" || existingRow.status === "paid")
     ) {
       return existingRow;
     }
