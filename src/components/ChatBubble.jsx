@@ -22,25 +22,18 @@ export function ChatBubble({ token, user, company }) {
   const pollRef = useRef(null);
 
   async function loadFirm() {
-    console.log("[ChatBubble:debug] loadFirm called, company =", company);
-    if (!company?.id) {
-      console.log("[ChatBubble:debug] STOP: no company.id");
-      return null;
-    }
+    if (!company?.id) return null;
     const links = await sb.select(token, "firm_client_links", {
       filter: `company_id=eq.${company.id}&status=eq.accepted`,
       select: "firm_id",
       limit: 1
     });
-    console.log("[ChatBubble:debug] links for company", company.id, "=", links);
     if (!links || links.length === 0) {
-      console.log("[ChatBubble:debug] STOP: no accepted link → bubble hidden");
       setFirm(null);
       setLoading(false);
       return null;
     }
     const f = await sb.selectOne(token, "accounting_firms", `id=eq.${links[0].firm_id}`, "*");
-    console.log("[ChatBubble:debug] firm loaded =", f);
     setFirm(f);
     return f;
   }

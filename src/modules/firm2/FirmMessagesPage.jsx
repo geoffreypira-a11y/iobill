@@ -6,18 +6,20 @@ import { fmtDate } from "../../lib/helpers.js";
 import { ThreadView } from "../../components/ThreadView.jsx";
 
 /**
- * FirmMessagesPage — v8.28
- * 3 colonnes : clients | threads du client | conversation
+ * FirmMessagesPage — v8.29
+ * 3 colonnes : clients | threads du client (filtrés) | conversation
+ * Filtres statuts : open (défaut) | closed | archived | all
  */
 export function FirmMessagesPage({ token, user, company }) {
   const { loading: firmLoading, firm } = useMyFirm(token, user?.id);
   const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState([]); // [{link, company, unreadCount, lastThreadAt}]
   const [selectedClient, setSelectedClient] = useState(null);
-  const [threads, setThreads] = useState([]);
+  const [threads, setThreads] = useState([]); // tous les threads du client (tous statuts)
   const [selectedThread, setSelectedThread] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showNewThread, setShowNewThread] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("open"); // 'open' | 'closed' | 'archived' | 'all'
 
   async function loadClients() {
     if (!firm?.id) return;
@@ -67,11 +69,15 @@ export function FirmMessagesPage({ token, user, company }) {
       for (const c of out) {
         const ts = await sb.select(token, "firm_threads", {
           filter: `id=eq.${threadIdFromUrl}&firm_id=eq.${firm.id}&company_id=eq.${c.company.id}`,
-          select: "id",
+          select: "id,status",
           limit: 1
         });
         if (ts && ts.length > 0) {
           setSelectedClient(c);
+          // Si le thread n'est pas dans le filtre courant, on bascule le filtre
+          if (ts[0].status && ts[0].status !== statusFilter && statusFilter !== "all") {
+            setStatusFilter(ts[0].status);
+          }
           await loadThreads(c, threadIdFromUrl);
           return;
         }
@@ -89,18 +95,47 @@ export function FirmMessagesPage({ token, user, company }) {
       filter: `firm_id=eq.${firm.id}&company_id=eq.${client.company.id}`,
       select: "*",
       order: "last_message_at.desc",
-      limit: 100
+      limit: 200
     });
     setThreads(rows || []);
 
     if (preselectThreadId) {
       const t = (rows || []).find((tr) => tr.id === preselectThreadId);
       if (t) setSelectedThread(t);
-    } else if ((rows || []).length > 0) {
-      setSelectedThread(rows[0]);
-    } else {
-      setSelectedThread(null);
     }
+    // Note: la sélection automatique du premier thread se fait dans un useEffect
+    // pour rester cohérente avec le filtre courant
+  }
+
+  // Threads filtrés selon le statut courant
+  const visibleThreads = threads.filter((t) => {
+    if (statusFilter === "all") return true;
+    return t.status === statusFilter;
+  });
+
+  // Compteurs par statut pour les onglets
+  const counts = threads.reduce((acc, t) => {
+    acc[t.status] = (acc[t.status] || 0) + 1;
+    return acc;
+  }, { open: 0, closed: 0, archived: 0 });
+
+  // Sélection automatique du premier thread visible (ou désélection si vide)
+  useEffect(() => {
+    if (visibleThreads.length === 0) {
+      setSelectedThread(null);
+      return;
+    }
+    // Si le thread courant n'est plus visible (changement de filtre ou archivage), on en choisit un autre
+    const stillVisible = selectedThread && visibleThreads.some((t) => t.id === selectedThread.id);
+    if (!stillVisible) {
+      setSelectedThread(visibleThreads[0]);
+    }
+  }, [visibleThreads, statusFilter]);
+
+  // Callback appelé par ThreadView quand le statut change (fermer / archiver / rouvrir)
+  // → on met à jour le thread dans la liste locale immédiatement (pas besoin d'attendre un reload)
+  function handleThreadStatusChange(threadId, newStatus) {
+    setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, status: newStatus } : t));
   }
 
   useEffect(() => { loadClients(); }, [firm?.id]);
@@ -128,6 +163,7 @@ export function FirmMessagesPage({ token, user, company }) {
                   onClick={() => {
                     setSelectedClient(c);
                     setSelectedThread(null);
+                    setStatusFilter("open"); // reset filtre quand on change de client
                     loadThreads(c);
                   }}
                   style={{
@@ -153,23 +189,38 @@ export function FirmMessagesPage({ token, user, company }) {
           </div>
         </div>
 
-        {/* Colonne 2 : Threads du client sélectionné */}
+        {/* Colonne 2 : Threads du client sélectionné — avec filtre par statut */}
         <div className="card" style={colStyle}>
           <div style={{ ...colHeaderStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>{selectedClient ? `SUJETS · ${threads.length}` : "SUJETS"}</span>
+            <span>{selectedClient ? `SUJETS · ${visibleThreads.length}` : "SUJETS"}</span>
             {selectedClient && (
               <button className="btn btn-primary btn-sm" onClick={() => setShowNewThread(true)} style={{ padding: "2px 6px", fontSize: 10 }}>
                 + Nouveau
               </button>
             )}
           </div>
+
+          {/* Onglets de filtre par statut */}
+          {selectedClient && (
+            <div style={tabsRowStyle}>
+              <FilterTab label="En cours" active={statusFilter === "open"} count={counts.open} onClick={() => setStatusFilter("open")} />
+              <FilterTab label="Fermés" active={statusFilter === "closed"} count={counts.closed} onClick={() => setStatusFilter("closed")} />
+              <FilterTab label="Archivés" active={statusFilter === "archived"} count={counts.archived} onClick={() => setStatusFilter("archived")} />
+              <FilterTab label="Tous" active={statusFilter === "all"} count={threads.length} onClick={() => setStatusFilter("all")} />
+            </div>
+          )}
+
           <div style={{ flex: 1, overflowY: "auto" }}>
             {!selectedClient ? (
               <div style={emptyStyle}>Sélectionne un client</div>
-            ) : threads.length === 0 ? (
-              <div style={emptyStyle}>Aucun sujet avec ce client</div>
+            ) : visibleThreads.length === 0 ? (
+              <div style={emptyStyle}>
+                {threads.length === 0
+                  ? "Aucun sujet avec ce client"
+                  : `Aucun sujet ${statusFilter === "open" ? "en cours" : statusFilter === "closed" ? "fermé" : "archivé"}`}
+              </div>
             ) : (
-              threads.map((t) => (
+              visibleThreads.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setSelectedThread(t)}
@@ -195,11 +246,13 @@ export function FirmMessagesPage({ token, user, company }) {
         <div className="card" style={{ ...colStyle, padding: 0 }}>
           {selectedThread ? (
             <ThreadView
+              key={selectedThread.id}
               token={token}
               user={user}
               threadId={selectedThread.id}
               side="firm"
               onBack={null}
+              onStatusChange={handleThreadStatusChange}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 12 }}>
@@ -217,13 +270,37 @@ export function FirmMessagesPage({ token, user, company }) {
           onCreated={async (newThread) => {
             setShowNewThread(false);
             await loadThreads(selectedClient);
-            // Sélectionner le nouveau thread
+            // Forcer le filtre sur "open" pour voir le nouveau thread
+            setStatusFilter("open");
             if (newThread) setSelectedThread(newThread);
           }}
           onClose={() => setShowNewThread(false)}
         />
       )}
     </div>
+  );
+}
+
+function FilterTab({ label, active, count, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        padding: "6px 4px",
+        border: "none",
+        background: active ? "rgba(212,168,67,0.15)" : "transparent",
+        color: active ? "var(--gold)" : "var(--muted)",
+        fontSize: 10,
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        cursor: "pointer",
+        borderBottom: active ? "2px solid var(--gold)" : "2px solid transparent"
+      }}
+    >
+      {label} {count > 0 && <span style={{ opacity: 0.7 }}>({count})</span>}
+    </button>
   );
 }
 
@@ -296,6 +373,7 @@ function NewThreadModal({ token, firm, company, onCreated, onClose }) {
 
 const colStyle = { display: "flex", flexDirection: "column", overflow: "hidden", padding: 0, minHeight: 0 };
 const colHeaderStyle = { padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.08)", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 };
+const tabsRowStyle = { display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)" };
 const rowStyle = { width: "100%", padding: "10px 12px", border: "none", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", textAlign: "left", color: "var(--text)" };
 const emptyStyle = { padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 };
 const badgeStyle = { background: "#e54949", color: "#fff", fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 8, minWidth: 16, textAlign: "center" };

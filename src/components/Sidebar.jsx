@@ -51,7 +51,8 @@ export function Sidebar({ token, company, user, onSignOut }) {
   useEffect(() => {
     if (!token || !user?.id) return;
     let alive = true;
-    (async () => {
+
+    async function refreshCounts() {
       // Co-équipiers de la company courante
       if (company?.id) {
         const cu = await sb.select(token, "company_users", { filter: `company_id=eq.${company.id}`, select: "id", limit: 5 });
@@ -94,8 +95,12 @@ export function Sidebar({ token, company, user, onSignOut }) {
         if (!alive) return;
         setUnreadMessagesCount((unread || []).length);
       }
-    })();
-    return () => { alive = false; };
+    }
+
+    refreshCounts();
+    // Polling 15s pour garder les badges à jour (nouveaux messages, signalements)
+    const intervalId = setInterval(refreshCounts, 15000);
+    return () => { alive = false; clearInterval(intervalId); };
   }, [token, user?.id, company?.id]);
 
   return (

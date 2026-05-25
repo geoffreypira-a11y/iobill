@@ -8,7 +8,7 @@ import { ThreadComposer } from "./ThreadComposer.jsx";
  * Vue détail d'un thread : liste messages + composer
  * Realtime via polling 5s (simple et fiable)
  */
-export function ThreadView({ token, user, threadId, side, onBack, compact }) {
+export function ThreadView({ token, user, threadId, side, onBack, compact, onStatusChange }) {
   const [thread, setThread] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +63,7 @@ export function ThreadView({ token, user, threadId, side, onBack, compact }) {
             </div>
           </div>
         </div>
-        {!compact && <ThreadActions thread={thread} token={token} onChanged={() => load(true)} />}
+        {!compact && <ThreadActions thread={thread} token={token} onChanged={() => load(true)} onStatusChange={onStatusChange} />}
       </div>
 
       {/* Messages */}
@@ -107,7 +107,11 @@ function MessageBubble({ message, mySide }) {
         borderRadius: 8
       }}>
         <div style={{ fontSize: 9, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          {message.author_side === "firm" ? "🏢 Cabinet" : "👤 Vous"} · {day} {time}
+          {isMine
+            ? "👤 Vous"
+            : message.author_side === "firm"
+              ? "🏢 Cabinet"
+              : "👤 Client"} · {day} {time}
         </div>
         <div style={{ fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{message.content}</div>
         {atts.length > 0 && (
@@ -130,7 +134,7 @@ function MessageBubble({ message, mySide }) {
   );
 }
 
-function ThreadActions({ thread, token, onChanged }) {
+function ThreadActions({ thread, token, onChanged, onStatusChange }) {
   async function action(act) {
     if (!confirm(act === "thread_close" ? "Fermer ce sujet ?" : act === "thread_reopen" ? "Réouvrir ?" : "Archiver ?")) return;
     const r = await fetch("/api/firm-invitation", {
@@ -138,7 +142,12 @@ function ThreadActions({ thread, token, onChanged }) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: act, payload: { thread_id: thread.id } })
     });
-    if (r.ok) onChanged?.();
+    if (r.ok) {
+      // Notifier le parent du changement de statut pour MAJ immédiate de la liste
+      const newStatus = act === "thread_close" ? "closed" : act === "thread_reopen" ? "open" : "archived";
+      onStatusChange?.(thread.id, newStatus);
+      onChanged?.();
+    }
   }
   return (
     <div style={{ display: "flex", gap: 4 }}>
