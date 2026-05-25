@@ -1,6 +1,9 @@
 // ────────────────────────────────────────────────────────────────
 // IO BILL — API /api/firm-invitation
-// v8.26.1 — Hotfix : try/catch global + logs + import crypto fix
+// v8.28 — Messagerie cabinet/abonné (thread_create, message_send,
+//         message_mark_read, thread_close, thread_reopen, thread_archive)
+//         + Sprint 3 (signalements) + Sprint 2 (invitations/links)
+//         + Hotfix v8.26.1 : try/catch global, logs, import crypto fix
 // ────────────────────────────────────────────────────────────────
 
 import { randomBytes } from "crypto";
@@ -716,5 +719,183 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     return json(res, 200, { ok: true, signal: updated?.[0] });
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // ACTIONS MESSAGERIE (Sprint 4 v8.28)
+  // ═══════════════════════════════════════════════════════════════════
+
+  if (action === "thread_create") {
+    const { firm_id, company_id, subject, first_message } = p;
+    if (!firm_id || !company_id || !subject) return json(res, 400, { error: "firm_id, company_id, subject requis" });
+
+    let authorSide = null;
+    const tcFm = await sbSelect("firm_members", { firm_id: `eq.${firm_id}`, user_id: `eq.${user.id}`, limit: 1 });
+    if (tcFm && tcFm.length > 0) authorSide = "firm";
+    if (!authorSide) {
+      const tcC = await sbSelect("companies", { id: `eq.${company_id}`, user_id: `eq.${user.id}`, limit: 1 });
+      if (tcC && tcC.length > 0) authorSide = "client";
+    }
+    if (!authorSide) return json(res, 403, { error: "Non autorisé" });
+
+    const tcLinks = await sbSelect("firm_client_links", { firm_id: `eq.${firm_id}`, company_id: `eq.${company_id}`, status: "eq.accepted", select: "id", limit: 1 });
+    if (!tcLinks || tcLinks.length === 0) return json(res, 403, { error: "Cabinet non lié" });
+
+    const thread = await sbInsert("firm_threads", {
+      firm_id, company_id, created_by: user.id, subject: String(subject).slice(0, 200), status: "open"
+    });
+    if (!thread) return json(res, 500, { error: "Échec création thread" });
+
+    if (first_message && String(first_message).trim()) {
+      const msg = await sbInsert("firm_messages", {
+        thread_id: thread[0].id, firm_id, company_id,
+        author_id: user.id, author_side: authorSide,
+        content: String(first_message).slice(0, 5000),
+        read_by_firm: authorSide === "firm",
+        read_by_client: authorSide === "client"
+      });
+      await notifyNewMessage(thread[0], msg?.[0], authorSide);
+    }
+
+    return json(res, 200, { ok: true, thread: thread[0] });
+  }
+
+  if (action === "message_send") {
+    const { thread_id, content, attachments } = p;
+    if (!thread_id || !content) return json(res, 400, { error: "thread_id et content requis" });
+
+    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, limit: 1 });
+    if (!threads || threads.length === 0) return json(res, 404, { error: "Thread introuvable" });
+    const thread = threads[0];
+
+    let authorSide = null;
+    const msFm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, limit: 1 });
+    if (msFm && msFm.length > 0) authorSide = "firm";
+    if (!authorSide) {
+      const msC = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, limit: 1 });
+      if (msC && msC.length > 0) authorSide = "client";
+    }
+    if (!authorSide) return json(res, 403, { error: "Non autorisé" });
+    if (thread.status === "archived") return json(res, 400, { error: "Thread archivé" });
+
+    const msg = await sbInsert("firm_messages", {
+      thread_id, firm_id: thread.firm_id, company_id: thread.company_id,
+      author_id: user.id, author_side: authorSide,
+      content: String(content).slice(0, 5000),
+      attachments: Array.isArray(attachments) ? attachments.slice(0, 10) : [],
+      read_by_firm: authorSide === "firm",
+      read_by_client: authorSide === "client"
+    });
+    if (!msg) return json(res, 500, { error: "Échec envoi" });
+
+    await notifyNewMessage(thread, msg[0], authorSide);
+    return json(res, 200, { ok: true, message: msg[0] });
+  }
+
+  if (action === "message_mark_read") {
+    const { thread_id } = p;
+    if (!thread_id) return json(res, 400, { error: "thread_id requis" });
+    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, limit: 1 });
+    if (!threads || threads.length === 0) return json(res, 404, { error: "Thread introuvable" });
+    const thread = threads[0];
+
+    let side = null;
+    const mrFm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, limit: 1 });
+    if (mrFm && mrFm.length > 0) side = "firm";
+    if (!side) {
+      const mrC = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, limit: 1 });
+      if (mrC && mrC.length > 0) side = "client";
+    }
+    if (!side) return json(res, 403, { error: "Non autorisé" });
+
+    const field = side === "firm" ? "read_by_firm" : "read_by_client";
+    await sbUpdate("firm_messages", `thread_id=eq.${thread_id}&${field}=eq.false`, { [field]: true });
+    return json(res, 200, { ok: true });
+  }
+
+  if (action === "thread_close" || action === "thread_reopen" || action === "thread_archive") {
+    const { thread_id } = p;
+    if (!thread_id) return json(res, 400, { error: "thread_id requis" });
+    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, limit: 1 });
+    if (!threads || threads.length === 0) return json(res, 404, { error: "Thread introuvable" });
+    const thread = threads[0];
+
+    let allowed = false;
+    const tFm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, limit: 1 });
+    if (tFm && tFm.length > 0) allowed = true;
+    if (!allowed) {
+      const tC = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, limit: 1 });
+      if (tC && tC.length > 0) allowed = true;
+    }
+    if (!allowed) return json(res, 403, { error: "Non autorisé" });
+
+    const newStatus = action === "thread_close" ? "closed" : action === "thread_reopen" ? "open" : "archived";
+    const patch = { status: newStatus };
+    if (action === "thread_close") patch.closed_at = new Date().toISOString();
+    if (action === "thread_reopen") patch.closed_at = null;
+
+    const updated = await sbUpdate("firm_threads", `id=eq.${thread_id}`, patch);
+    return json(res, 200, { ok: true, thread: updated?.[0] });
+  }
+
   return json(res, 400, { error: "Action inconnue : " + action });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper notif
+// ═══════════════════════════════════════════════════════════════════
+async function notifyNewMessage(thread, message, authorSide) {
+  if (!thread || !message) return;
+  const firms = await sbSelect("accounting_firms", { id: `eq.${thread.firm_id}`, select: "name" });
+  const companies = await sbSelect("companies", { id: `eq.${thread.company_id}`, select: "legal_name,user_id,billing_email" });
+  const firmName = firms?.[0]?.name || "Cabinet";
+  const companyName = companies?.[0]?.legal_name || "Client";
+  const preview = String(message.content || "").slice(0, 200);
+
+  if (authorSide === "firm") {
+    if (companies?.[0]?.user_id) {
+      await sbInsert("notifications_firm", {
+        user_id: companies[0].user_id,
+        firm_id: thread.firm_id,
+        company_id: thread.company_id,
+        type: "message_new",
+        title: `💬 Message de ${firmName} : ${thread.subject}`,
+        body: preview,
+        link: `/dashboard`,
+        metadata: { thread_id: thread.id, message_id: message.id }
+      });
+      // Email
+      if (process.env.RESEND_API_KEY && companies?.[0]?.billing_email) {
+        try {
+          await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: process.env.FROM_EMAIL || "noreply@iobill.online",
+              to: companies[0].billing_email,
+              subject: `[${firmName}] ${thread.subject}`,
+              html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+<h3 style="color:#d4a843">💬 Nouveau message de votre cabinet</h3>
+<p><strong>${firmName}</strong> dans <strong>« ${String(thread.subject).replace(/</g,"&lt;")} »</strong> :</p>
+<blockquote style="border-left:3px solid #d4a843;padding-left:12px;color:#555;">${String(preview).replace(/</g,"&lt;")}</blockquote>
+<p><a href="${process.env.APP_URL || "https://app.iobill.online"}" style="background:#d4a843;color:#0b0c10;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Voir le message →</a></p>
+<p style="font-size:11px;color:#aaa">— IO BILL</p></div>`
+            })
+          });
+        } catch (e) { console.warn("[notifyNewMessage] email fail:", e.message); }
+      }
+    }
+  } else {
+    const fms = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, select: "user_id" });
+    for (const m of (fms || [])) {
+      await sbInsert("notifications_firm", {
+        user_id: m.user_id,
+        firm_id: thread.firm_id,
+        company_id: thread.company_id,
+        type: "message_new",
+        title: `💬 Message de ${companyName} : ${thread.subject}`,
+        body: preview,
+        link: `/firm/messages?thread=${thread.id}`,
+        metadata: { thread_id: thread.id, message_id: message.id }
+      });
+    }
+  }
 }
