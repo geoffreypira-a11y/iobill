@@ -157,10 +157,6 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 <Icon name="warning" className="nav-icon" />
                 Signalements
               </NavLink>
-              <NavLink to="/firm/marathon" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
-                <Icon name="invoice" className="nav-icon" />
-                Mode Marathon
-              </NavLink>
               <NavLink to="/firm/messages" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                 <Icon name="handshake" className="nav-icon" />
                 Messages

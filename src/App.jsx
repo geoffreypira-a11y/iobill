@@ -381,7 +381,6 @@ function FirmLayout({ session, onSignOut }) {
         <nav style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
           <a href="/firm" className="nav-item">📊 Tableau de bord</a>
           <a href="/firm/clients" className="nav-item">👥 Mes clients</a>
-          <a href="/firm/marathon" className="nav-item">🚀 Mode Marathon</a>
           <a href="/firm/messages" className="nav-item">💬 Messages</a>
           <a href="/firm/settings" className="nav-item">⚙ Réglages cabinet</a>
         </nav>

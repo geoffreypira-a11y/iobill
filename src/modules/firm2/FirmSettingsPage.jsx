@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { sb } from "../../lib/supabase.js";
-import { useMyFirm } from "../../components/FirmMode.jsx";
 
 /**
  * FirmSettingsPage — page "⚙ Réglages cabinet"
@@ -12,7 +11,8 @@ import { useMyFirm } from "../../components/FirmMode.jsx";
  *   5) Notifications
  */
 export function FirmSettingsPage({ token, user }) {
-  const { firm, loading: firmLoading, refresh } = useMyFirm(token, user);
+  const [firm, setFirm] = useState(null);
+  const [firmLoading, setFirmLoading] = useState(true);
   const [form, setForm] = useState({
     name: "",
     siret: "",
@@ -31,6 +31,38 @@ export function FirmSettingsPage({ token, user }) {
   const [savedAt, setSavedAt] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState("");
+
+  // Charger le firm dont l'utilisateur est membre
+  async function loadFirm() {
+    if (!token || !user?.id) { setFirmLoading(false); return; }
+    setFirmLoading(true);
+    try {
+      const memberships = await sb.select(token, "firm_members", {
+        filter: `user_id=eq.${user.id}`,
+        select: "firm_id,role",
+        limit: 1
+      });
+      console.log("[FirmSettings] memberships:", memberships);
+      if (memberships && memberships[0]) {
+        const f = await sb.selectOne(
+          token,
+          "accounting_firms",
+          `id=eq.${memberships[0].firm_id}`,
+          "*"
+        );
+        console.log("[FirmSettings] firm:", f);
+        setFirm(f);
+      } else {
+        setFirm(null);
+      }
+    } catch (e) {
+      console.warn("[FirmSettings] loadFirm error:", e);
+      setFirm(null);
+    }
+    setFirmLoading(false);
+  }
+
+  useEffect(() => { loadFirm(); }, [token, user?.id]);
 
   // Hydrate le formulaire à partir du firm
   useEffect(() => {
@@ -65,7 +97,7 @@ export function FirmSettingsPage({ token, user }) {
       const r = await sb.update(token, "accounting_firms", `id=eq.${firm.id}`, form);
       if (r && r[0]) {
         setSavedAt(new Date());
-        refresh && refresh();
+        loadFirm();
       } else {
         setError("Erreur lors de la sauvegarde");
       }
