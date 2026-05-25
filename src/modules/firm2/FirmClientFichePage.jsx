@@ -601,7 +601,7 @@ function VatTab({ token, firm, company }) {
 
     const purchases = await sb.select(token, "purchases", {
       filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}`,
-      select: "id,number,vendor_name,issue_date,status,vat_breakdown,vat_total_cents,subtotal_ht_cents,total_ttc_cents,pdf_url",
+      select: "id,number,vendor_name,issue_date,status,vat_breakdown,vat_total_cents,subtotal_ht_cents,total_ttc_cents,file_url,file_mime",
       order: "issue_date.desc"
     });
 
@@ -714,20 +714,38 @@ function VatSummaryTable({ periodData, token }) {
 
   async function openPdf(doc, e) {
     e.stopPropagation();
-    const storedUrl = doc.facturx_pdf_url || doc.pdf_url;
-    if (!storedUrl) return;
     setLoadingPdf(doc.id);
     try {
-      const r = await fetch("/api/firm-invitation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
-      });
-      const j = await r.json();
-      if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
-      else window.open(storedUrl, "_blank", "noopener,noreferrer");
-    } catch {
-      window.open(storedUrl, "_blank", "noopener,noreferrer");
+      // Cas 1 : facture (URL complète stockée dans facturx_pdf_url ou pdf_url)
+      const invoiceUrl = doc.facturx_pdf_url || doc.pdf_url;
+      // Cas 2 : achat (path stocké dans file_url, bucket purchases-attach)
+      const purchasePath = doc.file_url;
+
+      if (invoiceUrl) {
+        // Facture : refresh via /api/firm-invitation pdf_refresh_url
+        const r = await fetch("/api/firm-invitation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: invoiceUrl } })
+        });
+        const j = await r.json();
+        if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
+        else window.open(invoiceUrl, "_blank", "noopener,noreferrer");
+      } else if (purchasePath) {
+        // Achat : construire URL Storage et refresh via attachment_signed_url
+        const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+        const fakeStoredUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${purchasePath}`;
+        const r = await fetch("/api/firm-invitation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: fakeStoredUrl } })
+        });
+        const j = await r.json();
+        if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
+        else alert("Impossible d'ouvrir le document (" + (j.error || r.status) + ")");
+      }
+    } catch (err) {
+      alert("Erreur : " + (err.message || err));
     }
     setLoadingPdf(null);
   }
@@ -791,7 +809,7 @@ function VatSummaryTable({ periodData, token }) {
                       if (bd.length === 1) rateLabel = `${bd[0].rate}%`;
                       else if (bd.length > 1) rateLabel = "Multi";
                       else if (ht > 0 && vat > 0) rateLabel = `~${Math.round((vat / ht) * 100)}%`;
-                      const pdfUrl = d.facturx_pdf_url || d.pdf_url || null;
+                      const pdfUrl = d.facturx_pdf_url || d.pdf_url || d.file_url || null;
                       const docLabel = kind === "invoices"
                         ? (d.number || "Sans n°")
                         : `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`;
