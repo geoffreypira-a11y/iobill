@@ -366,31 +366,82 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     </div>
 
     {previewUrl && (
-      <PdfPreviewModal url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
+      <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
     )}
     </>
   );
 }
 
-function PdfPreviewModal({ url, title, onClose }) {
+function PdfPreviewModal({ token, url, title, onClose }) {
+  const [freshUrl, setFreshUrl] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setFreshUrl(null);
+    setError("");
+
+    (async () => {
+      try {
+        const r = await fetch("/api/refresh-pdf-url", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ stored_url: url })
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error || `Erreur ${r.status}`);
+        }
+        const j = await r.json();
+        if (!alive) return;
+        if (!j.pdf_url) throw new Error("Pas d'URL retournée");
+        setFreshUrl(j.pdf_url);
+      } catch (e) {
+        if (!alive) return;
+        // Fallback : on tente l'URL stockée (peut marcher si pas encore expirée)
+        console.warn("[PdfPreview] refresh failed, fallback to stored URL:", e.message);
+        setFreshUrl(url);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [token, url]);
+
   return (
     <div style={pdfModalBackdrop} onClick={onClose}>
       <div className="card" style={pdfModalBox} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <strong style={{ fontSize: 13 }}>{title}</strong>
           <div style={{ display: "flex", gap: 6 }}>
-            <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>
-              ⤴ Ouvrir
-            </a>
+            {freshUrl && (
+              <a href={freshUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>
+                ⤴ Ouvrir
+              </a>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={onClose}>✕ Fermer</button>
           </div>
         </div>
         <div style={{ flex: 1, background: "#fff", overflow: "hidden" }}>
-          <iframe
-            src={url}
-            title={title}
-            style={{ width: "100%", height: "100%", border: "none" }}
-          />
+          {!freshUrl && !error && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: 13 }}>
+              ⏳ Chargement du document…
+            </div>
+          )}
+          {error && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--red)", fontSize: 13, padding: 20, textAlign: "center" }}>
+              ⚠️ {error}
+            </div>
+          )}
+          {freshUrl && (
+            <iframe
+              src={freshUrl}
+              title={title}
+              style={{ width: "100%", height: "100%", border: "none" }}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -496,7 +547,7 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
     </div>
 
     {previewUrl && (
-      <PdfPreviewModal url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
+      <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
     )}
     </>
   );
