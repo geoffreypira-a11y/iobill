@@ -43,10 +43,11 @@ import { FirmInviteClientPage } from "./modules/firm2/FirmInviteClientPage.jsx";
 import { FirmClientFichePage } from "./modules/firm2/FirmClientFichePage.jsx";
 import { FirmAnomaliesPage } from "./modules/firm2/FirmAnomaliesPage.jsx";
 import { FirmMessagesPage } from "./modules/firm2/FirmMessagesPage.jsx";
+// v8.33 : vraie page Réglages cabinet
+import { FirmSettingsPage } from "./modules/firm2/FirmSettingsPage.jsx";
 // Placeholders pour Sprint 5-7 encore en dev
 import {
-  FirmMarathonPage,
-  FirmSettingsPage
+  FirmMarathonPage
 } from "./modules/firm2/FirmPlaceholders.jsx";
 import { MyFirmSettingsPage } from "./modules/settings/MyFirmSettingsPage.jsx";
 import { MySignalsPage } from "./modules/signals/MySignalsPage.jsx";
