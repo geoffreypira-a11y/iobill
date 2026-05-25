@@ -603,29 +603,48 @@ function VatTab({ token, firm, company }) {
       select: "vat_breakdown,vat_total_cents,subtotal_ht_cents"
     });
 
-    // Ventilation TVA par taux
+    // Ventilation TVA par taux + fallback sur les totaux pour les factures
+    // sans vat_breakdown (ancien format, factures importées, etc.)
     const ventilation = {};
+    let totalCollectee = 0;
+    let totalDeductible = 0;
+    let totalBaseCollectee = 0;
+    let totalBaseDeductible = 0;
+
     for (const inv of (invoices || [])) {
-      for (const v of (inv.vat_breakdown || [])) {
-        const k = `${v.rate}%`;
-        ventilation[k] = ventilation[k] || { rate: v.rate, collectee: 0, deductible: 0, baseCollectee: 0, baseDeductible: 0 };
-        ventilation[k].collectee += v.vat_cents || 0;
-        ventilation[k].baseCollectee += v.base_cents || 0;
-      }
-    }
-    for (const p of (purchases || [])) {
-      for (const v of (p.vat_breakdown || [])) {
-        const k = `${v.rate}%`;
-        ventilation[k] = ventilation[k] || { rate: v.rate, collectee: 0, deductible: 0, baseCollectee: 0, baseDeductible: 0 };
-        ventilation[k].deductible += v.vat_cents || 0;
-        ventilation[k].baseDeductible += v.base_cents || 0;
+      const breakdown = inv.vat_breakdown || [];
+      if (breakdown.length > 0) {
+        // Cas normal : on a le détail par taux
+        for (const v of breakdown) {
+          const k = `${v.rate}%`;
+          ventilation[k] = ventilation[k] || { rate: v.rate, collectee: 0, deductible: 0, baseCollectee: 0, baseDeductible: 0 };
+          ventilation[k].collectee += v.vat_cents || 0;
+          ventilation[k].baseCollectee += v.base_cents || 0;
+          totalCollectee += v.vat_cents || 0;
+          totalBaseCollectee += v.base_cents || 0;
+        }
+      } else {
+        // Fallback : pas de détail, on agrège seulement aux totaux
+        totalCollectee += inv.vat_total_cents || 0;
+        totalBaseCollectee += inv.subtotal_ht_cents || 0;
       }
     }
 
-    let totalCollectee = 0, totalDeductible = 0;
-    for (const v of Object.values(ventilation)) {
-      totalCollectee += v.collectee;
-      totalDeductible += v.deductible;
+    for (const p of (purchases || [])) {
+      const breakdown = p.vat_breakdown || [];
+      if (breakdown.length > 0) {
+        for (const v of breakdown) {
+          const k = `${v.rate}%`;
+          ventilation[k] = ventilation[k] || { rate: v.rate, collectee: 0, deductible: 0, baseCollectee: 0, baseDeductible: 0 };
+          ventilation[k].deductible += v.vat_cents || 0;
+          ventilation[k].baseDeductible += v.base_cents || 0;
+          totalDeductible += v.vat_cents || 0;
+          totalBaseDeductible += v.base_cents || 0;
+        }
+      } else {
+        totalDeductible += p.vat_total_cents || 0;
+        totalBaseDeductible += p.subtotal_ht_cents || 0;
+      }
     }
 
     setPeriodData({
@@ -634,6 +653,8 @@ function VatTab({ token, firm, company }) {
       ventilation: Object.values(ventilation).sort((a, b) => b.rate - a.rate),
       totalCollectee,
       totalDeductible,
+      totalBaseCollectee,
+      totalBaseDeductible,
       totalNet: totalCollectee - totalDeductible
     });
   }
@@ -672,8 +693,28 @@ function VatTab({ token, firm, company }) {
                 <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(v.deductible || 0)}</td>
               </tr>
             ))}
-            {periodData.ventilation.length === 0 && (
-              <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>Aucune ventilation TVA sur la période</td></tr>
+            {/* Ligne "sans détail par taux" si on a un total agrégé mais pas de breakdown */}
+            {(periodData.totalCollectee > 0 || periodData.totalDeductible > 0) &&
+             (periodData.totalCollectee - periodData.ventilation.reduce((s, v) => s + (v.collectee || 0), 0) > 0 ||
+              periodData.totalDeductible - periodData.ventilation.reduce((s, v) => s + (v.deductible || 0), 0) > 0) && (
+              <tr style={{ color: "var(--muted2)" }}>
+                <td><em>Sans détail</em></td>
+                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                  {fmtEUR((periodData.totalBaseCollectee || 0) - periodData.ventilation.reduce((s, v) => s + (v.baseCollectee || 0), 0))}
+                </td>
+                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                  {fmtEUR(periodData.totalCollectee - periodData.ventilation.reduce((s, v) => s + (v.collectee || 0), 0))}
+                </td>
+                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                  {fmtEUR((periodData.totalBaseDeductible || 0) - periodData.ventilation.reduce((s, v) => s + (v.baseDeductible || 0), 0))}
+                </td>
+                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                  {fmtEUR(periodData.totalDeductible - periodData.ventilation.reduce((s, v) => s + (v.deductible || 0), 0))}
+                </td>
+              </tr>
+            )}
+            {periodData.ventilation.length === 0 && periodData.totalCollectee === 0 && periodData.totalDeductible === 0 && (
+              <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>Aucune activité TVA sur la période</td></tr>
             )}
           </tbody>
           <tfoot>

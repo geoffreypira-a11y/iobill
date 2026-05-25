@@ -4,15 +4,18 @@ import { sb } from "../../lib/supabase.js";
 import { fmtDate } from "../../lib/helpers.js";
 
 /**
- * MySignalsPage — v8.27.3
+ * MySignalsPage — v8.28.1 (fix PDF signed URL expirée)
  * Page /signals côté abonné Pro : liste tous les signalements du cabinet
+ *
+ * v8.28.1 : régénère l'URL signée à la demande via l'API (au lieu d'utiliser
+ *           l'URL stockée en base qui peut être expirée). Évite l'erreur
+ *           "InvalidJWT exp claim timestamp check failed".
  */
 export function MySignalsPage({ token, user, company }) {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("open");
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [previewTitle, setPreviewTitle] = useState("");
+  const [previewTarget, setPreviewTarget] = useState(null); // { type, id, title }
 
   async function load() {
     if (!company?.id) { setLoading(false); return; }
@@ -104,33 +107,107 @@ export function MySignalsPage({ token, user, company }) {
             key={s.id} 
             signal={s} 
             onAction={action}
-            onPreview={(url, title) => { setPreviewUrl(url); setPreviewTitle(title); }}
+            onPreview={(type, id, title, fallbackUrl) => setPreviewTarget({ type, id, title, fallbackUrl })}
           />
         ))
       )}
 
-      {previewUrl && (
-        <PdfPreviewModal url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
+      {previewTarget && (
+        <PdfPreviewModal
+          token={token}
+          target={previewTarget}
+          onClose={() => setPreviewTarget(null)}
+        />
       )}
     </div>
   );
 }
 
-function PdfPreviewModal({ url, title, onClose }) {
+function PdfPreviewModal({ token, target, onClose }) {
+  const [url, setUrl] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    setError("");
+
+    (async () => {
+      try {
+        console.log("[pdf preview] target =", target);
+        // target.type peut être "invoice", "quote", "purchase"
+        // - invoice → POST /api/generate-facturx avec invoice_id
+        // - quote   → POST /api/generate-quote-pdf avec quote_id
+        // - purchase → pas d'endpoint de regénération (le PDF est uploadé tel quel),
+        //              on fallback sur l'URL stockée
+        let endpoint = null;
+        let bodyKey = null;
+        if (target.type === "invoice") {
+          endpoint = "/api/generate-facturx";
+          bodyKey = "invoice_id";
+        } else if (target.type === "quote") {
+          endpoint = "/api/generate-quote-pdf";
+          bodyKey = "quote_id";
+        }
+
+        if (endpoint) {
+          console.log("[pdf preview] appel API", endpoint, "avec", { [bodyKey]: target.id, preview: true });
+          const r = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ [bodyKey]: target.id, preview: true })
+          });
+          console.log("[pdf preview] status", r.status);
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            console.log("[pdf preview] erreur API", j);
+            throw new Error(j.error || `Erreur ${r.status}`);
+          }
+          const j = await r.json();
+          console.log("[pdf preview] réponse", j);
+          if (!alive) return;
+          if (!j.pdf_url) throw new Error("Pas d'URL retournée");
+          setUrl(j.pdf_url);
+        } else if (target.fallbackUrl) {
+          // Purchase : pas d'endpoint de regénération, on tente l'URL stockée
+          console.log("[pdf preview] fallback URL stockée:", target.fallbackUrl);
+          setUrl(target.fallbackUrl);
+        } else {
+          throw new Error("Type de document non supporté");
+        }
+      } catch (e) {
+        if (alive) setError(e.message || "Erreur de chargement");
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [token, target?.type, target?.id]);
+
   return (
     <div style={pdfModalBackdrop} onClick={onClose}>
       <div className="card" style={pdfModalBox} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-          <strong style={{ fontSize: 13 }}>{title}</strong>
+          <strong style={{ fontSize: 13 }}>{target.title}</strong>
           <div style={{ display: "flex", gap: 6 }}>
-            <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>
-              ⤴ Ouvrir
-            </a>
+            {url && (
+              <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>
+                ⤴ Ouvrir
+              </a>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={onClose}>✕ Fermer</button>
           </div>
         </div>
-        <div style={{ flex: 1, background: "#fff", overflow: "hidden" }}>
-          <iframe src={url} title={title} style={{ width: "100%", height: "100%", border: "none" }} />
+        <div style={{ flex: 1, background: "#fff", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {error ? (
+            <div style={{ color: "#c00", padding: 24, textAlign: "center" }}>
+              ⚠ Impossible de charger le document<br/>
+              <span style={{ fontSize: 12, opacity: 0.7 }}>{error}</span>
+            </div>
+          ) : !url ? (
+            <div style={{ color: "#666", padding: 24 }}>Chargement du PDF...</div>
+          ) : (
+            <iframe src={url} title={target.title} style={{ width: "100%", height: "100%", border: "none" }} />
+          )}
         </div>
       </div>
     </div>
@@ -148,13 +225,25 @@ function SignalCard({ signal, onAction, onPreview }) {
     setResponseText("");
   }
 
-  const pdfUrl = signal._targetDoc?.facturx_pdf_url || signal._targetDoc?.pdf_url || null;
+  const storedPdfUrl = signal._targetDoc?.facturx_pdf_url || signal._targetDoc?.pdf_url || null;
+  const hasPdf = !!storedPdfUrl;
   const docLabel = signal._targetDoc?.number || signal._targetDoc?.vendor_name || "";
   const targetLabel = signal.target_type === "invoice" 
     ? `Facture ${docLabel}` 
     : signal.target_type === "purchase" 
       ? `Achat ${docLabel}` 
       : "Document";
+
+  // Wrapper qui appelle onPreview avec les params nécessaires à la regénération
+  const handlePreview = () => {
+    console.log("[signal preview]", {
+      target_type: signal.target_type,
+      target_id: signal.target_id,
+      storedPdfUrl,
+      hasPdf
+    });
+    onPreview(signal.target_type, signal.target_id, targetLabel, storedPdfUrl);
+  };
 
   return (
     <div className="card" style={{ padding: 14, marginBottom: 8, border: `1px solid ${SEV_BORDER[signal.severity]}` }}>
@@ -187,10 +276,10 @@ function SignalCard({ signal, onAction, onPreview }) {
         </div>
         {signal.status === "open" && !responding && (
           <div style={{ display: "flex", gap: 4 }}>
-            {pdfUrl && (
+            {hasPdf && (
               <button 
                 className="btn btn-ghost btn-sm" 
-                onClick={() => onPreview(pdfUrl, targetLabel)}
+                onClick={handlePreview}
                 title="Voir le document"
               >
                 👁 Voir
@@ -200,10 +289,10 @@ function SignalCard({ signal, onAction, onPreview }) {
             <button className="btn btn-primary btn-sm" onClick={() => onAction(signal.id, "signal_resolve")}>✅ Résoudre</button>
           </div>
         )}
-        {signal.status !== "open" && pdfUrl && (
+        {signal.status !== "open" && hasPdf && (
           <button 
             className="btn btn-ghost btn-sm" 
-            onClick={() => onPreview(pdfUrl, targetLabel)}
+            onClick={handlePreview}
             title="Voir le document"
           >
             👁 Voir
