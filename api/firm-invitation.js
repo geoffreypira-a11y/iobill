@@ -929,19 +929,29 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     if (!thread_id || !path) return json(res, 400, { error: "thread_id et path requis" });
 
     // Charger le thread
-    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, select: "id,firm_id,company_id", limit: 1 });
+    const threads = await sbSelect("firm_threads", { id: `eq.${thread_id}`, limit: 1 });
     const thread = threads && threads[0];
     if (!thread) return json(res, 404, { error: "Thread introuvable" });
 
-    // Vérifier l'accès
+    // Vérifier l'accès (même pattern que thread_close, qui fonctionne)
     let allowed = false;
-    const fm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
+    const fm = await sbSelect("firm_members", { firm_id: `eq.${thread.firm_id}`, user_id: `eq.${user.id}`, limit: 1 });
     if (fm && fm.length > 0) allowed = true;
     if (!allowed) {
-      const co = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
+      const co = await sbSelect("companies", { id: `eq.${thread.company_id}`, user_id: `eq.${user.id}`, limit: 1 });
       if (co && co.length > 0) allowed = true;
     }
-    if (!allowed) return json(res, 403, { error: "Accès refusé" });
+    if (!allowed) {
+      console.warn("[attachment_signed_url] Accès refusé", {
+        user_id: user.id,
+        thread_id: thread.id,
+        thread_firm_id: thread.firm_id,
+        thread_company_id: thread.company_id,
+        fm_count: fm?.length,
+        fm_raw: fm
+      });
+      return json(res, 403, { error: "Accès refusé" });
+    }
 
     // Vérifier que le path appartient bien à ce thread (sécurité supplémentaire :
     // empêche un user qui a accès au thread A de demander une PJ du thread B)
