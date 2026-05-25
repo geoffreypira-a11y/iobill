@@ -3,6 +3,7 @@ import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
+import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 
 const VAT_STATUTS = {
   draft:       { label: "Brouillon",  cls: "badge-muted",  icon: "📝" },
@@ -120,48 +121,19 @@ export function VatPage({ token, company }) {
 
     let cancelled = false;
     (async () => {
-      const formType = company.vat_regime === "simplified" ? "CA12" : "CA3";
-      const existing = returns.find(
-        (r) =>
-          r.period_start === currentPeriod.start &&
-          r.period_end === currentPeriod.end &&
-          (r.status === "in_progress" || r.status === "ready")
-      );
-      const payload = {
-        company_id: company.id,
-        period_start: currentPeriod.start,
-        period_end: currentPeriod.end,
-        form_type: formType,
-        collected_vat_cents: stats.collectedVAT,
-        deductible_vat_cents: stats.deductibleVAT,
-        net_vat_cents: stats.netVAT,
-        taxable_base_cents: stats.collectedHT,
-        breakdown: stats.breakdown,
-        status: "in_progress",
-        snapshot: {
-          invoices_count: invoices.filter((i) => {
-            const d = new Date(i.issue_date);
-            return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
-          }).length,
-          purchases_count: purchases.filter((p) => {
-            const d = new Date(p.issue_date);
-            return d >= new Date(currentPeriod.start) && d <= new Date(currentPeriod.end);
-          }).length,
-          updated_at: new Date().toISOString()
+      // Utilise le helper centralisé (gère le crédit reporté, le statut, etc.)
+      const synced = await syncVatCurrentPeriod(token, company);
+      if (cancelled || !synced) return;
+      // MAJ du state local
+      setReturns((prev) => {
+        const idx = prev.findIndex((x) => x.id === synced.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = synced;
+          return next;
         }
-      };
-      let result;
-      if (existing) {
-        result = await sb.update(token, "vat_returns", `id=eq.${existing.id}`, payload);
-      } else {
-        result = await sb.insert(token, "vat_returns", payload);
-      }
-      if (cancelled || !result || !result[0]) return;
-      if (existing) {
-        setReturns((prev) => prev.map((x) => (x.id === existing.id ? result[0] : x)));
-      } else {
-        setReturns((prev) => [result[0], ...prev]);
-      }
+        return [synced, ...prev];
+      });
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -248,6 +220,18 @@ export function VatPage({ token, company }) {
     });
     if (updated && updated[0]) {
       setReturns(returns.map((x) => (x.id === r.id ? updated[0] : x)));
+      // Si cette déclaration laisse un crédit, on recalcule la déclaration en cours
+      // pour que le crédit soit reporté automatiquement
+      if ((updated[0].credit_remaining_cents || 0) > 0) {
+        const synced = await syncVatCurrentPeriod(token, company);
+        if (synced) {
+          setReturns((prev) => {
+            const exists = prev.find((x) => x.id === synced.id);
+            if (exists) return prev.map((x) => (x.id === synced.id ? synced : x));
+            return [synced, ...prev];
+          });
+        }
+      }
     }
   }
 
@@ -365,12 +349,31 @@ export function VatPage({ token, company }) {
           </div>
           <div className="kpi">
             <div className="kpi-label">TVA à reverser</div>
-            <div className={"kpi-val " + (stats.netVAT > 0 ? "orange" : "green")}>
-              {fmtEUR(Math.max(0, stats.netVAT))}
-            </div>
-            <div className="kpi-foot">
-              {stats.netVAT < 0 && <span style={{ color: "var(--green)" }}>Crédit de TVA : {fmtEUR(-stats.netVAT)}</span>}
-            </div>
+            {(() => {
+              const creditIn = existingCurrent?.credit_carried_in_cents || 0;
+              const rawNet = stats.collectedVAT - stats.deductibleVAT - creditIn;
+              const toPay = Math.max(0, rawNet);
+              const creditOut = Math.max(0, -rawNet);
+              return (
+                <>
+                  <div className={"kpi-val " + (toPay > 0 ? "orange" : "green")}>
+                    {fmtEUR(toPay)}
+                  </div>
+                  <div className="kpi-foot">
+                    {creditIn > 0 && (
+                      <div style={{ color: "var(--muted2)", fontSize: 10 }}>
+                        Crédit reporté utilisé : {fmtEUR(creditIn)}
+                      </div>
+                    )}
+                    {creditOut > 0 && (
+                      <span style={{ color: "var(--green)" }}>
+                        Crédit de TVA : {fmtEUR(creditOut)} (à reporter sur la prochaine déclaration)
+                      </span>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -415,30 +418,43 @@ export function VatPage({ token, company }) {
               <tr>
                 <th>Période</th>
                 <th>Type</th>
-                <th style={{ textAlign: "right" }}>CA HT</th>
                 <th style={{ textAlign: "right" }}>TVA collectée</th>
+                <th style={{ textAlign: "right" }}>TVA déductible</th>
+                <th style={{ textAlign: "right" }}>Crédit TVA</th>
                 <th style={{ textAlign: "right" }}>TVA à payer</th>
                 <th>Statut</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {returns.map((r) => (
-                <tr key={r.id}>
-                  <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
-                  <td className="mono">{r.form_type}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.taxable_base_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.collected_vat_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right", color: r.net_vat_cents > 0 ? "var(--orange)" : "var(--green)" }}>
-                    {fmtEUR(Math.max(0, r.net_vat_cents))}
-                  </td>
-                  <td><span className={"badge " + VAT_STATUTS[r.status]?.cls}>{VAT_STATUTS[r.status]?.icon} {VAT_STATUTS[r.status]?.label}</span></td>
-                  <td style={{ textAlign: "right" }}>
-                    {r.status === "ready" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
-                    {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
-                  </td>
-                </tr>
-              ))}
+              {returns.map((r) => {
+                const creditIn = r.credit_carried_in_cents || 0;
+                const creditOut = r.credit_remaining_cents || 0;
+                const toPay = r.net_vat_cents || 0;
+                return (
+                  <tr key={r.id}>
+                    <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
+                    <td className="mono">{r.form_type}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.collected_vat_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.deductible_vat_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right", color: "var(--green)" }}>
+                      {creditOut > 0
+                        ? <>{fmtEUR(creditOut)} <span style={{ fontSize: 10, color: "var(--muted)" }}>(à reporter)</span></>
+                        : creditIn > 0
+                          ? <span style={{ color: "var(--muted)" }}>−{fmtEUR(creditIn)} <span style={{ fontSize: 10 }}>(utilisé)</span></span>
+                          : <span style={{ color: "var(--muted)" }}>—</span>}
+                    </td>
+                    <td className="mono" style={{ textAlign: "right", color: toPay > 0 ? "var(--orange)" : "var(--muted)" }}>
+                      {toPay > 0 ? fmtEUR(toPay) : "—"}
+                    </td>
+                    <td><span className={"badge " + VAT_STATUTS[r.status]?.cls}>{VAT_STATUTS[r.status]?.icon} {VAT_STATUTS[r.status]?.label}</span></td>
+                    <td style={{ textAlign: "right" }}>
+                      {r.status === "ready" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
+                      {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

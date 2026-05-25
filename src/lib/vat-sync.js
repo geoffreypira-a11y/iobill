@@ -114,6 +114,26 @@ export async function syncVatCurrentPeriod(token, company) {
       return existingRow;
     }
 
+    // 5) Récupérer le crédit reporté de la dernière déclaration "declared" ou "paid"
+    //    antérieure à la période courante (uniquement les déclarations OFFICIELLES,
+    //    conformément au CGI : un crédit n'est reportable qu'une fois déclaré).
+    let creditCarriedIn = 0;
+    const lastDeclared = await sb.select(token, "vat_returns", {
+      filter: `company_id=eq.${company.id}&status=in.(declared,paid)&period_end=lt.${period.start}`,
+      order: "period_end.desc",
+      limit: 1
+    });
+    if (lastDeclared && lastDeclared[0] && lastDeclared[0].credit_remaining_cents > 0) {
+      creditCarriedIn = lastDeclared[0].credit_remaining_cents;
+    }
+
+    // 6) Calcul net + crédit restant
+    //    net_a_payer = max(0, collected - deductible - credit_reporté)
+    //    credit_remaining = max(0, deductible + credit_reporté - collected)
+    const rawNet = collectedVAT - deductibleVAT - creditCarriedIn;
+    const netToPay = Math.max(0, rawNet);
+    const creditRemaining = Math.max(0, -rawNet);
+
     const formType = company.vat_regime === "simplified" ? "CA12" : "CA3";
     const payload = {
       company_id: company.id,
@@ -122,9 +142,11 @@ export async function syncVatCurrentPeriod(token, company) {
       form_type: formType,
       collected_vat_cents: collectedVAT,
       deductible_vat_cents: deductibleVAT,
-      net_vat_cents: collectedVAT - deductibleVAT,
+      net_vat_cents: netToPay,
       taxable_base_cents: collectedHT,
       breakdown,
+      credit_carried_in_cents: creditCarriedIn,
+      credit_remaining_cents: creditRemaining,
       status: "in_progress",
       snapshot: {
         invoices_count: invs.length,
