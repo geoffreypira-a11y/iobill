@@ -6,19 +6,9 @@ import { Icon } from "../../components/Icon.jsx";
 /**
  * FirmDashboardPage — Dashboard Cabinet Comptable.
  *
- * v8.30.2 — Fix colonnes firm_messages :
- *   - author_role → author_side
- *   - read_at → read_by_firm
+ * v8.34 — Retrait Mode Marathon (déprécié) + fix lien client (link_id au lieu de company_id)
  *
- * Charte IO BILL identique à celle de l'abonné Pro :
- *   - Classes natives : .page, .page-header, .page-title, .page-sub,
- *     .card, .card-pad, .btn, .btn-primary, .btn-ghost, .btn-sm,
- *     .kpi, .kpi-grid, .kpi-label, .kpi-val,
- *     .badge, .badge-red, .badge-gold (badge-orange uniquement pour
- *     les signalements de severity=warning)
- *   - Variables CSS : var(--gold), var(--red), var(--muted), var(--muted2),
- *     var(--text), var(--card), var(--border), var(--border2), var(--bg)
- *   - Police : Syne (titres, KPI valeurs) et DM Sans (body) — hérité
+ * Charte IO BILL identique à celle de l'abonné Pro.
  */
 export function FirmDashboardPage({ token, user, firm }) {
   const [loading, setLoading] = useState(true);
@@ -95,10 +85,15 @@ export function FirmDashboardPage({ token, user, firm }) {
   });
 
   const kpis = {
-    toValidate: 0,
     signalsOpen: signals.length,
     deadlines7: 0,
     unreadMessages: messages.length
+  };
+
+  // Helper : trouver le link_id à partir d'un company_id (pour bonnes URLs)
+  const linkIdFor = (companyId) => {
+    const c = clients.find((x) => x.company_id === companyId);
+    return c?.link_id || companyId;
   };
 
   return (
@@ -119,14 +114,8 @@ export function FirmDashboardPage({ token, user, firm }) {
         </div>
       </div>
 
-      {/* KPIs — utilise les classes natives .kpi-grid, .kpi, .kpi-label, .kpi-val */}
+      {/* KPIs — 3 cartes : Signalements, Échéances, Messages */}
       <div className="kpi-grid">
-        <KpiCard
-          label="À valider"
-          value={kpis.toValidate}
-          colorClass="gold"
-          hint="Mode Marathon — Sprint 5"
-        />
         <KpiCard
           label="Signalements ouverts"
           value={kpis.signalsOpen}
@@ -142,38 +131,9 @@ export function FirmDashboardPage({ token, user, firm }) {
         <KpiCard
           label="Messages non lus"
           value={kpis.unreadMessages}
-          colorClass={kpis.unreadMessages > 0 ? "gold" : "gold"}
+          colorClass="gold"
           hint="Côté clients"
         />
-      </div>
-
-      {/* CTA Mode Marathon */}
-      <div className="card card-pad" style={{ marginTop: 22, marginBottom: 22 }}>
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12
-        }}>
-          <div>
-            <div style={{
-              fontFamily: "Syne, sans-serif",
-              fontSize: 16,
-              fontWeight: 700,
-              color: "var(--gold)",
-              marginBottom: 4
-            }}>
-              🚀 Mode Marathon
-            </div>
-            <div style={{ fontSize: 12, color: "var(--muted2)" }}>
-              Validez les factures de vos clients en série, ultra-rapide.
-            </div>
-          </div>
-          <button className="btn btn-ghost btn-sm" disabled title="Disponible au Sprint 5">
-            Bientôt disponible
-          </button>
-        </div>
       </div>
 
       {/* Grid 2 colonnes : Mes clients + Messages récents */}
@@ -181,6 +141,7 @@ export function FirmDashboardPage({ token, user, firm }) {
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
         gap: 22,
+        marginTop: 22,
         marginBottom: 22
       }}>
         {/* Mes clients */}
@@ -216,7 +177,7 @@ export function FirmDashboardPage({ token, user, firm }) {
               {clients.slice(0, 5).map((c) => (
                 <Link
                   key={c.link_id}
-                  to={`/firm/clients/${c.company_id}`}
+                  to={`/firm/clients/${c.link_id}`}
                   className="card"
                   style={{
                     padding: "10px 12px",
@@ -360,7 +321,7 @@ export function FirmDashboardPage({ token, user, firm }) {
               return (
                 <Link
                   key={s.id}
-                  to={`/firm/clients/${s.company_id}`}
+                  to={`/firm/clients/${linkIdFor(s.company_id)}`}
                   className="card"
                   style={{
                     padding: "10px 12px",
