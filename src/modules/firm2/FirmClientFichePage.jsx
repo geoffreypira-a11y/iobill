@@ -712,44 +712,30 @@ function VatTab({ token, firm, company }) {
  */
 function VatSummaryTable({ periodData, token }) {
   const [expanded, setExpanded] = React.useState(null); // "invoices" | "purchases" | null
-  const [loadingPdf, setLoadingPdf] = React.useState(null);
+  const [preview, setPreview] = React.useState(null); // { url, title } | null
 
-  async function openPdf(doc, e) {
+  function openPdf(doc, e) {
     e.stopPropagation();
-    setLoadingPdf(doc.id);
-    try {
-      // Cas 1 : facture (URL complète stockée dans facturx_pdf_url ou pdf_url)
-      const invoiceUrl = doc.facturx_pdf_url || doc.pdf_url;
-      // Cas 2 : achat (path stocké dans file_url, bucket purchases-attach)
-      const purchasePath = doc.file_url;
+    // Cas 1 : facture (URL complète stockée dans facturx_pdf_url ou pdf_url)
+    const invoiceUrl = doc.facturx_pdf_url || doc.pdf_url;
+    // Cas 2 : achat (path stocké dans file_url, bucket purchases-attach)
+    const purchasePath = doc.file_url;
 
-      if (invoiceUrl) {
-        // Facture : refresh via /api/firm-invitation pdf_refresh_url
-        const r = await fetch("/api/firm-invitation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: invoiceUrl } })
-        });
-        const j = await r.json();
-        if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
-        else window.open(invoiceUrl, "_blank", "noopener,noreferrer");
-      } else if (purchasePath) {
-        // Achat : construire URL Storage et refresh via attachment_signed_url
-        const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-        const fakeStoredUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${purchasePath}`;
-        const r = await fetch("/api/firm-invitation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: fakeStoredUrl } })
-        });
-        const j = await r.json();
-        if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
-        else alert("Impossible d'ouvrir le document (" + (j.error || r.status) + ")");
-      }
-    } catch (err) {
-      alert("Erreur : " + (err.message || err));
+    if (invoiceUrl) {
+      // Facture : on passe l'URL stockée au modal qui se charge de la rafraîchir
+      setPreview({
+        url: invoiceUrl,
+        title: `Facture ${doc.number || ""}`
+      });
+    } else if (purchasePath) {
+      // Achat : construire URL Storage (le modal la rafraîchit ensuite)
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+      const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${purchasePath}`;
+      setPreview({
+        url: storedUrl,
+        title: `Achat ${doc.vendor_name || ""}${doc.number ? ` · ${doc.number}` : ""}`
+      });
     }
-    setLoadingPdf(null);
   }
 
   const invoices = periodData.invoices || [];
@@ -828,11 +814,10 @@ function VatSummaryTable({ periodData, token }) {
                             {pdfUrl && (
                               <button
                                 onClick={(e) => openPdf(d, e)}
-                                disabled={loadingPdf === d.id}
                                 className="btn btn-ghost btn-xs"
                                 style={{ fontSize: 10, padding: "3px 8px" }}
                               >
-                                {loadingPdf === d.id ? "⏳" : "👁 Voir"}
+                                👁 Voir
                               </button>
                             )}
                           </td>
@@ -854,6 +839,7 @@ function VatSummaryTable({ periodData, token }) {
   }
 
   return (
+    <>
     <table style={tableStyle}>
       <thead>
         <tr>
@@ -904,6 +890,15 @@ function VatSummaryTable({ periodData, token }) {
         </tr>
       </tfoot>
     </table>
+    {preview && (
+      <PdfPreviewModal
+        token={token}
+        url={preview.url}
+        title={preview.title}
+        onClose={() => setPreview(null)}
+      />
+    )}
+    </>
   );
 }
 
