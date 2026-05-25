@@ -661,6 +661,18 @@ function VatTab({ token, firm, company }) {
       invoices: invoices || [],
       purchases: purchases || []
     });
+    console.log("[VAT cabinet v834]", {
+      invoices_count: (invoices || []).length,
+      purchases_count: (purchases || []).length,
+      totalCollectee,
+      totalDeductible,
+      sample_invoice: invoices?.[0] ? {
+        number: invoices[0].number,
+        vat_total_cents: invoices[0].vat_total_cents,
+        subtotal_ht_cents: invoices[0].subtotal_ht_cents,
+        vat_breakdown: invoices[0].vat_breakdown
+      } : null
+    });
   }
 
   useEffect(() => { load(); }, [company?.id]);
@@ -677,85 +689,8 @@ function VatTab({ token, firm, company }) {
       </div>
 
       <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
-        <table style={tableStyle}>
-          <thead>
-            <tr>
-              <th>Taux</th>
-              <th style={{ textAlign: "right" }}>Base HT collectée</th>
-              <th style={{ textAlign: "right" }}>TVA collectée</th>
-              <th style={{ textAlign: "right" }}>Base HT déductible</th>
-              <th style={{ textAlign: "right" }}>TVA déductible</th>
-            </tr>
-          </thead>
-          <tbody>
-            {periodData.ventilation.map((v) => (
-              <tr key={v.rate}>
-                <td><strong>{v.rate}%</strong></td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(v.baseCollectee || 0)}</td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(v.collectee || 0)}</td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(v.baseDeductible || 0)}</td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(v.deductible || 0)}</td>
-              </tr>
-            ))}
-            {/* Ligne "sans détail par taux" si on a un total agrégé mais pas de breakdown */}
-            {(periodData.totalCollectee > 0 || periodData.totalDeductible > 0) &&
-             (periodData.totalCollectee - periodData.ventilation.reduce((s, v) => s + (v.collectee || 0), 0) > 0 ||
-              periodData.totalDeductible - periodData.ventilation.reduce((s, v) => s + (v.deductible || 0), 0) > 0) && (
-              <tr style={{ color: "var(--muted2)" }}>
-                <td><em>Sans détail</em></td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                  {fmtEUR((periodData.totalBaseCollectee || 0) - periodData.ventilation.reduce((s, v) => s + (v.baseCollectee || 0), 0))}
-                </td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                  {fmtEUR(periodData.totalCollectee - periodData.ventilation.reduce((s, v) => s + (v.collectee || 0), 0))}
-                </td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                  {fmtEUR((periodData.totalBaseDeductible || 0) - periodData.ventilation.reduce((s, v) => s + (v.baseDeductible || 0), 0))}
-                </td>
-                <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                  {fmtEUR(periodData.totalDeductible - periodData.ventilation.reduce((s, v) => s + (v.deductible || 0), 0))}
-                </td>
-              </tr>
-            )}
-            {periodData.ventilation.length === 0 && periodData.totalCollectee === 0 && periodData.totalDeductible === 0 && (
-              <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>Aucune activité TVA sur la période</td></tr>
-            )}
-          </tbody>
-          <tfoot>
-            <tr style={{ fontWeight: 700, background: "rgba(255,255,255,0.02)" }}>
-              <td>TOTAL</td>
-              <td colSpan={2} style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(periodData.totalCollectee)}</td>
-              <td colSpan={2} style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(periodData.totalDeductible)}</td>
-            </tr>
-            <tr style={{ background: "rgba(212,168,67,0.08)", fontWeight: 700 }}>
-              <td colSpan={4} style={{ textAlign: "right" }}>TVA nette {periodData.totalNet >= 0 ? "à reverser" : "crédit"}</td>
-              <td style={{ textAlign: "right", fontFamily: "monospace", color: "var(--gold)" }}>{fmtEUR(Math.abs(periodData.totalNet))}</td>
-            </tr>
-          </tfoot>
-        </table>
+        <VatSummaryTable periodData={periodData} token={token} />
       </div>
-
-      {/* Factures émises */}
-      <VatDocList
-        title="Factures émises"
-        subtitle="TVA collectée"
-        emptyText="Aucune facture émise sur la période"
-        docs={periodData.invoices}
-        kind="invoice"
-        accentColor="var(--gold)"
-        token={token}
-      />
-
-      {/* Achats */}
-      <VatDocList
-        title="Achats"
-        subtitle="TVA déductible"
-        emptyText="Aucun achat sur la période"
-        docs={periodData.purchases}
-        kind="purchase"
-        accentColor="var(--green)"
-        token={token}
-      />
 
       <div className="card card-pad" style={{ fontSize: 11, color: "var(--muted2)" }}>
         <strong>URSSAF</strong> · Cotisations sociales auto-entrepreneurs : 12,3% (vente) ou 21,2% (services) du CA encaissé.
@@ -766,17 +701,19 @@ function VatTab({ token, firm, company }) {
 }
 
 /**
- * VatDocList — Liste accordéon de documents (factures ou achats)
- * Chaque ligne se déplie pour montrer HT / Taux / TVA / Voir document
+ * VatSummaryTable — Tableau récap TVA cabinet
+ * Structure :
+ *   - 1 ligne "Factures émises" (toujours affichée, dépliable)
+ *   - 1 ligne "Achats" (toujours affichée, dépliable)
+ *   - 1 ligne TOTAL
+ *   - 1 ligne TVA nette à reverser / crédit
  */
-function VatDocList({ title, subtitle, emptyText, docs, kind, accentColor, token }) {
-  const [expandedId, setExpandedId] = React.useState(null);
+function VatSummaryTable({ periodData, token }) {
+  const [expanded, setExpanded] = React.useState(null); // "invoices" | "purchases" | null
   const [loadingPdf, setLoadingPdf] = React.useState(null);
 
-  const totalHT = docs.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
-  const totalVAT = docs.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
-
-  async function openPdf(doc) {
+  async function openPdf(doc, e) {
+    e.stopPropagation();
     const storedUrl = doc.facturx_pdf_url || doc.pdf_url;
     if (!storedUrl) return;
     setLoadingPdf(doc.id);
@@ -787,146 +724,166 @@ function VatDocList({ title, subtitle, emptyText, docs, kind, accentColor, token
         body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
       });
       const j = await r.json();
-      if (r.ok && j.pdf_url) {
-        window.open(j.pdf_url, "_blank", "noopener,noreferrer");
-      } else {
-        // Fallback : tente l'URL stockée (peut marcher si publique, sinon erreur visible)
-        window.open(storedUrl, "_blank", "noopener,noreferrer");
-      }
+      if (r.ok && j.pdf_url) window.open(j.pdf_url, "_blank", "noopener,noreferrer");
+      else window.open(storedUrl, "_blank", "noopener,noreferrer");
     } catch {
       window.open(storedUrl, "_blank", "noopener,noreferrer");
     }
     setLoadingPdf(null);
   }
 
-  return (
-    <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
-      <div style={{
-        padding: "12px 16px",
-        borderBottom: "1px solid var(--border2)",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center"
-      }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>
-            {title} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({docs.length})</span>
-          </div>
-          <div style={{ fontSize: 10, color: "var(--muted2)", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            {subtitle}
-          </div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>Total HT</div>
-          <div style={{ fontSize: 13, fontFamily: "monospace" }}>{fmtEUR(totalHT)}</div>
-          <div style={{ fontSize: 11, color: accentColor, fontFamily: "monospace", marginTop: 2 }}>
-            {fmtEUR(totalVAT)} TVA
-          </div>
-        </div>
-      </div>
+  const invoices = periodData.invoices || [];
+  const purchases = periodData.purchases || [];
+  const invHT = invoices.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
+  const invVAT = invoices.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
+  const purHT = purchases.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
+  const purVAT = purchases.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
 
-      {docs.length === 0 ? (
-        <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-          {emptyText}
-        </div>
-      ) : (
-        <div>
-          {docs.map((d) => {
-            const expanded = expandedId === d.id;
-            const ht = d.subtotal_ht_cents || 0;
-            const vat = d.vat_total_cents || 0;
-            // Calcul taux global : si breakdown existe, on prend le taux le plus représenté.
-            // Sinon, on calcule taux = vat / ht.
-            const breakdown = d.vat_breakdown || [];
-            let rateLabel = "—";
-            if (breakdown.length === 1) {
-              rateLabel = `${breakdown[0].rate}%`;
-            } else if (breakdown.length > 1) {
-              rateLabel = "Multi";
-            } else if (ht > 0 && vat > 0) {
-              const rate = Math.round((vat / ht) * 100);
-              rateLabel = `~${rate}%`;
-            }
-            const pdfUrl = d.facturx_pdf_url || d.pdf_url || null;
-            const label = kind === "invoice"
-              ? (d.number || "Sans n°")
-              : `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`;
-            return (
-              <div key={d.id} style={{ borderBottom: "1px solid var(--border2)" }}>
-                <div
-                  onClick={() => setExpandedId(expanded ? null : d.id)}
-                  style={{
-                    padding: "10px 16px",
-                    display: "grid",
-                    gridTemplateColumns: "20px 1fr auto auto auto",
-                    gap: 12,
-                    alignItems: "center",
-                    cursor: "pointer",
-                    background: expanded ? "rgba(255,255,255,0.02)" : "transparent"
-                  }}
-                >
-                  <span style={{ color: "var(--muted)", fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 500 }}>{label}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                      {fmtDate(d.issue_date)}
-                      {d.status && <> · <span style={{ textTransform: "capitalize" }}>{d.status}</span></>}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--muted2)", minWidth: 90, textAlign: "right" }}>
-                    {fmtEUR(ht)} HT
-                  </div>
-                  <div style={{ fontSize: 11, fontFamily: "monospace", color: accentColor, minWidth: 90, textAlign: "right" }}>
-                    {fmtEUR(vat)}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--muted)", minWidth: 40, textAlign: "right" }}>
-                    {rateLabel}
-                  </div>
+  function CategoryRow({ kind, label, docs, ht, vat, accentColor }) {
+    const isExpanded = expanded === kind;
+    const hasItems = docs.length > 0;
+    return (
+      <>
+        <tr
+          onClick={() => setExpanded(isExpanded ? null : kind)}
+          style={{
+            cursor: "pointer",
+            background: isExpanded ? "rgba(255,255,255,0.03)" : "transparent",
+            fontWeight: 500
+          }}
+        >
+          <td style={{ width: 24, textAlign: "center", color: "var(--muted)" }}>
+            {isExpanded ? "▾" : "▸"}
+          </td>
+          <td>
+            <div style={{ fontSize: 13 }}>{label}</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+              {docs.length} document{docs.length > 1 ? "s" : ""}
+            </div>
+          </td>
+          <td style={{ textAlign: "right", fontFamily: "monospace", fontSize: 13 }}>
+            {hasItems ? fmtEUR(ht) : <span style={{ color: "var(--muted2)" }}>—</span>}
+          </td>
+          <td style={{ textAlign: "right", fontFamily: "monospace", fontSize: 13, color: hasItems ? accentColor : "var(--muted2)" }}>
+            {hasItems ? fmtEUR(vat) : "—"}
+          </td>
+        </tr>
+        {isExpanded && (
+          <tr>
+            <td colSpan={4} style={{ padding: 0, background: "rgba(0,0,0,0.18)" }}>
+              {hasItems ? (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      <th style={{ padding: "6px 12px 6px 40px", textAlign: "left" }}>Document</th>
+                      <th style={{ padding: "6px 12px", textAlign: "right" }}>HT</th>
+                      <th style={{ padding: "6px 12px", textAlign: "right", width: 50 }}>Taux</th>
+                      <th style={{ padding: "6px 12px", textAlign: "right" }}>TVA</th>
+                      <th style={{ padding: "6px 12px", width: 110 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.map((d) => {
+                      const ht = d.subtotal_ht_cents || 0;
+                      const vat = d.vat_total_cents || 0;
+                      const bd = d.vat_breakdown || [];
+                      let rateLabel = "—";
+                      if (bd.length === 1) rateLabel = `${bd[0].rate}%`;
+                      else if (bd.length > 1) rateLabel = "Multi";
+                      else if (ht > 0 && vat > 0) rateLabel = `~${Math.round((vat / ht) * 100)}%`;
+                      const pdfUrl = d.facturx_pdf_url || d.pdf_url || null;
+                      const docLabel = kind === "invoices"
+                        ? (d.number || "Sans n°")
+                        : `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`;
+                      return (
+                        <tr key={d.id} style={{ borderTop: "1px solid var(--border2)" }}>
+                          <td style={{ padding: "8px 12px 8px 40px" }}>
+                            <div style={{ fontSize: 12, fontWeight: 500 }}>{docLabel}</div>
+                            <div style={{ fontSize: 10, color: "var(--muted)" }}>{fmtDate(d.issue_date)}{d.status ? ` · ${d.status}` : ""}</div>
+                          </td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12 }}>{fmtEUR(ht)}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, color: "var(--muted)" }}>{rateLabel}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12, color: accentColor }}>{fmtEUR(vat)}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                            {pdfUrl && (
+                              <button
+                                onClick={(e) => openPdf(d, e)}
+                                disabled={loadingPdf === d.id}
+                                className="btn btn-ghost btn-xs"
+                                style={{ fontSize: 10, padding: "3px 8px" }}
+                              >
+                                {loadingPdf === d.id ? "⏳" : "👁 Voir"}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ padding: "16px 40px", color: "var(--muted)", fontSize: 11, fontStyle: "italic" }}>
+                  Aucun document sur la période
                 </div>
-                {expanded && (
-                  <div style={{
-                    padding: "8px 16px 14px 36px",
-                    background: "rgba(0,0,0,0.15)",
-                    fontSize: 11,
-                    display: "flex",
-                    gap: 20,
-                    alignItems: "center",
-                    flexWrap: "wrap"
-                  }}>
-                    <div>
-                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>HT</div>
-                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{fmtEUR(ht)}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>Taux</div>
-                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{rateLabel}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>TVA</div>
-                      <div style={{ fontFamily: "monospace", fontSize: 13, color: accentColor }}>{fmtEUR(vat)}</div>
-                    </div>
-                    <div>
-                      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>TTC</div>
-                      <div style={{ fontFamily: "monospace", fontSize: 13 }}>{fmtEUR(d.total_ttc_cents || 0)}</div>
-                    </div>
-                    {pdfUrl && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openPdf(d); }}
-                        disabled={loadingPdf === d.id}
-                        className="btn btn-ghost btn-xs"
-                        style={{ marginLeft: "auto", fontSize: 11 }}
-                      >
-                        {loadingPdf === d.id ? "⏳ Chargement..." : "👁 Voir document"}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+              )}
+            </td>
+          </tr>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <table style={tableStyle}>
+      <thead>
+        <tr>
+          <th style={{ width: 24 }}></th>
+          <th>Catégorie</th>
+          <th style={{ textAlign: "right" }}>Base HT</th>
+          <th style={{ textAlign: "right" }}>TVA</th>
+        </tr>
+      </thead>
+      <tbody>
+        <CategoryRow
+          kind="invoices"
+          label="Factures émises"
+          docs={invoices}
+          ht={invHT}
+          vat={invVAT}
+          accentColor="var(--gold)"
+        />
+        <CategoryRow
+          kind="purchases"
+          label="Achats"
+          docs={purchases}
+          ht={purHT}
+          vat={purVAT}
+          accentColor="var(--green)"
+        />
+      </tbody>
+      <tfoot>
+        <tr style={{ fontWeight: 700, background: "rgba(255,255,255,0.02)" }}>
+          <td></td>
+          <td>TOTAL</td>
+          <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Collecté {fmtEUR(invHT)}</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Déductible {fmtEUR(purHT)}</div>
+          </td>
+          <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+            <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 400 }}>Coll. {fmtEUR(invVAT)}</div>
+            <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 400 }}>Déd. {fmtEUR(purVAT)}</div>
+          </td>
+        </tr>
+        <tr style={{ background: "rgba(212,168,67,0.08)", fontWeight: 700 }}>
+          <td colSpan={3} style={{ textAlign: "right" }}>
+            TVA nette {(invVAT - purVAT) >= 0 ? "à reverser" : "crédit"}
+          </td>
+          <td style={{ textAlign: "right", fontFamily: "monospace", color: "var(--gold)" }}>
+            {fmtEUR(Math.abs(invVAT - purVAT))}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
