@@ -3,6 +3,7 @@ import { Routes, Route, Outlet, Navigate } from "react-router-dom";
 import { sb } from "./lib/supabase.js";
 import { saveSession, loadSession, clearSession } from "./lib/session.js";
 import { Sidebar } from "./components/Sidebar.jsx";
+import { LogoFull } from "./components/Logo.jsx";
 import { VatReminderBanner } from "./components/VatReminderBanner.jsx";
 
 // Core
@@ -369,38 +370,135 @@ function FirmLayout({ session, onSignOut }) {
   return (
     <div className="shell">
       <OfflineBanner />
-      <aside className="sidebar" style={{ minWidth: 220 }}>
+      <aside className="sidebar" style={{ minWidth: 220, display: "flex", flexDirection: "column" }}>
+        {/* Haut : Logo IO BILL + Owl's Industry + "Mode Cabinet" */}
         <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--border2)" }}>
-          <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 20, color: "var(--gold)" }}>
-            IO BILL
-          </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+          <LogoFull size={36} />
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, paddingLeft: 4 }}>
             Mode Cabinet
           </div>
         </div>
+
+        {/* Menu */}
         <nav style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
           <a href="/firm" className="nav-item">📊 Tableau de bord</a>
           <a href="/firm/clients" className="nav-item">👥 Mes clients</a>
           <a href="/firm/messages" className="nav-item">💬 Messages</a>
           <a href="/firm/settings" className="nav-item">⚙ Réglages cabinet</a>
         </nav>
-        <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border2)" }}>
-          <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 8, padding: "0 8px" }}>
-            {session.user?.email}
-          </div>
-          <button
-            onClick={onSignOut}
-            className="btn btn-ghost btn-sm"
-            style={{ width: "100%", justifyContent: "center" }}
-          >
-            Se déconnecter
-          </button>
-        </div>
+
+        {/* Bas : carte cabinet (logo + nom + email) */}
+        <FirmSidebarFooter token={session.token} user={session.user} onSignOut={onSignOut} />
       </aside>
       <main className="content">
         <Outlet />
         <LegalFooter />
       </main>
+    </div>
+  );
+}
+
+/**
+ * FirmSidebarFooter — affiche en bas de la sidebar cabinet :
+ *   - le logo du cabinet (si uploadé)
+ *   - le nom du cabinet
+ *   - l'email de l'utilisateur connecté
+ *   - le bouton se déconnecter
+ */
+function FirmSidebarFooter({ token, user, onSignOut }) {
+  const [firm, setFirm] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!token || !user?.id) return;
+    let alive = true;
+    (async () => {
+      try {
+        const memberships = await sb.select(token, "firm_members", {
+          filter: `user_id=eq.${user.id}`,
+          select: "firm_id",
+          order: "",
+          limit: 1
+        });
+        if (memberships && memberships[0]) {
+          const f = await sb.selectOne(
+            token,
+            "accounting_firms",
+            `id=eq.${memberships[0].firm_id}`,
+            "id,name,logo_url"
+          );
+          if (alive) setFirm(f);
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [token, user?.id]);
+
+  return (
+    <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border2)" }}>
+      {firm && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px",
+          marginBottom: 8,
+          background: "rgba(255,255,255,0.02)",
+          borderRadius: 6
+        }}>
+          {firm.logo_url ? (
+            <img
+              src={firm.logo_url}
+              alt={firm.name}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 4,
+                objectFit: "contain",
+                background: "#fff",
+                padding: 2,
+                flexShrink: 0
+              }}
+            />
+          ) : (
+            <div style={{
+              width: 32,
+              height: 32,
+              borderRadius: 4,
+              background: "rgba(212,168,67,0.15)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 14,
+              fontWeight: 700,
+              color: "var(--gold)",
+              flexShrink: 0
+            }}>
+              {firm.name ? firm.name.charAt(0).toUpperCase() : "?"}
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 12,
+              fontWeight: 600,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap"
+            }}>
+              {firm.name || "Mon cabinet"}
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 8, padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {user?.email}
+      </div>
+      <button
+        onClick={onSignOut}
+        className="btn btn-ghost btn-sm"
+        style={{ width: "100%", justifyContent: "center" }}
+      >
+        Se déconnecter
+      </button>
     </div>
   );
 }

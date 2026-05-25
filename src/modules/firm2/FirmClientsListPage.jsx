@@ -29,7 +29,7 @@ function ClientsList({ token, firm, isPreview }) {
   const navigate = useNavigate();
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all"); // all | pending | accepted
+  const [filter, setFilter] = useState("accepted"); // all | pending | accepted — défaut Actifs
 
   async function load() {
     if (isPreview) {
