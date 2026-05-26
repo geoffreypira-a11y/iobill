@@ -594,18 +594,18 @@ function TicketCard({ t, expanded, editNotes, onToggle, onStatusChange, onNotesC
 
       {expanded && (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border, rgba(255,255,255,0.06))" }}>
-          <label className="form-label" style={{ fontSize: 11 }}>Notes admin (privées)</label>
+          <label className="form-label" style={{ fontSize: 11 }}>💬 Réponse (visible par l'auteur du ticket)</label>
           <textarea
             className="form-input"
             rows={3}
             value={editNotes ?? t.admin_notes ?? ""}
             onChange={(e) => onNotesChange(e.target.value)}
-            placeholder="Notes internes sur ce ticket..."
+            placeholder="Tapez votre réponse au client/cabinet ici…"
             style={{ fontSize: 12 }}
           />
           <div style={{ marginTop: 6, textAlign: "right" }}>
             <button className="btn btn-primary" onClick={onSaveNotes} style={{ fontSize: 12 }}>
-              Enregistrer les notes
+              Envoyer la réponse
             </button>
           </div>
         </div>
