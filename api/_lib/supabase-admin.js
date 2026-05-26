@@ -104,6 +104,19 @@ export async function authenticate(req) {
   return { user, company, token };
 }
 
+// Helper v8.35 : variante de authenticate() qui n'exige PAS de company.
+// Utilisée par les endpoints accessibles aux membres cabinet (qui n'ont
+// pas de companies.id), p.ex. /api/admin actions create_ticket / my_tickets.
+// company est null si l'user n'a pas de company.
+export async function authenticateAllowNoCompany(req) {
+  const token = extractToken(req);
+  if (!token) return { error: "Missing token", status: 401 };
+  const user = await sbAdmin.getUserFromToken(token);
+  if (!user || !user.id) return { error: "Invalid token", status: 401 };
+  const company = await sbAdmin.getCompanyForUser(user.id);
+  return { user, company: company || null, token };
+}
+
 // Helper: reponse JSON
 export function json(res, status, data) {
   res.statusCode = status;

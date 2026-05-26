@@ -530,6 +530,16 @@ function TicketCard({ t, expanded, editNotes, onToggle, onStatusChange, onNotesC
     resolved: "🟢 Résolu", closed: "⚫ Fermé"
   };
   const tt = TYPES[t.type] || { label: t.type, color: "var(--muted)" };
+
+  // v8.35 : un ticket peut venir d'un abonné (company) OU d'un cabinet (firm)
+  const isFirmTicket = !!t.firm;
+  const senderName = isFirmTicket
+    ? (t.firm?.name || "—")
+    : (t.company?.legal_name || "—");
+  const senderEmail = isFirmTicket
+    ? (t.firm?.email_contact || "")
+    : (t.company?.email || "");
+
   return (
     <div className="card" style={{ marginBottom: 10, padding: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -537,8 +547,23 @@ function TicketCard({ t, expanded, editNotes, onToggle, onStatusChange, onNotesC
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ color: tt.color, fontSize: 12, fontWeight: 600 }}>{tt.label}</span>
             <span style={{ fontSize: 11, color: "var(--muted)" }}>· {fmtDate(t.created_at)}</span>
-            <span style={{ fontSize: 12 }}>· {t.company?.legal_name || "—"}</span>
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>{t.company?.email || ""}</span>
+            <span style={{ fontSize: 12 }}>· {senderName}</span>
+            {senderEmail && (
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{senderEmail}</span>
+            )}
+            {isFirmTicket && (
+              <span style={{
+                fontSize: 10,
+                padding: "2px 6px",
+                borderRadius: 4,
+                background: "rgba(212,168,67,0.15)",
+                color: "var(--gold, #d4a843)",
+                fontWeight: 600,
+                letterSpacing: 0.3
+              }}>
+                CABINET
+              </span>
+            )}
           </div>
           <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>
             {expanded ? t.message : t.message.slice(0, 200) + (t.message.length > 200 ? "…" : "")}

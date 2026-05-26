@@ -10,7 +10,7 @@
 //   tickets_list, tickets_count_new, tickets_update,
 //   tickets_delete, tickets_purge_closed
 
-import { sbAdmin, authenticate } from "./_lib/supabase-admin.js";
+import { sbAdmin, authenticate, authenticateAllowNoCompany } from "./_lib/supabase-admin.js";
 
 function json(res, status, body) {
   res.status(status);
@@ -35,15 +35,28 @@ async function handleRequest(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
 
-  const auth = await authenticate(req);
+  // v8.35 : on accepte les membres cabinet (sans company) pour les actions
+  // ouvertes (create_ticket, my_tickets). Le check `company` est ensuite
+  // imposé uniquement pour les actions admin (plus bas).
+  const auth = await authenticateAllowNoCompany(req);
   if (auth.error) return json(res, auth.status || 401, { error: auth.error });
   const { user, company } = auth;
-  if (!company) return json(res, 403, { error: "Company introuvable" });
 
   const { action, payload } = req.body || {};
   if (!action) return json(res, 400, { error: "action requise" });
 
+  // Helper local : retrouve le firm_id d'un user si c'est un membre cabinet.
+  async function getUserFirmId(userId) {
+    const fms = await sbAdmin.select("firm_members", {
+      filter: `user_id=eq.${userId}`,
+      select: "firm_id",
+      limit: 1
+    });
+    return fms && fms[0] ? fms[0].firm_id : null;
+  }
+
   // ─── ACTION OUVERTE : création ticket ─────────────────────
+  // v8.35 : accepte côté abonné (company) ET côté cabinet (firm_member).
   if (action === "create_ticket") {
     const { type, message } = payload || {};
     if (!TICKET_TYPES.includes(type)) {
@@ -55,18 +68,31 @@ async function handleRequest(req, res) {
     const clean = message.trim();
     if (clean.length === 0) return json(res, 400, { error: "Message vide" });
     if (clean.length > 5000) return json(res, 400, { error: "Message trop long (max 5000)" });
-    const inserted = await sbAdmin.insert("support_tickets", {
+
+    // Décide la source : company (abonné) ou firm (membre cabinet)
+    const ticketData = {
       user_id: user.id,
-      company_id: company.id,
       type,
       message: clean,
       status: "new"
-    });
+    };
+    if (company) {
+      ticketData.company_id = company.id;
+    } else {
+      const firmId = await getUserFirmId(user.id);
+      if (!firmId) {
+        return json(res, 403, { error: "Aucune company ni cabinet associé à cet utilisateur" });
+      }
+      ticketData.firm_id = firmId;
+    }
+
+    const inserted = await sbAdmin.insert("support_tickets", ticketData);
     if (!inserted || !inserted[0]) return json(res, 500, { error: "Échec création" });
     return json(res, 200, { ok: true, ticket: inserted[0] });
   }
 
   // ─── ACTION OUVERTE : liste de MES tickets (utilisateur) ───
+  // Marche pour tout le monde (user_id), abonné ou cabinet.
   if (action === "my_tickets") {
     const tickets = await sbAdmin.select("support_tickets", {
       filter: `user_id=eq.${user.id}`,
@@ -77,6 +103,10 @@ async function handleRequest(req, res) {
   }
 
   // ─── À PARTIR D'ICI : ADMIN UNIQUEMENT ────────────────────
+  // On exige une company pour le check is_admin.
+  if (!company) {
+    return json(res, 403, { error: "Accès refusé (admin uniquement)" });
+  }
   if (company.is_admin !== true) {
     return json(res, 403, { error: "Accès refusé (admin uniquement)" });
   }
@@ -298,8 +328,9 @@ async function handleRequest(req, res) {
       const tickets = await sbAdmin.select("support_tickets", {
         filter, order: "created_at.desc", limit: 200
       });
+      // Enrichissement company
       const cMap = {};
-      const cIds = [...new Set((tickets || []).map((t) => t.company_id))];
+      const cIds = [...new Set((tickets || []).map((t) => t.company_id).filter(Boolean))];
       if (cIds.length > 0) {
         const cs = await sbAdmin.select("companies", {
           filter: `id=in.(${cIds.join(",")})`,
@@ -307,8 +338,22 @@ async function handleRequest(req, res) {
         });
         for (const c of cs || []) cMap[c.id] = c;
       }
+      // v8.35 : enrichissement cabinet pour les tickets ouverts par un firm_member
+      const fMap = {};
+      const fIds = [...new Set((tickets || []).map((t) => t.firm_id).filter(Boolean))];
+      if (fIds.length > 0) {
+        const fs = await sbAdmin.select("accounting_firms", {
+          filter: `id=in.(${fIds.join(",")})`,
+          select: "id,name,email_contact,siret"
+        });
+        for (const f of fs || []) fMap[f.id] = f;
+      }
       return json(res, 200, {
-        tickets: (tickets || []).map((t) => ({ ...t, company: cMap[t.company_id] || null }))
+        tickets: (tickets || []).map((t) => ({
+          ...t,
+          company: t.company_id ? (cMap[t.company_id] || null) : null,
+          firm: t.firm_id ? (fMap[t.firm_id] || null) : null
+        }))
       });
     }
 

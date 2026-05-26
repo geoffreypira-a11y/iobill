@@ -1,16 +1,31 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 
 /**
  * FirmSettingsPage — page "⚙ Réglages cabinet"
- * Sections :
- *   1) Identité du cabinet
- *   2) Coordonnées
- *   3) Identifiants comptable
- *   4) Logo
- *   5) Notifications
+ *
+ * Onglets (v8.35) :
+ *   - cabinet  → Identité, Coordonnées, Identifiants, Logo, Notifications
+ *   - tickets  → Mes tickets de support (identique à l'abonné)
  */
+const VALID_TABS = ["cabinet", "tickets"];
+
 export function FirmSettingsPage({ token, user }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = VALID_TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "cabinet";
+  const [tab, setTab] = useState(initialTab);
+
+  // Sync onglet ↔ URL pour deep-link et back/forward
+  useEffect(() => {
+    if (searchParams.get("tab") !== tab) {
+      const next = new URLSearchParams(searchParams);
+      next.set("tab", tab);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   const [firm, setFirm] = useState(null);
   const [firmLoading, setFirmLoading] = useState(true);
   const [form, setForm] = useState({
@@ -160,25 +175,43 @@ export function FirmSettingsPage({ token, user }) {
 
   return (
     <div className="page">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
         <h1 className="page-title" style={{ margin: 0 }}>⚙ Réglages cabinet</h1>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {savedAt && (
-            <span style={{ fontSize: 11, color: "var(--green)" }}>
-              ✓ Enregistré {savedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          )}
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? "Enregistrement…" : "💾 Enregistrer"}
-          </button>
-        </div>
+        {tab === "cabinet" && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {savedAt && (
+              <span style={{ fontSize: 11, color: "var(--green)" }}>
+                ✓ Enregistré {savedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? "Enregistrement…" : "💾 Enregistrer"}
+            </button>
+          </div>
+        )}
       </div>
 
-      {error && (
-        <div className="card card-pad" style={{ background: "rgba(255,68,68,0.08)", border: "1px solid rgba(255,68,68,0.3)", marginBottom: 16, fontSize: 12, color: "var(--red)" }}>
-          {error}
-        </div>
+      {/* Onglets v8.35 */}
+      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border2, rgba(255,255,255,0.08))", marginBottom: 20 }}>
+        <TabButton active={tab === "cabinet"} onClick={() => setTab("cabinet")}>
+          ⚙ Cabinet
+        </TabButton>
+        <TabButton active={tab === "tickets"} onClick={() => setTab("tickets")}>
+          🎫 Mes tickets
+        </TabButton>
+      </div>
+
+      {tab === "tickets" && (
+        <FirmTicketsTab token={token} />
       )}
+
+      {tab === "cabinet" && (
+        <>
+          {error && (
+            <div className="card card-pad" style={{ background: "rgba(255,68,68,0.08)", border: "1px solid rgba(255,68,68,0.3)", marginBottom: 16, fontSize: 12, color: "var(--red)" }}>
+              {error}
+            </div>
+          )}
 
       {/* SECTION 1 — Identité */}
       <Section title="Identité du cabinet" icon="🏢">
@@ -271,6 +304,8 @@ export function FirmSettingsPage({ token, user }) {
           {saving ? "Enregistrement…" : "💾 Enregistrer toutes les modifications"}
         </button>
       </div>
+        </>
+      )}
     </div>
   );
 }
@@ -341,3 +376,165 @@ function ToggleField({ label, hint, checked, onChange }) {
 }
 
 const loaderStyle = { padding: 40, textAlign: "center", color: "var(--muted)" };
+
+// ═══════════════════════════════════════════════════════════════════
+// TabButton — bouton d'onglet (v8.35)
+// ═══════════════════════════════════════════════════════════════════
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: "transparent",
+        border: 0,
+        borderBottom: active ? "2px solid var(--gold, #d4a843)" : "2px solid transparent",
+        color: active ? "var(--gold, #d4a843)" : "var(--muted)",
+        padding: "10px 16px",
+        fontSize: 13,
+        fontWeight: active ? 600 : 500,
+        cursor: "pointer",
+        marginBottom: -1,
+        transition: "color 0.15s, border-color 0.15s"
+      }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = "var(--muted)"; }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FirmTicketsTab — suivi des tickets cabinet (v8.35)
+// Identique au TicketsTab de l'abonné, mais branché sur l'API admin
+// /api/admin?action=my_tickets qui filtre par user_id donc marche aussi
+// pour les membres cabinet.
+// ═══════════════════════════════════════════════════════════════════
+function FirmTicketsTab({ token }) {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const TYPES = {
+    incident: { label: "🔴 Incident", color: "var(--red, #e0556a)" },
+    amelioration: { label: "💡 Amélioration", color: "var(--gold, #d4a843)" },
+    question: { label: "❓ Question", color: "var(--muted2, #888)" },
+    facturation: { label: "💳 Facturation", color: "var(--orange)" }
+  };
+  const STATUS_LABEL = {
+    new: { label: "🔴 Nouveau", desc: "Le support n'a pas encore pris en charge" },
+    in_progress: { label: "🟡 En cours", desc: "Le support travaille sur ce ticket" },
+    resolved: { label: "🟢 Résolu", desc: "Solution apportée — vérifiez et fermez si OK" },
+    closed: { label: "⚫ Fermé", desc: "Ticket clos" }
+  };
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "my_tickets" })
+      });
+      const j = await r.json();
+      setTickets(j.tickets || []);
+    } catch {
+      setTickets([]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [token]);
+
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Mes tickets de support</h3>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+            Historique de vos demandes et leur statut. Pour ouvrir un nouveau ticket,
+            utilisez le menu en bas à gauche → "🎫 Signaler un problème".
+          </div>
+        </div>
+        <button className="btn btn-ghost" onClick={load} style={{ fontSize: 12 }}>
+          🔄 Actualiser
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>Chargement…</div>
+      ) : tickets.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>
+          <div style={{ fontSize: 30, marginBottom: 8 }}>🎫</div>
+          Aucun ticket pour le moment.
+          <div style={{ fontSize: 11, marginTop: 8 }}>
+            Si vous rencontrez un problème, n'hésitez pas à nous le signaler.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {tickets.map((t) => {
+            const tt = TYPES[t.type] || { label: t.type, color: "var(--muted)" };
+            const ss = STATUS_LABEL[t.status] || { label: t.status, desc: "" };
+            return (
+              <div key={t.id} style={{
+                padding: 12,
+                border: "1px solid var(--border, rgba(255,255,255,0.08))",
+                borderRadius: 8,
+                background: t.status === "new" ? "rgba(212,168,67,0.04)" : "transparent"
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ color: tt.color, fontSize: 12, fontWeight: 600 }}>{tt.label}</span>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>· {fmtTicketDate(t.created_at)}</span>
+                  </div>
+                  <span style={{
+                    fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                    background: "rgba(255,255,255,0.05)"
+                  }}>
+                    {ss.label}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap", marginBottom: 6 }}>
+                  {t.message}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                  {ss.desc}
+                </div>
+                {t.admin_notes && (
+                  <div style={{
+                    marginTop: 10, padding: 10,
+                    background: "rgba(62,207,122,0.06)",
+                    border: "1px solid rgba(62,207,122,0.2)",
+                    borderRadius: 6,
+                    fontSize: 12
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--green, #3ecf7a)" }}>
+                      💬 Réponse du support
+                    </div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{t.admin_notes}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// fmtTicketDate — formatage de date inline pour éviter le couplage avec helpers.js
+function fmtTicketDate(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return iso;
+  }
+}
