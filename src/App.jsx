@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Outlet, Navigate } from "react-router-dom";
+import { Routes, Route, Outlet, Navigate, useNavigate } from "react-router-dom";
 import { sb } from "./lib/supabase.js";
 import { saveSession, loadSession, clearSession } from "./lib/session.js";
 import { Sidebar } from "./components/Sidebar.jsx";
@@ -56,6 +56,7 @@ import { useMyFirm } from "./components/FirmMode.jsx";
 import { TeamPage } from "./modules/team/TeamPage.jsx";
 import { AdminStatsPage } from "./modules/core/AdminStatsPage.jsx";
 import { ChatBubble } from "./components/ChatBubble.jsx";
+import { SupportTicketModal } from "./components/SupportTicketModal.jsx";
 
 // Audit log
 import { AuditLogPage } from "./modules/audit/AuditLogPage.jsx";
@@ -398,14 +399,20 @@ function FirmLayout({ session, onSignOut }) {
 
 /**
  * FirmSidebarFooter — affiche en bas de la sidebar cabinet :
- *   - le logo du cabinet (si uploadé)
- *   - le nom du cabinet
- *   - l'email de l'utilisateur connecté
- *   - le bouton se déconnecter
+ *   - une carte cliquable avec logo + nom du cabinet + email de l'utilisateur
+ *   - au clic, popup avec : Réglages cabinet / Signaler un problème / Se déconnecter
+ *
+ * Comportement aligné sur le menu utilisateur de la sidebar abonné
+ * (v8.35 — uniformisation UX cabinet / abonné).
  */
 function FirmSidebarFooter({ token, user, onSignOut }) {
   const [firm, setFirm] = React.useState(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [ticketOpen, setTicketOpen] = React.useState(false);
+  const menuRef = React.useRef(null);
+  const navigate = useNavigate();
 
+  // Charge le cabinet
   React.useEffect(() => {
     if (!token || !user?.id) return;
     let alive = true;
@@ -431,73 +438,193 @@ function FirmSidebarFooter({ token, user, onSignOut }) {
     return () => { alive = false; };
   }, [token, user?.id]);
 
+  // Fermer le menu au clic extérieur + Escape
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    }
+    function onEsc(e) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [menuOpen]);
+
   return (
-    <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border2)" }}>
-      {firm && (
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px",
-          marginBottom: 8,
-          background: "rgba(255,255,255,0.02)",
-          borderRadius: 6
-        }}>
-          {firm.logo_url ? (
-            <img
-              src={firm.logo_url}
-              alt={firm.name}
-              style={{
+    <>
+      <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border2)" }}>
+        <div ref={menuRef} style={{ position: "relative" }}>
+          {/* Carte cabinet cliquable */}
+          <div
+            onClick={() => setMenuOpen((o) => !o)}
+            title={menuOpen ? "Fermer le menu" : "Menu cabinet"}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px",
+              background: "rgba(255,255,255,0.02)",
+              borderRadius: 6,
+              cursor: "pointer",
+              border: "1px solid transparent",
+              transition: "background 0.15s, border-color 0.15s"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+              e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.02)";
+              e.currentTarget.style.borderColor = "transparent";
+            }}
+          >
+            {firm?.logo_url ? (
+              <img
+                src={firm.logo_url}
+                alt={firm.name}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 4,
+                  objectFit: "contain",
+                  background: "#fff",
+                  padding: 2,
+                  flexShrink: 0
+                }}
+              />
+            ) : (
+              <div style={{
                 width: 32,
                 height: 32,
                 borderRadius: 4,
-                objectFit: "contain",
-                background: "#fff",
-                padding: 2,
+                background: "rgba(212,168,67,0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 14,
+                fontWeight: 700,
+                color: "var(--gold)",
                 flexShrink: 0
-              }}
-            />
-          ) : (
-            <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: 4,
-              background: "rgba(212,168,67,0.15)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              fontWeight: 700,
-              color: "var(--gold)",
-              flexShrink: 0
-            }}>
-              {firm.name ? firm.name.charAt(0).toUpperCase() : "?"}
+              }}>
+                {firm?.name ? firm.name.charAt(0).toUpperCase() : "?"}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 13,
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              }}>
+                {firm?.name || "Mon cabinet"}
+              </div>
+              <div style={{
+                fontSize: 11,
+                color: "var(--muted, #8a8d93)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                marginTop: 2
+              }}>
+                {user?.email || "—"}
+              </div>
             </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
-              fontSize: 12,
-              fontWeight: 600,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap"
+              fontSize: 10,
+              color: "var(--muted)",
+              marginLeft: 4,
+              transform: menuOpen ? "rotate(180deg)" : "none",
+              transition: "transform 0.15s"
             }}>
-              {firm.name || "Mon cabinet"}
+              ▾
             </div>
           </div>
+
+          {/* Popup menu — identique en style à Sidebar.jsx abonné */}
+          {menuOpen && (
+            <div style={{
+              position: "absolute",
+              bottom: "calc(100% + 6px)",
+              left: 0,
+              right: 0,
+              background: "var(--card-bg, #1a1d22)",
+              border: "1px solid var(--border, rgba(255,255,255,0.08))",
+              borderRadius: 8,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              overflow: "hidden",
+              zIndex: 100
+            }}>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/firm/settings");
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  width: "100%", padding: "10px 14px",
+                  background: "transparent", border: 0, cursor: "pointer",
+                  color: "var(--text)", fontSize: 13, textAlign: "left"
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                <span style={{ fontSize: 14 }}>⚙</span>
+                Réglages cabinet
+              </button>
+              <div style={{ height: 1, background: "var(--border, rgba(255,255,255,0.06))" }} />
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  setTicketOpen(true);
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  width: "100%", padding: "10px 14px",
+                  background: "transparent", border: 0, cursor: "pointer",
+                  color: "var(--text)", fontSize: 13, textAlign: "left"
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                <span style={{ fontSize: 14 }}>🎫</span>
+                Signaler un problème
+              </button>
+              <div style={{ height: 1, background: "var(--border, rgba(255,255,255,0.06))" }} />
+              <button
+                onClick={async () => {
+                  setMenuOpen(false);
+                  if (onSignOut) await onSignOut();
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  width: "100%", padding: "10px 14px",
+                  background: "transparent", border: 0, cursor: "pointer",
+                  color: "var(--red, #e0556a)", fontSize: 13, textAlign: "left"
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(224,85,106,0.08)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                <span style={{ fontSize: 14 }}>↪</span>
+                Se déconnecter
+              </button>
+            </div>
+          )}
         </div>
-      )}
-      <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 8, padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {user?.email}
       </div>
-      <button
-        onClick={onSignOut}
-        className="btn btn-ghost btn-sm"
-        style={{ width: "100%", justifyContent: "center" }}
-      >
-        Se déconnecter
-      </button>
-    </div>
+
+      {/* Modale ticket support, montée hors de la sidebar */}
+      {ticketOpen && (
+        <SupportTicketModal token={token} onClose={() => setTicketOpen(false)} />
+      )}
+    </>
   );
 }
 
