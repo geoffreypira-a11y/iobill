@@ -862,15 +862,35 @@ async function createAuthUser(email, password, metadata) {
 }
 
 async function findUserByEmail(email) {
+  // ⚠️ Important : l'API Supabase Admin /auth/v1/admin/users IGNORE le filtre
+  // ?email=... dans certaines versions et retourne tous les users de la page.
+  // On filtre donc TOUJOURS côté client par sécurité, et on pagine si besoin.
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const r = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` }
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
-  if (Array.isArray(j?.users) && j.users.length > 0) return j.users[0].id;
-  if (j?.id && j?.email === email) return j.id;
+  const targetEmail = String(email || "").trim().toLowerCase();
+  if (!targetEmail) return null;
+
+  // On parcourt jusqu'à 20 pages de 100 users (= 2000 users max)
+  // pour rester sous des temps de requête raisonnables.
+  for (let page = 1; page <= 20; page++) {
+    const r = await fetch(`${url}/auth/v1/admin/users?page=${page}&per_page=100`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` }
+    });
+    if (!r.ok) {
+      console.warn(`[findUserByEmail] page ${page} HTTP ${r.status}`);
+      return null;
+    }
+    const j = await r.json();
+    const users = Array.isArray(j?.users) ? j.users : [];
+    if (users.length === 0) return null; // plus de pages
+
+    // Filtre strict côté client
+    const match = users.find(u => String(u.email || "").trim().toLowerCase() === targetEmail);
+    if (match) return match.id;
+
+    // Si on a reçu moins que per_page, c'est la dernière page
+    if (users.length < 100) return null;
+  }
   return null;
 }
 
