@@ -9,6 +9,28 @@ import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePus
 
 const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security", "tickets"];
 
+// v8.37 — Helper : ajoute un badge "🚗 SOURCE" à côté du label d'un champ
+// quand ce champ est géré par une app source externe (IOCAR, IOBTP...)
+function fieldLabel(baseLabel, fieldKey, managedFieldsSet, sourceLabel) {
+  if (!managedFieldsSet || !managedFieldsSet.has(fieldKey)) return baseLabel;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      {baseLabel}
+      <span style={{
+        fontSize: 9,
+        padding: "1px 6px",
+        borderRadius: 8,
+        background: "rgba(212,168,67,0.15)",
+        color: "var(--gold, #d4a843)",
+        fontWeight: 700,
+        letterSpacing: 0.5
+      }}>
+        🚗 {sourceLabel}
+      </span>
+    </span>
+  );
+}
+
 export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = VALID_TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "profile";
@@ -72,7 +94,35 @@ function ProfileTab({ token, company, setCompany }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
-  function update(k, v) { setData((d) => ({ ...d, [k]: v })); }
+  // v8.37 — Champs gérés par une app source (IOCAR, IOBTP...)
+  // Si l'user modifie un de ces champs, on affiche une confirmation.
+  const sourceApp = company.source_app || "iobill";
+  const managedFields = React.useMemo(
+    () => new Set(company.external_managed_fields || []),
+    [company.external_managed_fields]
+  );
+  const isExternal = sourceApp !== "iobill" && managedFields.size > 0;
+  const sourceLabel = sourceApp === "iocar" ? "IO CAR"
+                    : sourceApp === "iobtp" ? "IO BTP"
+                    : sourceApp.toUpperCase();
+
+  function update(k, v) {
+    // Si champ géré par source externe et valeur changée, on demande confirmation
+    if (managedFields.has(k) && String(v ?? "") !== String(data[k] ?? "")) {
+      const oldVal = data[k] ?? "(vide)";
+      const newVal = v || "(vide)";
+      const ok = window.confirm(
+        `⚠️ Champ "${k}" géré depuis ${sourceLabel}\n\n` +
+        `Valeur officielle (${sourceLabel}) : ${oldVal}\n` +
+        `Votre modification             : ${newVal}\n\n` +
+        `⚠️  Cette modification sera ÉCRASÉE à la prochaine synchronisation depuis ${sourceLabel}.\n` +
+        `Pour la rendre permanente, modifiez plutôt directement dans ${sourceLabel}.\n\n` +
+        `Modifier quand même ?`
+      );
+      if (!ok) return;
+    }
+    setData((d) => ({ ...d, [k]: v }));
+  }
 
   async function save() {
     setMsg("");
@@ -80,7 +130,8 @@ function ProfileTab({ token, company, setCompany }) {
     if (data.email && !isEmail(data.email)) { setMsg("Email invalide"); return; }
     if (data.siret && !isSiret(data.siret)) { setMsg("SIRET invalide (14 chiffres)"); return; }
     setSaving(true);
-    const { id, user_id, created_at, updated_at, ...payload } = data;
+    const { id, user_id, created_at, updated_at, source_app, external_ref,
+            external_managed_fields, ...payload } = data;
     if (payload.siret) payload.siret = payload.siret.replace(/\s/g, "");
     const updated = await sb.update(token, "companies", `id=eq.${company.id}`, payload);
     setSaving(false);
@@ -98,6 +149,33 @@ function ProfileTab({ token, company, setCompany }) {
       {/* ─── BRANDING en premier ─── */}
       <BrandingTab token={token} company={company} setCompany={setCompany} />
 
+      {isExternal && (
+        <div className="card card-pad" style={{
+          marginTop: 18,
+          background: "rgba(212,168,67,0.05)",
+          border: "1px solid rgba(212,168,67,0.25)"
+        }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <div style={{ fontSize: 20 }}>🚗</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                Compte synchronisé depuis {sourceLabel}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+                Plusieurs champs de votre profil sont gérés automatiquement
+                depuis {sourceLabel} (raison sociale, SIRET, adresse, logo, etc.).
+                Pour les modifier durablement, faites-le directement dans {sourceLabel} :
+                la modification sera répliquée ici à la prochaine synchronisation.
+                <br/><br/>
+                Vous pouvez quand même modifier ces champs ici, mais la valeur sera
+                écrasée à la prochaine sync — un message vous le confirmera à chaque
+                modification d'un champ géré.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card card-pad" style={{ marginTop: 18 }}>
         {msg && (
           <div className={msg.startsWith("✓") ? "auth-success" : "auth-error"} style={{ marginBottom: 16 }}>
@@ -107,28 +185,28 @@ function ProfileTab({ token, company, setCompany }) {
 
         <SectionTitle>Identité</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Raison sociale *" value={data.legal_name} onChange={(v) => update("legal_name", v)} />
-        <Field label="Nom commercial" value={data.trade_name} onChange={(v) => update("trade_name", v)} />
+        <Field label={fieldLabel("Raison sociale *", "legal_name", managedFields, sourceLabel)} value={data.legal_name} onChange={(v) => update("legal_name", v)} />
+        <Field label={fieldLabel("Nom commercial", "trade_name", managedFields, sourceLabel)} value={data.trade_name} onChange={(v) => update("trade_name", v)} />
         <Field label="Forme juridique" value={data.legal_form} onChange={(v) => update("legal_form", v)} />
         <Field label="Code APE" value={data.ape_code} onChange={(v) => update("ape_code", v)} />
-        <Field label="SIRET" value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
+        <Field label={fieldLabel("SIRET", "siret", managedFields, sourceLabel)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
         <Field label="N° RCS" value={data.rcs} onChange={(v) => update("rcs", v)} />
-        <Field label="N° TVA intracom." value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
+        <Field label={fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceLabel)} value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Adresse</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Adresse" value={data.address_line1} onChange={(v) => update("address_line1", v)} full />
+        <Field label={fieldLabel("Adresse", "address_line1", managedFields, sourceLabel)} value={data.address_line1} onChange={(v) => update("address_line1", v)} full />
         <Field label="Complément" value={data.address_line2} onChange={(v) => update("address_line2", v)} full />
-        <Field label="Code postal" value={data.postal_code} onChange={(v) => update("postal_code", v)} />
-        <Field label="Ville" value={data.city} onChange={(v) => update("city", v)} />
+        <Field label={fieldLabel("Code postal", "postal_code", managedFields, sourceLabel)} value={data.postal_code} onChange={(v) => update("postal_code", v)} />
+        <Field label={fieldLabel("Ville", "city", managedFields, sourceLabel)} value={data.city} onChange={(v) => update("city", v)} />
         <Field label="Pays" value={data.country} onChange={(v) => update("country", (v || "").toUpperCase())} />
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Contact</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Email" value={data.email} onChange={(v) => update("email", v)} />
-        <Field label="Téléphone" value={data.phone} onChange={(v) => update("phone", v)} />
+        <Field label={fieldLabel("Email", "email", managedFields, sourceLabel)} value={data.email} onChange={(v) => update("email", v)} />
+        <Field label={fieldLabel("Téléphone", "phone", managedFields, sourceLabel)} value={data.phone} onChange={(v) => update("phone", v)} />
         <Field label="Site web" value={data.website} onChange={(v) => update("website", v)} />
       </div>
 

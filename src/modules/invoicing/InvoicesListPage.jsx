@@ -341,11 +341,20 @@ export function InvoicesListPage({ token, company }) {
               {filtered.map((inv) => {
                 const eff = effectiveStatus(inv);
                 const badge = invoiceStatusBadge(eff);
-                const canEdit = inv.status === "draft";
-                const canIssue = inv.status === "draft";
-                const canSend = ["issued", "sent", "partial", "overdue"].includes(inv.status);
-                const canDelete = inv.status === "draft";
-                // Transmettre a l'admin : factures emises non encore transmises
+                // v8.37 — Factures venant d'une app externe (IOCAR, IOBTP...)
+                // sont en LECTURE SEULE côté IOBILL. Les modifs se font dans
+                // l'app source pour garantir la cohérence.
+                const isExternal = !!inv.external_source && inv.external_source !== "iobill";
+                const sourceLabel = inv.external_source === "iocar" ? "IO CAR"
+                                  : inv.external_source === "iobtp" ? "IO BTP"
+                                  : String(inv.external_source || "").toUpperCase();
+
+                const canEdit = !isExternal && inv.status === "draft";
+                const canIssue = !isExternal && inv.status === "draft";
+                const canSend = !isExternal && ["issued", "sent", "partial", "overdue"].includes(inv.status);
+                const canDelete = !isExternal && inv.status === "draft";
+                // Transmettre PDP reste possible pour les factures externes
+                // (utile : la PDP est gérée centralement côté IOBILL)
                 const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
                 const alreadyTransmitted = !!inv.pdp_transmitted_at;
 
@@ -353,6 +362,25 @@ export function InvoicesListPage({ token, company }) {
                   <tr key={inv.id}>
                     <td className="mono">
                       {inv.number || <span style={{ color: "var(--muted)" }}>—</span>}
+                      {isExternal && (
+                        <span
+                          title={`Facture créée et gérée depuis ${sourceLabel}. Lecture seule ici.`}
+                          style={{
+                            display: "inline-block",
+                            marginLeft: 6,
+                            padding: "1px 6px",
+                            borderRadius: 8,
+                            background: "rgba(212,168,67,0.15)",
+                            color: "var(--gold, #d4a843)",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            letterSpacing: 0.3,
+                            verticalAlign: "middle"
+                          }}
+                        >
+                          🚗 {sourceLabel}
+                        </span>
+                      )}
                       {signalsByInvoiceId[inv.id] && (
                         <NotifBadge
                           count={signalsByInvoiceId[inv.id].count}

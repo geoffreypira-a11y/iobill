@@ -58,12 +58,38 @@ export default async function handler(req, res) {
 async function handleRequest(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
 
-  const auth = await authenticate(req);
-  if (auth.error) return json(res, auth.status, { error: auth.error });
-  const { company } = auth;
-
+  // v8.37 — Mode INTERNAL : appel server-to-server depuis public.js external
+  // après push_invoice / update_invoice_status. Authentifié par secret partagé.
   let body = req.body;
   if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+
+  const isInternal = body?.internal === true;
+  let company;
+
+  if (isInternal) {
+    const provided = req.headers["x-internal-secret"] || req.headers["X-Internal-Secret"];
+    const expected = process.env.IOBILL_INTERNAL_GEN_SECRET
+                  || process.env.IOBILL_EXTERNAL_SECRET;
+    if (!expected || !provided || provided !== expected) {
+      return json(res, 401, { error: "Invalid internal secret" });
+    }
+    // En mode internal, on récupère la company via le document directement
+    const documentType = body?.document_type || (body?.invoice_id ? "invoice" : null);
+    if (!documentType || !DOC_CONFIG[documentType]) {
+      return json(res, 400, { error: "document_type invalide" });
+    }
+    const documentId = body?.document_id || body?.invoice_id;
+    if (!documentId) return json(res, 400, { error: "document_id requis" });
+    const docPre = await sbAdmin.selectOne(DOC_CONFIG[documentType].table, `id=eq.${documentId}`);
+    if (!docPre) return json(res, 404, { error: "Document introuvable" });
+    company = await sbAdmin.selectOne("companies", `id=eq.${docPre.company_id}`);
+    if (!company) return json(res, 404, { error: "Company introuvable" });
+  } else {
+    // Mode normal : auth user
+    const auth = await authenticate(req);
+    if (auth.error) return json(res, auth.status, { error: auth.error });
+    company = auth.company;
+  }
 
   // Routage du document_type
   // Rétro-compat : invoice_id seul → document_type = "invoice"
