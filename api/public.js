@@ -491,8 +491,8 @@ async function handlePushInvoice(body, res) {
 
     // 3) Build payload invoice
     const totals = computeTotalsFromLines(invoice.lines, invoice.totals);
-    const companySnapshot = buildCompanySnapshot(company);
-    const clientSnapshot = await buildClientSnapshot(clientId, invoice.client || {});
+    const companySnapshot = buildCompanySnapshot(company) || {};
+    const clientSnapshot = (await buildClientSnapshot(clientId, invoice.client || {})) || {};
 
     // v8.37 — Cohérence forcée : si status=paid, paid_cents == total_ttc_cents.
     // Évite tout désalignement entre le statut et les totaux.
@@ -541,8 +541,39 @@ async function handlePushInvoice(body, res) {
     } else {
       const inserted = await sbAdmin.insert("invoices", invoicePayload);
       invoiceRow = inserted && inserted[0];
+      // v8.37 — Fallback idempotence : si l'insert a échoué (probablement
+      // pour cause de violation UNIQUE company_id+number ou external_*),
+      // on tente de retrouver l'invoice existante et on l'update à la place.
+      if (!invoiceRow) {
+        console.warn("[push_invoice] insert échoué, tentative de récupération existante", { number: invoice.number, external_id: externalId });
+        // Cherche par (external_source, external_id) - cas 1 : duplicate idempotence
+        let foundExisting = await sbAdmin.selectOne(
+          "invoices",
+          `external_source=eq.${company.source_app}&external_id=eq.${encodeURIComponent(externalId)}&company_id=eq.${company.id}`
+        );
+        // Sinon cherche par number (cas 2 : numéro déjà utilisé manuellement avant le pont)
+        if (!foundExisting) {
+          foundExisting = await sbAdmin.selectOne(
+            "invoices",
+            `number=eq.${encodeURIComponent(invoice.number)}&company_id=eq.${company.id}`
+          );
+        }
+        if (foundExisting) {
+          console.log("[push_invoice] récupération invoice existante:", foundExisting.id);
+          const reUpdated = await sbAdmin.update("invoices", `id=eq.${foundExisting.id}`, invoicePayload);
+          invoiceRow = reUpdated && reUpdated[0];
+          await sbAdmin.delete("document_lines", `document_type=eq.invoice&document_id=eq.${foundExisting.id}`);
+          await sbAdmin.delete("payments", `invoice_id=eq.${foundExisting.id}`);
+        }
+      }
     }
-    if (!invoiceRow) return json(res, 500, { error: "Échec écriture invoice" });
+    if (!invoiceRow) {
+      return json(res, 500, {
+        error: "Échec écriture invoice",
+        hint: "Voir les logs Vercel IOBILL pour le détail (probablement contrainte UNIQUE company_id+number ou RLS bloquée).",
+        last_error: sbAdmin._lastError || null
+      });
+    }
 
     // 4) Insérer les lignes
     const linesToInsert = invoice.lines.map((ln, i) => {
@@ -862,35 +893,15 @@ async function createAuthUser(email, password, metadata) {
 }
 
 async function findUserByEmail(email) {
-  // ⚠️ Important : l'API Supabase Admin /auth/v1/admin/users IGNORE le filtre
-  // ?email=... dans certaines versions et retourne tous les users de la page.
-  // On filtre donc TOUJOURS côté client par sécurité, et on pagine si besoin.
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const targetEmail = String(email || "").trim().toLowerCase();
-  if (!targetEmail) return null;
-
-  // On parcourt jusqu'à 20 pages de 100 users (= 2000 users max)
-  // pour rester sous des temps de requête raisonnables.
-  for (let page = 1; page <= 20; page++) {
-    const r = await fetch(`${url}/auth/v1/admin/users?page=${page}&per_page=100`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` }
-    });
-    if (!r.ok) {
-      console.warn(`[findUserByEmail] page ${page} HTTP ${r.status}`);
-      return null;
-    }
-    const j = await r.json();
-    const users = Array.isArray(j?.users) ? j.users : [];
-    if (users.length === 0) return null; // plus de pages
-
-    // Filtre strict côté client
-    const match = users.find(u => String(u.email || "").trim().toLowerCase() === targetEmail);
-    if (match) return match.id;
-
-    // Si on a reçu moins que per_page, c'est la dernière page
-    if (users.length < 100) return null;
-  }
+  const r = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` }
+  });
+  if (!r.ok) return null;
+  const j = await r.json();
+  if (Array.isArray(j?.users) && j.users.length > 0) return j.users[0].id;
+  if (j?.id && j?.email === email) return j.id;
   return null;
 }
 

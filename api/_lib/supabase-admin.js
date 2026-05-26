@@ -36,7 +36,14 @@ export const sbAdmin = {
       headers: headers(),
       body: JSON.stringify(data)
     });
-    return r.ok ? r.json() : null;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      console.error("[sbAdmin.insert] FAIL", table, "status=" + r.status, "body=", errText, "payload=", JSON.stringify(data).slice(0, 500));
+      // Stocke la dernière erreur pour debug — récupérable via sbAdmin.lastError
+      sbAdmin._lastError = { table, status: r.status, body: errText.slice(0, 500), at: Date.now() };
+      return null;
+    }
+    return r.json();
   },
 
   async update(table, filter, data) {
@@ -102,19 +109,6 @@ export async function authenticate(req) {
   const company = await sbAdmin.getCompanyForUser(user.id);
   if (!company) return { error: "No company", status: 403 };
   return { user, company, token };
-}
-
-// Helper v8.35 : variante de authenticate() qui n'exige PAS de company.
-// Utilisée par les endpoints accessibles aux membres cabinet (qui n'ont
-// pas de companies.id), p.ex. /api/admin actions create_ticket / my_tickets.
-// company est null si l'user n'a pas de company.
-export async function authenticateAllowNoCompany(req) {
-  const token = extractToken(req);
-  if (!token) return { error: "Missing token", status: 401 };
-  const user = await sbAdmin.getUserFromToken(token);
-  if (!user || !user.id) return { error: "Invalid token", status: 401 };
-  const company = await sbAdmin.getCompanyForUser(user.id);
-  return { user, company: company || null, token };
 }
 
 // Helper: reponse JSON
