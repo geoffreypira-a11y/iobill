@@ -482,34 +482,65 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // v8.38 — MODE GARAGE : mentions métier réutilisables
+  // v8.39 — MODE GARAGE : mentions métier
   //
-  // Affiché si business_mode='garage'. Cherche les mentions d'abord sur
-  // la facture (doc.business_mentions, par-facture), puis fallback sur la
-  // company (company.business_mentions, valeurs par défaut globales).
+  // Affiché si business_mode='garage'. Base = company.business_mentions
+  // (mentions globales saisies dans Paramètres > Mentions garage côté
+  // IOCAR). On les surcharge avec doc.business_mentions si présent
+  // (overrides par-facture : durée garantie variable, date de cession).
   // Format : un bloc par mention avec label discret (garantie, cession, conditions).
   // ═══════════════════════════════════════════════════════════
   if (doc.business_mode === "garage") {
-    const bm = (doc.business_mentions && typeof doc.business_mentions === "object")
-      ? doc.business_mentions
-      : (company.business_mentions && typeof company.business_mentions === "object")
-        ? company.business_mentions
-        : null;
-    if (bm) {
-      const blocs = [];
-      if (bm.garantie) blocs.push({ label: "GARANTIE", text: String(bm.garantie) });
-      if (bm.conditions_vente) blocs.push({ label: "CONDITIONS DE VENTE", text: String(bm.conditions_vente) });
-      if (bm.cession) blocs.push({ label: "CESSION", text: String(bm.cession) });
+    const globalMentions = (company.business_mentions && typeof company.business_mentions === "object")
+      ? company.business_mentions : {};
+    const orderOverrides = (doc.business_mentions && typeof doc.business_mentions === "object")
+      ? doc.business_mentions : {};
 
-      if (blocs.length > 0) {
-        y -= 8;
-        for (const b of blocs) {
-          page.drawText(b.label, { x: 40, y, size: 7, font: fontBold, color: brandRgb });
-          y -= 10;
-          const consumedLines = Math.max(1, Math.ceil((b.text.length || 0) / 110));
-          drawWrapped(page, b.text, 40, y, width - 80, font, 8, COLORS.dark, 10);
-          y -= 10 * consumedLines + 4;
-        }
+    // Construction de la mention garantie finale :
+    //   - Si l'order force "sans garantie" (override total), on l'utilise
+    //   - Sinon : mention globale + suffix durée si fourni par l'order
+    let mentionGarantie = null;
+    if (orderOverrides.garantie_override) {
+      mentionGarantie = String(orderOverrides.garantie_override);
+    } else if (globalMentions.garantie) {
+      mentionGarantie = String(globalMentions.garantie);
+      if (orderOverrides.garantie_duree) {
+        mentionGarantie = `Durée applicable à cette facture : ${orderOverrides.garantie_duree}. ` + mentionGarantie;
+      }
+    }
+
+    // Mention conditions : globale seulement
+    const mentionConditions = globalMentions.conditions_vente
+      ? String(globalMentions.conditions_vente) : null;
+
+    // Mention cession : globale + date spécifique de l'order si fournie
+    let mentionCession = null;
+    if (globalMentions.cession) {
+      mentionCession = String(globalMentions.cession);
+      if (orderOverrides.cession_date) {
+        mentionCession = `Cession effectuée le ${orderOverrides.cession_date}` +
+          (orderOverrides.cession_heure ? ` à ${orderOverrides.cession_heure}` : '') +
+          `. ` + mentionCession;
+      }
+    } else if (orderOverrides.cession_date) {
+      // Pas de mention globale, mais date de cession sur l'order → mention minimale
+      mentionCession = `Cession effectuée le ${orderOverrides.cession_date}` +
+        (orderOverrides.cession_heure ? ` à ${orderOverrides.cession_heure}` : '') + `.`;
+    }
+
+    const blocs = [];
+    if (mentionGarantie) blocs.push({ label: "GARANTIE", text: mentionGarantie });
+    if (mentionConditions) blocs.push({ label: "CONDITIONS DE VENTE", text: mentionConditions });
+    if (mentionCession) blocs.push({ label: "CESSION", text: mentionCession });
+
+    if (blocs.length > 0) {
+      y -= 8;
+      for (const b of blocs) {
+        page.drawText(b.label, { x: 40, y, size: 7, font: fontBold, color: brandRgb });
+        y -= 10;
+        const consumedLines = Math.max(1, Math.ceil((b.text.length || 0) / 110));
+        drawWrapped(page, b.text, 40, y, width - 80, font, 8, COLORS.dark, 10);
+        y -= 10 * consumedLines + 4;
       }
     }
   }
@@ -523,6 +554,13 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   } else if (company.vat_regime === "franchise") {
     page.drawText("TVA non applicable, art. 293 B du CGI.", { x: 40, y: foot, size: 8, font, color: COLORS.grey });
     foot -= 11;
+  } else if (company.vat_regime === "margin_297a" || doc.vat_regime === "margin_297a") {
+    // v8.39 — Mention TVA marge (régime spécifique aux véhicules d'occasion, brocanteurs, etc.)
+    foot = drawWrapped(
+      page,
+      "Régime de la TVA sur la marge bénéficiaire — art. 297 A du CGI. La TVA n'est pas déductible pour l'acquéreur.",
+      40, foot, width - 80, font, 8, COLORS.grey, 11
+    ) - 6;
   }
   if (docType === "invoice") {
     page.drawText("En cas de retard de paiement, indemnité forfaitaire de 40 € pour frais de recouvrement (art. L441-10 du code de commerce).", {

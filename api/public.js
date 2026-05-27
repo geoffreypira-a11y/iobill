@@ -465,8 +465,34 @@ async function handleSyncCompany(body, res) {
 //   }
 // ───────────────────────────────────────────────────────────────────────────
 async function handlePushInvoice(body, res) {
-  const company = await resolveCompanyFromToken(body.token);
+  let company = await resolveCompanyFromToken(body.token);
   if (!company) return json(res, 401, { error: "Invalid token" });
+
+  // v8.39 — Auto-resync de la company si l'app source pousse des champs
+  // (utile quand link_account initial avait des champs vides côté IOCAR
+  // qui ont été remplis depuis). On ne remplace pas les valeurs existantes,
+  // on remplit juste les champs vides.
+  if (body.company_update && typeof body.company_update === "object") {
+    const fields = buildCompanyFieldsFromBody(body.company_update);
+    const fillEmpty = {};
+    for (const [k, v] of Object.entries(fields)) {
+      // Ne remplit que les champs vides/null côté IOBILL (respecte les
+      // modifications éventuelles du user IOBILL).
+      if (v != null && v !== "" && (company[k] == null || company[k] === "")) {
+        fillEmpty[k] = v;
+      }
+      // Exception : on FORCE business_mentions à se resync car la source
+      // de vérité c'est IOCAR (mentions configurées dans Paramètres > Mentions)
+      if (k === "business_mentions" && v != null) {
+        fillEmpty[k] = v;
+      }
+    }
+    if (Object.keys(fillEmpty).length > 0) {
+      await applyCompanyUpdate(company.id, fillEmpty, /*managed*/ true);
+      // Recharge la company pour les snapshots à venir
+      company = await resolveCompanyFromToken(body.token);
+    }
+  }
 
   const { invoice } = body;
   if (!invoice || typeof invoice !== "object") {
