@@ -110,10 +110,29 @@ export function ClientsListPage({ token, company, setCompany }) {
             {counts.prospect ? ` · ${counts.prospect} prospect${counts.prospect > 1 ? "s" : ""}` : ""}
           </div>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditing("add")}>
-          <Icon name="plus" size={14} /> Nouveau client
-        </button>
+        {/* v8.43 — Bouton "Nouveau client" caché si l'app source gère le CRM */}
+        {!company?.source_app && (
+          <button className="btn btn-primary" onClick={() => setEditing("add")}>
+            <Icon name="plus" size={14} /> Nouveau client
+          </button>
+        )}
       </div>
+
+      {/* v8.43 — Bannière informative si CRM géré par app source */}
+      {company?.source_app && (
+        <div style={{
+          padding: "10px 14px",
+          marginBottom: 16,
+          background: "rgba(212, 168, 67, 0.08)",
+          border: "1px solid rgba(212, 168, 67, 0.3)",
+          borderRadius: 8,
+          fontSize: 12,
+          color: "var(--gold)"
+        }}>
+          {sourceAppEmoji(company.source_app)} Vos clients sont gérés depuis <strong>{sourceAppLabel(company.source_app)}</strong>.
+          Les modifications faites ici seront écrasées au prochain push. Gérez votre CRM depuis l'app source.
+        </div>
+      )}
 
       {/* Barre de filtres */}
       <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
@@ -225,6 +244,12 @@ function ClientsCards({ clients, stats, onOpen, onEdit, onDelete }) {
                 <div style={{ fontSize: 11, color: "var(--muted2)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {c.email || c.phone || "—"}
                 </div>
+                {/* v8.43 — Badge "géré par X" */}
+                {c.external_managed && c.external_source && (
+                  <div style={{ fontSize: 10, color: "var(--gold)", marginTop: 4 }}>
+                    {sourceAppEmoji(c.external_source)} Géré par {sourceAppLabel(c.external_source)}
+                  </div>
+                )}
               </div>
               <span className={"badge " + statusInfo.cls} style={{ fontSize: 9 }}>
                 {statusInfo.icon} {statusInfo.label}
@@ -246,10 +271,23 @@ function ClientsCards({ clients, stats, onOpen, onEdit, onDelete }) {
             )}
 
             <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-              <button className="btn btn-ghost btn-xs" onClick={(e) => { e.stopPropagation(); onEdit(c); }}>
+              {/* v8.43 — Boutons Modifier/Supprimer désactivés si client externe verrouillé */}
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={(e) => { e.stopPropagation(); if (!c.external_managed) onEdit(c); }}
+                disabled={c.external_managed}
+                title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)} — modifiez dans l'app source` : "Modifier"}
+                style={c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+              >
                 <Icon name="edit" size={12} /> Modifier
               </button>
-              <button className="btn btn-danger btn-xs" onClick={(e) => { e.stopPropagation(); onDelete(c); }}>
+              <button
+                className="btn btn-danger btn-xs"
+                onClick={(e) => { e.stopPropagation(); if (!c.external_managed) onDelete(c); }}
+                disabled={c.external_managed}
+                title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)} — supprimez dans l'app source` : "Supprimer"}
+                style={c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+              >
                 <Icon name="trash" size={12} />
               </button>
             </div>
@@ -288,7 +326,15 @@ function ClientsTable({ clients, stats, onOpen, onEdit, onDelete }) {
                       {initials(displayName(c))}
                     </div>
                     <div>
-                      <div style={{ fontWeight: 600 }}>{displayName(c)}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        {displayName(c)}
+                        {/* v8.43 — Petit indicateur "géré par" */}
+                        {c.external_managed && c.external_source && (
+                          <span style={{ fontSize: 9, color: "var(--gold)", marginLeft: 6 }}>
+                            {sourceAppEmoji(c.external_source)}
+                          </span>
+                        )}
+                      </div>
                       {c.contact_person && (
                         <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.contact_person}</div>
                       )}
@@ -306,10 +352,22 @@ function ClientsTable({ clients, stats, onOpen, onEdit, onDelete }) {
                   <span className={"badge " + score.cls}>{score.icon} {score.label}</span>
                 </td>
                 <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
-                  <button className="btn btn-ghost btn-xs" onClick={() => onEdit(c)}>
+                  <button
+                    className="btn btn-ghost btn-xs"
+                    onClick={() => { if (!c.external_managed) onEdit(c); }}
+                    disabled={c.external_managed}
+                    title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Modifier"}
+                    style={c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+                  >
                     <Icon name="edit" size={12} />
                   </button>
-                  <button className="btn btn-danger btn-xs" onClick={() => onDelete(c)} style={{ marginLeft: 6 }}>
+                  <button
+                    className="btn btn-danger btn-xs"
+                    onClick={() => { if (!c.external_managed) onDelete(c); }}
+                    disabled={c.external_managed}
+                    title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Supprimer"}
+                    style={{ marginLeft: 6, ...(c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}
+                  >
                     <Icon name="trash" size={12} />
                   </button>
                 </td>
@@ -383,4 +441,15 @@ function sanitizeView(v) {
 
 function safeLocal(k) {
   try { return localStorage.getItem(k); } catch { return null; }
+}
+
+// v8.43 — Helpers pour les apps sources (CRM mono-source)
+function sourceAppLabel(src) {
+  const map = { iocar: "IO CAR", iobtp: "IO BTP", ioinstitute: "IO INSTITUTE" };
+  return map[src] || src;
+}
+
+function sourceAppEmoji(src) {
+  const map = { iocar: "🚗", iobtp: "🏗", ioinstitute: "🎓" };
+  return map[src] || "🔗";
 }

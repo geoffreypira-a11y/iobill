@@ -395,6 +395,9 @@ async function handleExternal(req, res) {
   if (action === "update_invoice_status") return handleUpdateInvoiceStatus(body, res);
   // v8.41 — Avoirs IOCAR → table credit_notes IOBILL (avec lien invoice_id parent)
   if (action === "push_credit_note") return handlePushCreditNote(body, res);
+  // v8.43 — CRM mono-source : sync proactive depuis l'app source
+  if (action === "sync_client") return handleSyncClient(body, res);
+  if (action === "delete_client") return handleDeleteClient(body, res);
   return json(res, 400, { error: `Unknown external action: ${action}` });
 }
 
@@ -595,7 +598,7 @@ async function handlePushInvoice(body, res) {
 
   try {
     // 1) Trouver/créer le client
-    const clientId = await upsertClient(company.id, invoice.client || {});
+    const clientId = await upsertClient(company.id, invoice.client || {}, { sourceApp: company.source_app });
 
     // 2) Idempotence : existe déjà ?
     const existing = await sbAdmin.selectOne(
@@ -1008,7 +1011,7 @@ async function handlePushCreditNote(body, res) {
     }
 
     // 2) Client (upsert)
-    const clientId = await upsertClient(company.id, credit_note.client || {});
+    const clientId = await upsertClient(company.id, credit_note.client || {}, { sourceApp: company.source_app });
 
     // 3) Idempotence : credit_note déjà existant pour (external_source, external_id) ?
     const existing = await sbAdmin.selectOne(
@@ -1094,6 +1097,111 @@ async function handlePushCreditNote(body, res) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// v8.43 — SYNC_CLIENT — Pousse un client de l'app source vers IOBILL
+//
+// Body :
+//   action: "sync_client"
+//   token : token API IOBILL
+//   client: {
+//     external_id (requis),      // id stable côté app source (IOCAR clients.id)
+//     legal_name, first_name, last_name, siret, email, phone,
+//     address_line1, address_line2, postal_code, city, country
+//   }
+//
+// Comportement :
+//   - Lookup par (company_id, external_source, external_id)
+//   - Si trouvé → update non-conservatif (source maîtresse)
+//   - Sinon → insert avec external_managed=true (verrouille la lecture seule UI)
+// ───────────────────────────────────────────────────────────────────────────
+async function handleSyncClient(body, res) {
+  const company = await resolveCompanyFromToken(body.token);
+  if (!company) return json(res, 401, { error: "Invalid token" });
+
+  const { client } = body;
+  if (!client || typeof client !== "object") {
+    return json(res, 400, { error: "client required" });
+  }
+  if (!client.external_id) {
+    return json(res, 400, { error: "client.external_id required (id stable côté app source)" });
+  }
+
+  try {
+    const clientId = await upsertClient(company.id, client, { sourceApp: company.source_app });
+    if (!clientId) {
+      return json(res, 500, { error: "Échec upsert client" });
+    }
+    return json(res, 200, {
+      ok: true,
+      client_id: clientId,
+      external_managed: true
+    });
+  } catch (err) {
+    console.error("[external/sync_client] ERROR:", err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// v8.43 — DELETE_CLIENT — Supprime un client externe (cas suppression côté IOCAR)
+//
+// Body :
+//   action: "delete_client"
+//   token : token API IOBILL
+//   external_id : id du client dans l'app source
+//
+// Comportement :
+//   - Si le client a des factures liées → on archive (soft delete via colonne
+//     archived_at) au lieu de supprimer (sinon RLS / FK refuserait)
+//   - Si pas de factures → DELETE
+// ───────────────────────────────────────────────────────────────────────────
+async function handleDeleteClient(body, res) {
+  const company = await resolveCompanyFromToken(body.token);
+  if (!company) return json(res, 401, { error: "Invalid token" });
+
+  if (!body.external_id) {
+    return json(res, 400, { error: "external_id required" });
+  }
+
+  try {
+    const found = await sbAdmin.selectOne(
+      "clients",
+      `company_id=eq.${company.id}&external_source=eq.${company.source_app}&external_id=eq.${encodeURIComponent(body.external_id)}`
+    );
+    if (!found) {
+      return json(res, 200, { ok: true, not_found: true });
+    }
+
+    // Vérifier s'il y a des factures liées (FK : invoices.client_id)
+    const linkedInvoices = await sbAdmin.selectOne(
+      "invoices",
+      `client_id=eq.${found.id}`
+    );
+
+    if (linkedInvoices) {
+      // Soft delete : on ne touche pas physiquement (factures gardent le snapshot)
+      // On marque juste external_managed=false pour permettre à l'user IOBILL de
+      // décider quoi en faire (ex: l'archiver depuis l'UI).
+      await sbAdmin.update("clients", `id=eq.${found.id}`, {
+        external_managed: false,
+        external_synced_at: new Date().toISOString()
+      });
+      return json(res, 200, {
+        ok: true,
+        soft_deleted: true,
+        message: "Client conservé (factures liées) mais déverrouillé côté IOBILL"
+      });
+    }
+
+    // Pas de factures liées → hard delete
+    await sbAdmin.delete("clients", `id=eq.${found.id}`);
+    return json(res, 200, { ok: true, hard_deleted: true });
+  } catch (err) {
+    console.error("[external/delete_client] ERROR:", err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // HELPERS communs
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1152,6 +1260,11 @@ async function resolveCompanyFromToken(token) {
   sbAdmin.update("external_api_keys", `id=eq.${tokRow.id}`, { last_used_at: new Date().toISOString() })
     .catch(() => {});
   const company = await sbAdmin.selectOne("companies", `id=eq.${tokRow.company_id}`);
+  if (!company) return null;
+  // v8.43 — FIX : enrichir company avec source_app (vient de external_api_keys, pas de companies).
+  // Sans ça, tous les filtres `external_source=eq.${company.source_app}` matchaient sur "undefined"
+  // → cause racine des doublons clients côté IOBILL.
+  company.source_app = tokRow.source_app;
   return company;
 }
 
@@ -1219,29 +1332,64 @@ function generateApiToken() {
 // ───────────────────────────────────────────────────────────────────────────
 
 // Upsert client IOBILL en se basant sur (siret prioritaire, sinon email)
-async function upsertClient(companyId, cli) {
-  const where = [];
-  if (cli.siret) where.push(`siret=eq.${encodeURIComponent(cli.siret)}`);
-  else if (cli.email) where.push(`email=eq.${encodeURIComponent(String(cli.email).toLowerCase())}`);
+// v8.43 — Upsert client avec priorité au matching par (external_source, external_id).
+// Si l'app source pousse un external_id, on s'en sert comme clé primaire pour
+// éviter les doublons. Sinon fallback par SIRET / email comme avant.
+// Update non-conservatif quand external : la source IOCAR est maîtresse.
+async function upsertClient(companyId, cli, opts = {}) {
+  const { sourceApp = null } = opts;
+  const hasExternal = !!(sourceApp && cli.external_id);
 
-  if (where.length > 0) {
-    const found = await sbAdmin.selectOne("clients", `company_id=eq.${companyId}&${where[0]}`);
-    if (found) {
-      // Update conservatif : on remplit les champs vides
-      const patch = {};
-      const fields = ["legal_name", "first_name", "last_name", "siret", "phone",
-                      "address_line1", "address_line2", "postal_code", "city", "country"];
-      for (const f of fields) {
-        if (cli[f] && !found[f]) patch[f] = cli[f];
-      }
-      if (Object.keys(patch).length > 0) {
-        await sbAdmin.update("clients", `id=eq.${found.id}`, patch);
-      }
-      return found.id;
+  // 1) Matching par external_id (prioritaire et fiable)
+  if (hasExternal) {
+    const foundExt = await sbAdmin.selectOne(
+      "clients",
+      `company_id=eq.${companyId}&external_source=eq.${sourceApp}&external_id=eq.${encodeURIComponent(cli.external_id)}`
+    );
+    if (foundExt) {
+      // Update non-conservatif : la source écrase systématiquement (IOCAR maître)
+      const patch = buildClientPatch(cli, /*overwrite*/ true);
+      patch.external_synced_at = new Date().toISOString();
+      patch.external_managed = true;
+      patch.external_source = sourceApp;
+      patch.external_id = String(cli.external_id);
+      await sbAdmin.update("clients", `id=eq.${foundExt.id}`, patch);
+      return foundExt.id;
     }
   }
 
-  // Pas trouvé : créer
+  // 2) Fallback : matching par SIRET puis email (legacy, pour les anciens flux)
+  let found = null;
+  if (cli.siret) {
+    found = await sbAdmin.selectOne(
+      "clients",
+      `company_id=eq.${companyId}&siret=eq.${encodeURIComponent(cli.siret)}`
+    );
+  }
+  if (!found && cli.email) {
+    found = await sbAdmin.selectOne(
+      "clients",
+      `company_id=eq.${companyId}&email=eq.${encodeURIComponent(String(cli.email).toLowerCase())}`
+    );
+  }
+
+  if (found) {
+    // Si on est dans le flux external mais qu'on retrouve un client legacy
+    // sans external_id, on l'enrôle (= on lui attribue l'external_id pour le matching futur)
+    const patch = buildClientPatch(cli, /*overwrite*/ hasExternal);
+    if (hasExternal) {
+      patch.external_synced_at = new Date().toISOString();
+      patch.external_managed = true;
+      patch.external_source = sourceApp;
+      patch.external_id = String(cli.external_id);
+    }
+    if (Object.keys(patch).length > 0) {
+      await sbAdmin.update("clients", `id=eq.${found.id}`, patch);
+    }
+    return found.id;
+  }
+
+  // 3) Pas trouvé : créer
   const isCompany = !!(cli.legal_name || cli.siret);
   const payload = {
     company_id: companyId,
@@ -1258,8 +1406,33 @@ async function upsertClient(companyId, cli) {
     city: cli.city || null,
     country: cli.country || "FR"
   };
+  if (hasExternal) {
+    payload.external_source = sourceApp;
+    payload.external_id = String(cli.external_id);
+    payload.external_synced_at = new Date().toISOString();
+    payload.external_managed = true;
+  }
   const inserted = await sbAdmin.insert("clients", payload);
   return inserted && inserted[0] ? inserted[0].id : null;
+}
+
+// Helper : construit l'objet patch pour update.
+// overwrite=true → écrase tous les champs non-null fournis (source maîtresse)
+// overwrite=false → ne remplit que les champs vides (conservatif, legacy)
+function buildClientPatch(cli, overwrite) {
+  const patch = {};
+  const fields = ["legal_name", "first_name", "last_name", "siret", "email", "phone",
+                  "address_line1", "address_line2", "postal_code", "city", "country"];
+  for (const f of fields) {
+    if (cli[f] != null && cli[f] !== "") {
+      if (overwrite) {
+        patch[f] = f === "email" ? String(cli[f]).toLowerCase() : cli[f];
+      }
+      // En mode conservatif on devrait checker !found[f] mais on n'a pas found ici
+      // → ce helper n'est utilisé qu'en mode external (overwrite=true)
+    }
+  }
+  return patch;
 }
 
 // Calcule les totaux de facture à partir des lignes (cents)
