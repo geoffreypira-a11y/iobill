@@ -554,8 +554,10 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     y -= 12;
 
     // Total à payer (Total TTC + débours)
-    page.drawLine({ start: { x: totalsX - 80, y: y + 6 }, end: { x: width - 40, y: y + 6 }, thickness: 0.6, color: COLORS.dark });
-    y -= 2;
+    // v8.40.4 — Le trait doit être AU-DESSUS du texte, pas dessous.
+    // Pour un texte size 11, le haut des majuscules est environ à y+9.
+    // On trace donc le trait à y+13 pour qu'il soit clairement au-dessus.
+    page.drawLine({ start: { x: totalsX - 80, y: y + 13 }, end: { x: width - 40, y: y + 13 }, thickness: 0.6, color: COLORS.dark });
     page.drawText("TOTAL À PAYER", { x: totalsX - 80, y, size: 11, font: fontBold, color: COLORS.dark });
     drawRight(page, formatEUR(doc.total_ttc_cents + debourTotalCents), width - 40, y, 11, fontBold, COLORS.dark);
     y -= 20;

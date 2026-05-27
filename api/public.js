@@ -393,6 +393,8 @@ async function handleExternal(req, res) {
   if (action === "sync_company") return handleSyncCompany(body, res);
   if (action === "push_invoice") return handlePushInvoice(body, res);
   if (action === "update_invoice_status") return handleUpdateInvoiceStatus(body, res);
+  // v8.41 — Avoirs IOCAR → table credit_notes IOBILL (avec lien invoice_id parent)
+  if (action === "push_credit_note") return handlePushCreditNote(body, res);
   return json(res, 400, { error: `Unknown external action: ${action}` });
 }
 
@@ -890,7 +892,8 @@ function isDraftStatus(s) {
 // Déclenchement async (fire-and-forget) de la génération Factur-X.
 // Sur Vercel, Promise.resolve().then() survit le temps que la fn termine.
 // La response a déjà été envoyée → l'user IOCAR ne sent aucune latence.
-function triggerFacturxGeneration(invoiceId) {
+// v8.41 — Generalisé pour invoice ou credit_note
+function triggerFacturxGeneration(documentId, documentType = "invoice") {
   const url = process.env.APP_URL || "https://app.iobill.online";
   const internalSecret = process.env.IOBILL_INTERNAL_GEN_SECRET
                        || process.env.IOBILL_EXTERNAL_SECRET;
@@ -905,20 +908,188 @@ function triggerFacturxGeneration(invoiceId) {
         },
         body: JSON.stringify({
           internal: true,
-          document_type: "invoice",
-          document_id: invoiceId
+          document_type: documentType,
+          document_id: documentId
         })
       });
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
         console.warn(`[triggerFacturxGen] failed status=${r.status}: ${txt}`);
       } else {
-        console.log(`[triggerFacturxGen] OK invoice=${invoiceId}`);
+        console.log(`[triggerFacturxGen] OK ${documentType}=${documentId}`);
       }
     } catch (e) {
       console.warn("[triggerFacturxGen] error:", e.message);
     }
   });
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// v8.41 — PUSH_CREDIT_NOTE — Pousse un avoir externe vers la table credit_notes
+//
+// Body :
+//   action: "push_credit_note"
+//   token : token API IOBILL
+//   credit_note: {
+//     external_id, number, issue_date, status,
+//     source_invoice_number,  // ← lookup invoice parent par (external_source, number)
+//     reason, client, lines
+//   }
+//   company_update: { ... }  // optionnel, même format que push_invoice
+//
+// Workflow :
+//   1. Resolve company depuis token
+//   2. Sync company (mêmes règles que push_invoice)
+//   3. Lookup invoice source via (company_id, number = source_invoice_number)
+//      → si pas trouvée : erreur 400 (l'utilisateur doit d'abord pousser la facture source)
+//   4. Upsert client_id (mêmes règles)
+//   5. Upsert credit_notes (idempotent via external_source + external_id)
+//   6. Insert document_lines (document_type='credit_note')
+//   7. Trigger anti-dépassement vérifie automatiquement
+//   8. triggerFacturxGeneration(creditNoteId, 'credit_note') en fire-and-forget
+//   9. Retourne credit_note_id, credit_note_number, pdf_url (null en attente)
+// ───────────────────────────────────────────────────────────────────────────
+async function handlePushCreditNote(body, res) {
+  let company = await resolveCompanyFromToken(body.token);
+  if (!company) return json(res, 401, { error: "Invalid token" });
+
+  // Sync company depuis l'app source (logique identique à push_invoice)
+  if (body.company_update && typeof body.company_update === "object") {
+    const fields = buildCompanyFieldsFromBody(body.company_update);
+    const fillEmpty = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (v != null && v !== "" && (company[k] == null || company[k] === "")) {
+        fillEmpty[k] = v;
+      }
+      if (k === "business_mentions" && v != null) {
+        fillEmpty[k] = v;
+      }
+    }
+    if (body.company_update.logo_base64 && !company.logo_url) {
+      try {
+        const newLogoUrl = await uploadLogoFromBase64(company.id, body.company_update.logo_base64);
+        if (newLogoUrl) fillEmpty.logo_url = newLogoUrl;
+      } catch (e) {
+        console.warn("[push_credit_note] logo upload failed:", e.message);
+      }
+    }
+    if (Object.keys(fillEmpty).length > 0) {
+      await applyCompanyUpdate(company.id, fillEmpty, true);
+      company = await resolveCompanyFromToken(body.token);
+    }
+  }
+
+  const { credit_note } = body;
+  if (!credit_note || typeof credit_note !== "object") {
+    return json(res, 400, { error: "credit_note required" });
+  }
+  const externalId = credit_note.external_id;
+  if (!externalId) return json(res, 400, { error: "credit_note.external_id required" });
+  if (!credit_note.number) return json(res, 400, { error: "credit_note.number required" });
+  if (!credit_note.source_invoice_number) {
+    return json(res, 400, { error: "credit_note.source_invoice_number required (numéro de la facture d'origine)" });
+  }
+  if (!Array.isArray(credit_note.lines) || credit_note.lines.length === 0) {
+    return json(res, 400, { error: "credit_note.lines (non vide) required" });
+  }
+
+  try {
+    // 1) Lookup invoice source par (company_id, number)
+    const sourceInvoice = await sbAdmin.selectOne(
+      "invoices",
+      `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.source_invoice_number)}`
+    );
+    if (!sourceInvoice) {
+      return json(res, 400, {
+        error: `Facture d'origine "${credit_note.source_invoice_number}" introuvable côté IOBILL. ` +
+               `Assurez-vous qu'elle ait été transmise et finalisée avant de pousser l'avoir.`,
+        code: 'SOURCE_INVOICE_NOT_FOUND'
+      });
+    }
+
+    // 2) Client (upsert)
+    const clientId = await upsertClient(company.id, credit_note.client || {});
+
+    // 3) Idempotence : credit_note déjà existant pour (external_source, external_id) ?
+    const existing = await sbAdmin.selectOne(
+      "credit_notes",
+      `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.number)}`
+    );
+
+    // 4) Totaux
+    const totals = computeTotalsFromLines(credit_note.lines, null, null);
+    const companySnapshot = buildCompanySnapshot(company) || {};
+    const clientSnapshot = (await buildClientSnapshot(clientId, credit_note.client || {})) || {};
+
+    const creditNotePayload = {
+      company_id: company.id,
+      invoice_id: sourceInvoice.id,
+      client_id: clientId,
+      number: credit_note.number,
+      client_snapshot: clientSnapshot,
+      company_snapshot: companySnapshot,
+      issue_date: credit_note.issue_date || new Date().toISOString().slice(0, 10),
+      reason: credit_note.reason || null,
+      status: credit_note.status || 'issued',
+      subtotal_ht_cents: totals.subtotal_ht_cents,
+      vat_total_cents: totals.vat_total_cents,
+      total_ttc_cents: totals.total_ttc_cents,
+      vat_breakdown: totals.vat_breakdown,
+      notes: credit_note.notes || null
+    };
+
+    let creditNoteRow;
+    if (existing) {
+      const updated = await sbAdmin.update(
+        "credit_notes",
+        `id=eq.${existing.id}`,
+        creditNotePayload
+      );
+      creditNoteRow = updated && updated[0];
+      // Supprimer anciennes lignes pour les recréer
+      await sbAdmin.delete("document_lines", `document_type=eq.credit_note&document_id=eq.${existing.id}`);
+    } else {
+      const inserted = await sbAdmin.insert("credit_notes", creditNotePayload);
+      creditNoteRow = inserted && inserted[0];
+    }
+
+    if (!creditNoteRow) {
+      return json(res, 500, { error: "Échec création credit_note" });
+    }
+
+    // 5) Lignes
+    const linesPayload = credit_note.lines.map((l, idx) => ({
+      document_type: 'credit_note',
+      document_id: creditNoteRow.id,
+      position: idx + 1,
+      description: l.description || '',
+      quantity: l.quantity || 1,
+      unit: l.unit || 'u',
+      unit_price_ht_cents: l.unit_price_ht_cents || 0,
+      vat_rate: l.vat_rate || 0,
+      discount_pct: l.discount_pct || 0,
+      line_ht_cents: l.line_ht_cents != null
+        ? l.line_ht_cents
+        : Math.round((l.quantity || 1) * (l.unit_price_ht_cents || 0) * (1 - (l.discount_pct || 0) / 100))
+    }));
+    await sbAdmin.insert("document_lines", linesPayload);
+
+    // 6) Génération PDF Factur-X en arrière-plan
+    triggerFacturxGeneration(creditNoteRow.id, 'credit_note');
+
+    return json(res, 200, {
+      ok: true,
+      credit_note_id: creditNoteRow.id,
+      credit_note_number: creditNoteRow.number,
+      invoice_id: sourceInvoice.id,
+      invoice_number: sourceInvoice.number,
+      pdf_url: null, // sera rempli après génération Factur-X
+      facturx_status: 'pending'
+    });
+  } catch (err) {
+    console.error("[external/push_credit_note] ERROR:", err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
