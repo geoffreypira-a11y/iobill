@@ -335,34 +335,91 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // pas le breakdown TVA dans les totaux (mention légale en bas).
   const isMargeTva = doc.vat_regime === "margin_297a" || company.vat_regime === "margin_297a";
 
-  // ─── Tableau des lignes ───
-  page.drawRectangle({ x: 40, y: y - 4, width: width - 80, height: 18, color: rgb(0.96, 0.95, 0.92) });
-  page.drawText("Désignation", { x: 44, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
-  drawRight(page, "Qté", 325, y + 2, 8, fontBold, COLORS.grey);
+  // ─── Tableau des lignes — v8.40 vrai tableau avec bordures ───
+  // Définition des colonnes : x = bord gauche de la colonne, w = largeur
+  // On mémorise les frontières verticales pour tracer le quadrillage
+  const tableLeft = 40;
+  const tableRight = width - 40;
+  const tableWidth = tableRight - tableLeft;
+  // Calcul des bordures de colonnes (les positions x sont les SÉPARATEURS entre colonnes)
+  // Désignation | Qté | Unité | P.U. | [TVA] | Total
+  const colBordersFull = [tableLeft, 295, 325, 365, 425, 480, tableRight];
+  const colBordersMarge = [tableLeft, 325, 365, 415, tableRight - 95, tableRight];
+  const cols = isMargeTva ? colBordersMarge : colBordersFull;
+
+  const headerY = y;
+  const headerHeight = 18;
+  // En-tête : fond beige clair
+  page.drawRectangle({
+    x: tableLeft, y: headerY - 4,
+    width: tableWidth, height: headerHeight,
+    color: rgb(0.96, 0.95, 0.92)
+  });
+  // En-tête : bordure top et bottom
+  page.drawLine({
+    start: { x: tableLeft, y: headerY + headerHeight - 4 },
+    end: { x: tableRight, y: headerY + headerHeight - 4 },
+    thickness: 0.5, color: COLORS.lineGrey
+  });
+  page.drawLine({
+    start: { x: tableLeft, y: headerY - 4 },
+    end: { x: tableRight, y: headerY - 4 },
+    thickness: 0.5, color: COLORS.lineGrey
+  });
+
+  // Libellés colonnes
+  page.drawText("Désignation", { x: tableLeft + 4, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
+  drawRight(page, "Qté", 322, y + 2, 8, fontBold, COLORS.grey);
   page.drawText("Unité", { x: 332, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
-  // En mode marge : prix unitaire TTC (pas HT) car la TVA n'est pas distinguée
-  drawRight(page, isMargeTva ? "P.U. TTC" : "P.U. HT", 425, y + 2, 8, fontBold, COLORS.grey);
+  drawRight(page, isMargeTva ? "P.U. TTC" : "P.U. HT", isMargeTva ? 412 : 422, y + 2, 8, fontBold, COLORS.grey);
   if (!isMargeTva) {
-    drawRight(page, "TVA", 465, y + 2, 8, fontBold, COLORS.grey);
+    drawRight(page, "TVA", 477, y + 2, 8, fontBold, COLORS.grey);
   }
-  drawRight(page, isMargeTva ? "Total TTC" : "Total HT", 555, y + 2, 8, fontBold, COLORS.grey);
+  drawRight(page, isMargeTva ? "Total TTC" : "Total HT", tableRight - 4, y + 2, 8, fontBold, COLORS.grey);
   y -= 22;
+
+  // Mémoriser le Y de début des lignes pour tracer les bordures verticales à la fin
+  const rowsStartY = y + 14; // top du tableau body
+  let lastRowY = y; // sera mis à jour à chaque ligne
 
   for (const l of (lines || [])) {
     const desc = (l.description || "").slice(0, 65);
     const ht = (Number(l.line_ht_cents) / 100).toFixed(2);
     const pu = (Number(l.unit_price_ht_cents) / 100).toFixed(2);
-    page.drawText(desc, { x: 44, y, size: 9, font, color: COLORS.dark });
-    drawRight(page, String(Number(l.quantity).toFixed(2)).replace(/\.00$/, ""), 325, y, 9, font, COLORS.dark);
+    page.drawText(desc, { x: tableLeft + 4, y, size: 9, font, color: COLORS.dark });
+    drawRight(page, String(Number(l.quantity).toFixed(2)).replace(/\.00$/, ""), 322, y, 9, font, COLORS.dark);
     page.drawText(l.unit || "u", { x: 332, y, size: 9, font, color: COLORS.dark });
-    drawRight(page, pu + " €", 425, y, 9, font, COLORS.dark);
-    // En mode marge : pas de colonne TVA affichée
+    drawRight(page, pu + " €", isMargeTva ? 412 : 422, y, 9, font, COLORS.dark);
     if (!isMargeTva) {
-      drawRight(page, Number(l.vat_rate).toFixed(0) + "%", 465, y, 9, font, COLORS.dark);
+      drawRight(page, Number(l.vat_rate).toFixed(0) + "%", 477, y, 9, font, COLORS.dark);
     }
-    drawRight(page, ht + " €", 555, y, 9, font, COLORS.dark);
+    drawRight(page, ht + " €", tableRight - 4, y, 9, font, COLORS.dark);
+    lastRowY = y - 4;
     y -= 16;
-    page.drawLine({ start: { x: 40, y: y + 2 }, end: { x: width - 40, y: y + 2 }, thickness: 0.3, color: COLORS.lineGrey });
+    // Ligne de séparation horizontale entre rows
+    page.drawLine({
+      start: { x: tableLeft, y: y + 2 },
+      end: { x: tableRight, y: y + 2 },
+      thickness: 0.3, color: COLORS.lineGrey
+    });
+  }
+
+  // Bordure horizontale BOTTOM du tableau (plus marquée)
+  page.drawLine({
+    start: { x: tableLeft, y: y + 2 },
+    end: { x: tableRight, y: y + 2 },
+    thickness: 0.5, color: COLORS.lineGrey
+  });
+
+  // Bordures VERTICALES — du haut du header (headerY + 14) au bas du tableau (y + 2)
+  const tableTopY = headerY + 14;
+  const tableBottomY = y + 2;
+  for (const colX of cols) {
+    page.drawLine({
+      start: { x: colX, y: tableTopY },
+      end: { x: colX, y: tableBottomY },
+      thickness: 0.4, color: COLORS.lineGrey
+    });
   }
 
   y -= 12;
