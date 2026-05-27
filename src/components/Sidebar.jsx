@@ -315,15 +315,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
         )}
 
         <div className="sidebar-footer">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
-            onClick={close}
-            style={{ marginBottom: 8 }}
-          >
-            <Icon name="settings" className="nav-icon" />
-            {t("Paramètres")}
-          </NavLink>
+          {/* v8.40 — NavLink "Paramètres" retiré (doublon avec "Mon compte" du popup user ci-dessous) */}
           <div ref={userMenuRef} style={{ position: "relative" }}>
             <div
               className="userbox"
