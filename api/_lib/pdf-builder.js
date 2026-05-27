@@ -330,14 +330,22 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     }
   }
 
+  // v8.39 — Détermine le régime TVA pour adapter l'affichage
+  // En mode marge (art. 297 A), on cache la colonne TVA et on n'affiche
+  // pas le breakdown TVA dans les totaux (mention légale en bas).
+  const isMargeTva = doc.vat_regime === "margin_297a" || company.vat_regime === "margin_297a";
+
   // ─── Tableau des lignes ───
   page.drawRectangle({ x: 40, y: y - 4, width: width - 80, height: 18, color: rgb(0.96, 0.95, 0.92) });
   page.drawText("Désignation", { x: 44, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
   drawRight(page, "Qté", 325, y + 2, 8, fontBold, COLORS.grey);
   page.drawText("Unité", { x: 332, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
-  drawRight(page, "P.U. HT", 425, y + 2, 8, fontBold, COLORS.grey);
-  drawRight(page, "TVA", 465, y + 2, 8, fontBold, COLORS.grey);
-  drawRight(page, "Total HT", 555, y + 2, 8, fontBold, COLORS.grey);
+  // En mode marge : prix unitaire TTC (pas HT) car la TVA n'est pas distinguée
+  drawRight(page, isMargeTva ? "P.U. TTC" : "P.U. HT", 425, y + 2, 8, fontBold, COLORS.grey);
+  if (!isMargeTva) {
+    drawRight(page, "TVA", 465, y + 2, 8, fontBold, COLORS.grey);
+  }
+  drawRight(page, isMargeTva ? "Total TTC" : "Total HT", 555, y + 2, 8, fontBold, COLORS.grey);
   y -= 22;
 
   for (const l of (lines || [])) {
@@ -348,7 +356,10 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     drawRight(page, String(Number(l.quantity).toFixed(2)).replace(/\.00$/, ""), 325, y, 9, font, COLORS.dark);
     page.drawText(l.unit || "u", { x: 332, y, size: 9, font, color: COLORS.dark });
     drawRight(page, pu + " €", 425, y, 9, font, COLORS.dark);
-    drawRight(page, Number(l.vat_rate).toFixed(0) + "%", 465, y, 9, font, COLORS.dark);
+    // En mode marge : pas de colonne TVA affichée
+    if (!isMargeTva) {
+      drawRight(page, Number(l.vat_rate).toFixed(0) + "%", 465, y, 9, font, COLORS.dark);
+    }
     drawRight(page, ht + " €", 555, y, 9, font, COLORS.dark);
     y -= 16;
     page.drawLine({ start: { x: 40, y: y + 2 }, end: { x: width - 40, y: y + 2 }, thickness: 0.3, color: COLORS.lineGrey });
@@ -358,19 +369,22 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
 
   // ─── Totaux ───
   const totalsX = width - 220;
-  page.drawText("Total HT", { x: totalsX, y, size: 9, font, color: COLORS.grey });
-  drawRight(page, formatEUR(doc.subtotal_ht_cents), width - 40, y, 9, font, COLORS.dark);
-  y -= 14;
+  // v8.39 — En mode marge : pas de "Total HT" ni "TVA %" séparés, juste le TTC
+  if (!isMargeTva) {
+    page.drawText("Total HT", { x: totalsX, y, size: 9, font, color: COLORS.grey });
+    drawRight(page, formatEUR(doc.subtotal_ht_cents), width - 40, y, 9, font, COLORS.dark);
+    y -= 14;
 
-  for (const v of (doc.vat_breakdown || [])) {
-    page.drawText(`TVA ${Number(v.rate).toFixed(0)}%`, { x: totalsX, y, size: 9, font, color: COLORS.grey });
-    drawRight(page, formatEUR(v.vat_cents), width - 40, y, 9, font, COLORS.dark);
-    y -= 14;
-  }
-  if (!doc.vat_breakdown || doc.vat_breakdown.length === 0) {
-    page.drawText("TVA", { x: totalsX, y, size: 9, font, color: COLORS.grey });
-    drawRight(page, formatEUR(doc.vat_total_cents), width - 40, y, 9, font, COLORS.dark);
-    y -= 14;
+    for (const v of (doc.vat_breakdown || [])) {
+      page.drawText(`TVA ${Number(v.rate).toFixed(0)}%`, { x: totalsX, y, size: 9, font, color: COLORS.grey });
+      drawRight(page, formatEUR(v.vat_cents), width - 40, y, 9, font, COLORS.dark);
+      y -= 14;
+    }
+    if (!doc.vat_breakdown || doc.vat_breakdown.length === 0) {
+      page.drawText("TVA", { x: totalsX, y, size: 9, font, color: COLORS.grey });
+      drawRight(page, formatEUR(doc.vat_total_cents), width - 40, y, 9, font, COLORS.dark);
+      y -= 14;
+    }
   }
   y -= 8;
   // Ligne gold AU-DESSUS du texte Total TTC (pas à travers)
@@ -383,13 +397,46 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   drawRight(page, totalValue, width - 40, y, 12, fontBold, brandRgb);
   y -= 24;
 
+  // v8.39 — DÉBOURS (art. 267 II 2° du CGI)
+  // Affiché sous Total TTC, hors base TVA mais à ajouter au total à payer.
+  // Cas typique : carte grise refacturée à l'identique (vente VO).
+  let debourTotalCents = 0;
+  const deboursList = Array.isArray(doc.debours) ? doc.debours : [];
+  if (deboursList.length > 0) {
+    // Label discret
+    page.drawText("DÉBOURS (art. 267 II 2° CGI)", { x: totalsX - 80, y, size: 8, font: fontBold, color: COLORS.grey });
+    y -= 12;
+    for (const d of deboursList) {
+      const amt = Math.abs(Number(d.amount_cents || 0));
+      debourTotalCents += amt;
+      const lbl = String(d.label || "Débours").slice(0, 30);
+      page.drawText(lbl, { x: totalsX - 80, y, size: 9, font, color: COLORS.dark });
+      drawRight(page, formatEUR(amt), width - 40, y, 9, font, COLORS.dark);
+      y -= 13;
+    }
+    // Mention légale en petit (sous les débours)
+    page.drawText(
+      "Sommes avancées pour le compte du client, hors base d'imposition TVA.",
+      { x: totalsX - 80, y, size: 7, font, color: COLORS.grey }
+    );
+    y -= 12;
+
+    // Total à payer (Total TTC + débours)
+    page.drawLine({ start: { x: totalsX - 80, y: y + 6 }, end: { x: width - 40, y: y + 6 }, thickness: 0.6, color: COLORS.dark });
+    y -= 2;
+    page.drawText("TOTAL À PAYER", { x: totalsX - 80, y, size: 11, font: fontBold, color: COLORS.dark });
+    drawRight(page, formatEUR(doc.total_ttc_cents + debourTotalCents), width - 40, y, 11, fontBold, COLORS.dark);
+    y -= 20;
+  }
+
   // Reste a payer (factures uniquement)
   if (docType === "invoice" && (doc.paid_cents || 0) > 0) {
+    const grandTotal = doc.total_ttc_cents + debourTotalCents;
     page.drawText("Déjà encaissé", { x: totalsX, y, size: 9, font, color: COLORS.green });
     drawRight(page, "- " + formatEUR(doc.paid_cents), width - 40, y, 9, font, COLORS.green);
     y -= 14;
     page.drawText("Reste à régler", { x: totalsX, y, size: 10, font: fontBold, color: COLORS.dark });
-    drawRight(page, formatEUR(doc.total_ttc_cents - doc.paid_cents), width - 40, y, 10, fontBold, COLORS.dark);
+    drawRight(page, formatEUR(grandTotal - doc.paid_cents), width - 40, y, 10, fontBold, COLORS.dark);
     y -= 18;
   }
 
@@ -548,19 +595,22 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // ─── Mentions legales bas de page ───
   let foot = 100;
   // Priorite : doc.vat_legal_mention (defini selon vat_category : franchise, intracom, export...)
+  // Puis doc.vat_regime (par-facture, plus précis que la company)
   // Sinon fallback selon company.vat_regime
+  // v8.39 — On utilise la variable isMargeTva calculée plus haut pour cohérence
   if (doc.vat_legal_mention) {
     foot = drawWrapped(page, doc.vat_legal_mention, 40, foot, width - 80, font, 8, COLORS.grey, 11) - 6;
-  } else if (company.vat_regime === "franchise") {
-    page.drawText("TVA non applicable, art. 293 B du CGI.", { x: 40, y: foot, size: 8, font, color: COLORS.grey });
-    foot -= 11;
-  } else if (company.vat_regime === "margin_297a" || doc.vat_regime === "margin_297a") {
-    // v8.39 — Mention TVA marge (régime spécifique aux véhicules d'occasion, brocanteurs, etc.)
+  } else if (isMargeTva) {
+    // Mention TVA marge (régime spécifique aux véhicules d'occasion, brocanteurs, etc.)
     foot = drawWrapped(
       page,
-      "Régime de la TVA sur la marge bénéficiaire — art. 297 A du CGI. La TVA n'est pas déductible pour l'acquéreur.",
+      "Régime de la TVA sur la marge bénéficiaire — art. 297 A du CGI. La TVA n'est pas mentionnée et n'est pas déductible pour l'acquéreur.",
       40, foot, width - 80, font, 8, COLORS.grey, 11
     ) - 6;
+  } else if (doc.vat_regime === "franchise" || company.vat_regime === "franchise") {
+    // Franchise en base uniquement si la facture OU la company y est explicitement
+    page.drawText("TVA non applicable, art. 293 B du CGI.", { x: 40, y: foot, size: 8, font, color: COLORS.grey });
+    foot -= 11;
   }
   if (docType === "invoice") {
     page.drawText("En cas de retard de paiement, indemnité forfaitaire de 40 € pour frais de recouvrement (art. L441-10 du code de commerce).", {
