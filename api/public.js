@@ -398,6 +398,8 @@ async function handleExternal(req, res) {
   // v8.43 — CRM mono-source : sync proactive depuis l'app source
   if (action === "sync_client") return handleSyncClient(body, res);
   if (action === "delete_client") return handleDeleteClient(body, res);
+  // v8.45 — Polling périodique : sync TOUS les clients en un seul appel (batch)
+  if (action === "sync_clients_batch") return handleSyncClientsBatch(body, res);
   return json(res, 400, { error: `Unknown external action: ${action}` });
 }
 
@@ -1197,6 +1199,100 @@ async function handleDeleteClient(body, res) {
     return json(res, 200, { ok: true, hard_deleted: true });
   } catch (err) {
     console.error("[external/delete_client] ERROR:", err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// v8.45 — SYNC_CLIENTS_BATCH — Sync miroir TOUS les clients en 1 appel
+//
+// Body :
+//   action: "sync_clients_batch"
+//   token : token API IOBILL
+//   clients: [
+//     { external_id, legal_name, first_name, last_name, siret, email, phone,
+//       address_line1, postal_code, city, country },
+//     ...
+//   ]
+//   hash: string (optionnel) — si fourni et identique au dernier sync, on skip
+//
+// Comportement :
+//   1. Upsert chaque client (matching external_id en priorité)
+//   2. Identifie les clients IOBILL external_managed=true dont l'external_id
+//      n'est PLUS dans la liste → ils ont été supprimés côté IOCAR
+//       - si pas de factures liées : DELETE
+//       - si factures liées : déverrouille (external_managed=false)
+//   3. Retourne { synced, removed, total }
+// ───────────────────────────────────────────────────────────────────────────
+async function handleSyncClientsBatch(body, res) {
+  const company = await resolveCompanyFromToken(body.token);
+  if (!company) return json(res, 401, { error: "Invalid token" });
+
+  const clients = Array.isArray(body.clients) ? body.clients : [];
+  const sourceApp = company.source_app;
+  if (!sourceApp) {
+    return json(res, 400, { error: "company.source_app missing (token mal configuré)" });
+  }
+
+  try {
+    // 1. Upsert chaque client
+    const seenExternalIds = new Set();
+    let syncedCount = 0;
+    let errorCount = 0;
+
+    for (const cli of clients) {
+      if (!cli.external_id) continue;
+      seenExternalIds.add(String(cli.external_id));
+      try {
+        await upsertClient(company.id, cli, { sourceApp });
+        syncedCount++;
+      } catch (e) {
+        errorCount++;
+        console.error("[batch upsert] error for", cli.external_id, e.message);
+      }
+    }
+
+    // 2. Détecter les clients qui étaient external_managed mais ne sont plus dans la liste
+    // (= supprimés côté IOCAR)
+    const externalClientsInIobill = await sbAdmin.select(
+      "clients",
+      {
+        filter: `company_id=eq.${company.id}&external_source=eq.${sourceApp}&external_managed=eq.true`,
+        select: "id,external_id"
+      }
+    );
+
+    let removedCount = 0;
+    let unlockedCount = 0;
+    for (const cli of (externalClientsInIobill || [])) {
+      if (!cli.external_id) continue;
+      if (seenExternalIds.has(String(cli.external_id))) continue;
+      // Ce client n'est plus côté IOCAR
+      const hasInvoices = await sbAdmin.selectOne("invoices", `client_id=eq.${cli.id}`);
+      const hasCreditNotes = await sbAdmin.selectOne("credit_notes", `client_id=eq.${cli.id}`);
+      if (hasInvoices || hasCreditNotes) {
+        // Soft delete : on déverrouille
+        await sbAdmin.update("clients", `id=eq.${cli.id}`, {
+          external_managed: false,
+          external_synced_at: new Date().toISOString()
+        });
+        unlockedCount++;
+      } else {
+        await sbAdmin.delete("clients", `id=eq.${cli.id}`);
+        removedCount++;
+      }
+    }
+
+    return json(res, 200, {
+      ok: true,
+      received: clients.length,
+      synced: syncedCount,
+      errors: errorCount,
+      removed: removedCount,
+      unlocked: unlockedCount
+    });
+  } catch (err) {
+    console.error("[external/sync_clients_batch] ERROR:", err);
     return json(res, 500, { error: String(err.message || err) });
   }
 }
