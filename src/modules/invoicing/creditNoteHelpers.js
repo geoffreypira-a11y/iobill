@@ -4,7 +4,7 @@
 
 export const CREDIT_NOTE_STATUSES = {
   draft:  { label: "Brouillon", cls: "badge-muted", order: 1 },
-  issued: { label: "Émis",      cls: "badge-gold",  order: 2 }
+  issued: { label: "Remboursé", cls: "badge-green", order: 2 }
 };
 
 export function creditNoteStatusBadge(status) {

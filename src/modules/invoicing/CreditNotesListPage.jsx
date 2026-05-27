@@ -19,6 +19,48 @@ export function CreditNotesListPage({ token, company }) {
   const [showPicker, setShowPicker] = useState(false);
   // Aperçu de la facture source au clic sur "→ voir"
   const [previewInvoice, setPreviewInvoice] = useState(null);
+  // v8.41 — Aperçu de l'avoir lui-même au clic sur "👁 Voir"
+  const [previewCreditNote, setPreviewCreditNote] = useState(null);
+  // v8.42 — Transmission PDP : loading + toast
+  const [actionLoading, setActionLoading] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  function showToast(msg, type = "success") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  async function refreshList() {
+    const list = await sb.select(token, "credit_notes", {
+      filter: `company_id=eq.${company.id}`,
+      order: "issue_date.desc",
+      limit: 200
+    });
+    setItems(list || []);
+  }
+
+  // v8.42 — Transmission PDP d'un avoir (équivalent transmitToAdmin pour factures)
+  async function transmitCreditNote(cn) {
+    setActionLoading(`transmit-${cn.id}`);
+    try {
+      const r = await fetch("/api/generate-facturx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          document_type: "credit_note",
+          document_id: cn.id,
+          transmit_pdp: true
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
+      await refreshList();
+      showToast(`Avoir transmis via ${j.provider || "PDP"} (ID: ${j.transmission_id || "?"})`);
+    } catch (e) {
+      showToast(e.message || "Erreur transmission PDP", "error");
+    }
+    setActionLoading(null);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -126,6 +168,7 @@ export function CreditNotesListPage({ token, company }) {
                 <th>Facture liée</th>
                 <th style={{ textAlign: "right" }}>Montant TTC</th>
                 <th>Statut</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -160,6 +203,45 @@ export function CreditNotesListPage({ token, company }) {
                       − {fmtEUR(c.total_ttc_cents)}
                     </td>
                     <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+                    {/* v8.41 — Boutons Voir + Transmettre (cohérent avec page Factures) */}
+                    <td>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewCreditNote(c);
+                          }}
+                          style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
+                          title="Aperçu PDF de cet avoir"
+                        >
+                          👁 Voir
+                        </button>
+                        {/* v8.42 — Transmettre à la DGFiP via PDP (uniquement si émis et pas encore transmis) */}
+                        {c.status === "issued" && !c.pdp_transmitted_at && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              transmitCreditNote(c);
+                            }}
+                            disabled={actionLoading === `transmit-${c.id}`}
+                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                            title="Transmettre l'avoir à l'administration via votre PDP"
+                          >
+                            {actionLoading === `transmit-${c.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                          </button>
+                        )}
+                        {c.pdp_transmitted_at && (
+                          <span
+                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--green)", border: "1px solid rgba(62,207,122,0.3)", borderRadius: 6, whiteSpace: "nowrap" }}
+                            title={`Transmis via ${c.pdp_provider || "PDP"} le ${new Date(c.pdp_transmitted_at).toLocaleDateString("fr-FR")}`}
+                          >
+                            ✓ Transmis
+                          </span>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -187,6 +269,36 @@ export function CreditNotesListPage({ token, company }) {
           doc={previewInvoice}
           onClose={() => setPreviewInvoice(null)}
         />
+      )}
+
+      {/* v8.41 — Modale d'aperçu PDF de l'avoir lui-même */}
+      {previewCreditNote && (
+        <DocumentPreviewModal
+          token={token}
+          docType="credit_note"
+          doc={previewCreditNote}
+          onClose={() => setPreviewCreditNote(null)}
+        />
+      )}
+
+      {/* v8.42 — Toast de feedback (transmission PDP, etc.) */}
+      {toast && (
+        <div style={{
+          position: "fixed",
+          bottom: 24,
+          right: 24,
+          background: toast.type === "error" ? "rgba(229,92,92,0.95)" : "rgba(62,207,122,0.95)",
+          color: "#0b0c10",
+          padding: "12px 18px",
+          borderRadius: 8,
+          fontSize: 13,
+          fontWeight: 600,
+          zIndex: 500,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+          maxWidth: 400
+        }}>
+          {toast.msg}
+        </div>
       )}
     </div>
   );

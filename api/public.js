@@ -1084,6 +1084,7 @@ async function handlePushCreditNote(body, res) {
       invoice_id: sourceInvoice.id,
       invoice_number: sourceInvoice.number,
       pdf_url: null, // sera rempli après génération Factur-X
+      status: creditNoteRow.status, // v8.41 — signal pour IOCAR (draft / issued)
       facturx_status: 'pending'
     });
   } catch (err) {
