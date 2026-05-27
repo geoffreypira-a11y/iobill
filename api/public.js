@@ -502,6 +502,14 @@ async function handlePushInvoice(body, res) {
       ? totals.total_ttc_cents
       : totals.paid_cents;
 
+    // v8.38 — Mode métier : auto-déduit depuis source_app
+    // (futur : on pourra passer body.business_mode pour override explicite)
+    const businessMode = invoice.business_mode
+      || (company.source_app === "iocar" ? "garage"
+        : company.source_app === "iobtp" ? "btp"
+        : company.source_app === "ioinstitute" ? "institute"
+        : "standard");
+
     const invoicePayload = {
       company_id: company.id,
       client_id: clientId,
@@ -516,10 +524,14 @@ async function handlePushInvoice(body, res) {
       total_ttc_cents: totals.total_ttc_cents,
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
-      notes: invoice.notes || buildNotesFromMeta(invoice),
+      notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
       terms: invoice.terms || null,
       external_source: company.source_app,
       external_id: String(externalId),
+      // v8.38 — Mode métier + métadonnées véhicule (mode garage)
+      business_mode: businessMode,
+      vehicle_meta: invoice.vehicle_meta || null,
+      business_mentions: invoice.business_mentions || null,
       // issued_at = maintenant car la facture est figée à la création depuis l'externe
       issued_at: new Date().toISOString()
     };
@@ -809,6 +821,8 @@ function buildCompanyFieldsFromBody(body) {
   if (body.phone !== undefined) out.phone = body.phone;
   if (body.website !== undefined) out.website = body.website;
   if (body.logo_url !== undefined) out.logo_url = body.logo_url;
+  // v8.38 — Mentions métier réutilisables (mode garage : garantie, conditions, cession)
+  if (body.business_mentions !== undefined) out.business_mentions = body.business_mentions;
   // Adresse
   if (addr.line1 !== undefined) out.address_line1 = addr.line1;
   if (addr.line2 !== undefined) out.address_line2 = addr.line2;

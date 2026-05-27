@@ -249,6 +249,87 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   const cs = cs0;
   const co = co0;
 
+  // ═══════════════════════════════════════════════════════════
+  // v8.38 — MODE GARAGE : bloc véhicule encadré
+  //
+  // Affiché uniquement si business_mode='garage' ET vehicle_meta présent.
+  // Pattern visuel inspiré de la facture IOCAR : encadré gold, label gris
+  // discret en haut, infos sur 2 colonnes. Reste compatible Factur-X car
+  // c'est juste de l'affichage PDF (pas dans l'XML).
+  // ═══════════════════════════════════════════════════════════
+  if (doc.business_mode === "garage" && doc.vehicle_meta && typeof doc.vehicle_meta === "object") {
+    const vm = doc.vehicle_meta;
+    const vehLabel = [vm.marque, vm.modele, vm.finition].filter(Boolean).join(" ");
+    if (vehLabel || vm.plate) {
+      // Hauteur du bloc : 50px de base + 14 par ligne d'info (2 colonnes)
+      const blockH = 56;
+      const blockW = width - 80;
+      const blockY = y - blockH + 14;
+
+      // Encadré gold subtil
+      page.drawRectangle({
+        x: 40, y: blockY,
+        width: blockW, height: blockH,
+        borderColor: brandRgb,
+        borderWidth: 0.8,
+        color: rgb(0.99, 0.97, 0.92), // gold très léger
+        opacity: 1
+      });
+
+      // Label en haut à gauche
+      page.drawRectangle({
+        x: 44, y: y + 8,
+        width: 72, height: 12,
+        color: brandRgb
+      });
+      page.drawText("VÉHICULE", { x: 52, y: y + 11, size: 8, font: fontBold, color: rgb(1, 1, 1) });
+
+      // Ligne 1 : marque / modèle / finition + plaque encadrée à droite
+      const titleY = y - 8;
+      page.drawText(vehLabel || "Véhicule", { x: 50, y: titleY, size: 11, font: fontBold, color: COLORS.dark });
+
+      if (vm.plate) {
+        // Plaque comme un mini-encadré noir gold (style plaque française)
+        const plateText = String(vm.plate).toUpperCase();
+        const plateW = fontBold.widthOfTextAtSize(plateText, 10) + 16;
+        page.drawRectangle({
+          x: width - 40 - plateW - 4,
+          y: titleY - 4,
+          width: plateW,
+          height: 16,
+          color: COLORS.dark,
+          borderColor: brandRgb,
+          borderWidth: 0.5
+        });
+        page.drawText(plateText, {
+          x: width - 40 - plateW + 4,
+          y: titleY,
+          size: 10, font: fontBold,
+          color: brandRgb
+        });
+      }
+
+      // Ligne 2 + 3 : infos sur 2 colonnes (gauche / droite)
+      const infosLeft = [];
+      const infosRight = [];
+      if (vm.kilometrage) infosLeft.push(`Kilométrage : ${Number(vm.kilometrage).toLocaleString("fr-FR")} km`);
+      if (vm.annee) infosLeft.push(`Année : ${vm.annee}`);
+      if (vm.carburant) infosLeft.push(`Carburant : ${vm.carburant}`);
+      if (vm.vin) infosRight.push(`VIN : ${vm.vin}`);
+      if (vm.genre) infosRight.push(`Genre : ${vm.genre}`);
+
+      let infoY = titleY - 14;
+      const maxInfoLines = Math.max(infosLeft.length, infosRight.length);
+      for (let i = 0; i < maxInfoLines; i++) {
+        if (infosLeft[i]) page.drawText(infosLeft[i], { x: 50, y: infoY, size: 8, font, color: COLORS.grey });
+        if (infosRight[i]) page.drawText(infosRight[i], { x: width / 2, y: infoY, size: 8, font, color: COLORS.grey });
+        infoY -= 11;
+      }
+
+      y = blockY - 10; // espace après le bloc
+    }
+  }
+
   // ─── Tableau des lignes ───
   page.drawRectangle({ x: 40, y: y - 4, width: width - 80, height: 18, color: rgb(0.96, 0.95, 0.92) });
   page.drawText("Désignation", { x: 44, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
@@ -398,6 +479,39 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     page.drawText("CONDITIONS", { x: 40, y, size: 8, font: fontBold, color: COLORS.grey });
     y -= 12;
     drawWrapped(page, doc.terms, 40, y, width - 80, font, 9, COLORS.dark);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // v8.38 — MODE GARAGE : mentions métier réutilisables
+  //
+  // Affiché si business_mode='garage'. Cherche les mentions d'abord sur
+  // la facture (doc.business_mentions, par-facture), puis fallback sur la
+  // company (company.business_mentions, valeurs par défaut globales).
+  // Format : un bloc par mention avec label discret (garantie, cession, conditions).
+  // ═══════════════════════════════════════════════════════════
+  if (doc.business_mode === "garage") {
+    const bm = (doc.business_mentions && typeof doc.business_mentions === "object")
+      ? doc.business_mentions
+      : (company.business_mentions && typeof company.business_mentions === "object")
+        ? company.business_mentions
+        : null;
+    if (bm) {
+      const blocs = [];
+      if (bm.garantie) blocs.push({ label: "GARANTIE", text: String(bm.garantie) });
+      if (bm.conditions_vente) blocs.push({ label: "CONDITIONS DE VENTE", text: String(bm.conditions_vente) });
+      if (bm.cession) blocs.push({ label: "CESSION", text: String(bm.cession) });
+
+      if (blocs.length > 0) {
+        y -= 8;
+        for (const b of blocs) {
+          page.drawText(b.label, { x: 40, y, size: 7, font: fontBold, color: brandRgb });
+          y -= 10;
+          const consumedLines = Math.max(1, Math.ceil((b.text.length || 0) / 110));
+          drawWrapped(page, b.text, 40, y, width - 80, font, 8, COLORS.dark, 10);
+          y -= 10 * consumedLines + 4;
+        }
+      }
+    }
   }
 
   // ─── Mentions legales bas de page ───
