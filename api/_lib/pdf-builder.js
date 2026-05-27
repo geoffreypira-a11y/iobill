@@ -378,15 +378,30 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   function drawInCell(text, colIdx, yPos, size, fontUsed, color) {
     const padX = 6;
     const { x0, x1 } = colBounds[colIdx];
+    const cellWidth = x1 - x0 - 2 * padX;
+
+    // Tronque le texte avec "…" s'il dépasse la largeur de la cellule
+    let displayText = String(text);
+    const fullWidth = fontUsed.widthOfTextAtSize(displayText, size);
+    if (fullWidth > cellWidth) {
+      // Réduit caractère par caractère jusqu'à ce que ça rentre (avec "…")
+      const ellipsis = "…";
+      while (displayText.length > 1 &&
+             fontUsed.widthOfTextAtSize(displayText + ellipsis, size) > cellWidth) {
+        displayText = displayText.slice(0, -1);
+      }
+      displayText = displayText + ellipsis;
+    }
+
     if (aligns[colIdx] === "left") {
-      page.drawText(text, { x: x0 + padX, y: yPos, size, font: fontUsed, color });
+      page.drawText(displayText, { x: x0 + padX, y: yPos, size, font: fontUsed, color });
     } else if (aligns[colIdx] === "right") {
-      drawRight(page, text, x1 - padX, yPos, size, fontUsed, color);
+      drawRight(page, displayText, x1 - padX, yPos, size, fontUsed, color);
     } else {
       // center
-      const w = fontUsed.widthOfTextAtSize(text, size);
+      const w = fontUsed.widthOfTextAtSize(displayText, size);
       const cx = (x0 + x1) / 2;
-      page.drawText(text, { x: cx - w / 2, y: yPos, size, font: fontUsed, color });
+      page.drawText(displayText, { x: cx - w / 2, y: yPos, size, font: fontUsed, color });
     }
   }
 
@@ -406,31 +421,43 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   for (let i = 0; i < headerLabels.length; i++) {
     drawInCell(headerLabels[i], i, y + 2, 8, fontBold, COLORS.grey);
   }
-  y -= 22;
+  // y est désormais à headerBottomY (= bas du header, top de la 1ère row)
+  y = headerBottomY;
 
   // ─── 2. Body (lignes) ───
+  // Chaque row a une hauteur de 20pt. La baseline du texte est placée
+  // à `cellBaselineOffset` au-dessus du bas de la cellule pour centrer
+  // verticalement (font size 9 → texte de ~7pt de haut, placé à 6pt
+  // au-dessus du bas pour un blanc d'environ 7pt en haut, 6pt en bas).
+  const rowHeight = 20;
+  const cellBaselineOffset = 6;
   const rowSeparators = [];
   for (const l of (lines || [])) {
-    const desc = (l.description || "").slice(0, 60);
+    const desc = (l.description || "").slice(0, 80);
     const ht = (Number(l.line_ht_cents) / 100).toFixed(2);
     const pu = (Number(l.unit_price_ht_cents) / 100).toFixed(2);
     const qty = String(Number(l.quantity).toFixed(2)).replace(/\.00$/, "");
     const unit = l.unit || "u";
 
-    drawInCell(desc, 0, y, 9, font, COLORS.dark);
-    drawInCell(qty, 1, y, 9, font, COLORS.dark);
-    drawInCell(unit, 2, y, 9, font, COLORS.dark);
-    drawInCell(pu + " €", 3, y, 9, font, COLORS.dark);
+    // Top et bottom de cette row
+    const rowTopY = y;
+    const rowBottomY = y - rowHeight;
+    const baselineY = rowBottomY + cellBaselineOffset;
+
+    drawInCell(desc, 0, baselineY, 9, font, COLORS.dark);
+    drawInCell(qty, 1, baselineY, 9, font, COLORS.dark);
+    drawInCell(unit, 2, baselineY, 9, font, COLORS.dark);
+    drawInCell(pu + " €", 3, baselineY, 9, font, COLORS.dark);
     if (!isMargeTva) {
-      drawInCell(Number(l.vat_rate).toFixed(0) + "%", 4, y, 9, font, COLORS.dark);
-      drawInCell(ht + " €", 5, y, 9, font, COLORS.dark);
+      drawInCell(Number(l.vat_rate).toFixed(0) + "%", 4, baselineY, 9, font, COLORS.dark);
+      drawInCell(ht + " €", 5, baselineY, 9, font, COLORS.dark);
     } else {
-      drawInCell(ht + " €", 4, y, 9, font, COLORS.dark);
+      drawInCell(ht + " €", 4, baselineY, 9, font, COLORS.dark);
     }
-    y -= 16;
-    rowSeparators.push(y + 2);
+    y = rowBottomY;
+    rowSeparators.push(rowBottomY); // séparateur exactement au bas de cette row
   }
-  const tableContentBottomY = y + 2;
+  const tableContentBottomY = y;
 
   // ─── 3. Bordures (tracées en DERNIER, par-dessus le contenu) ───
   // Horizontales : top, sous-header, séparateurs entre rows, bottom
