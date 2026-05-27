@@ -254,6 +254,12 @@ export function Sidebar({ token, company, user, onSignOut }) {
             <div className="nav-section">
               <div className="nav-label">{t("Conformité") || "Conformité"}</div>
 
+              {/* v8.40 — Lien direct vers la page de gestion du cabinet comptable */}
+              <NavLink to="/settings/firm-link" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="handshake" className="nav-icon" />
+                {t("Mon comptable") || "Mon comptable"}
+              </NavLink>
+
               {modules.vat && (
                 <NavLink to="/vat" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                   <Icon name="euro" className="nav-icon" />

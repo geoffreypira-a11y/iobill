@@ -366,6 +366,9 @@ function AuthedLayout({ session, company, onSignOut }) {
  * FirmLayout — Layout minimal pour les utilisateurs sans company (comptables).
  * Pas de NotificationBell, pas d'OnboardingTour, pas d'AdminModeToggle.
  * Juste une sidebar simplifiée et le contenu.
+ *
+ * v8.40 — Régression A corrigée : retrait de "Réglages cabinet" du menu
+ * principal car déjà présent dans le popup de la carte cabinet (footer).
  */
 function FirmLayout({ session, onSignOut }) {
   return (
@@ -378,12 +381,11 @@ function FirmLayout({ session, onSignOut }) {
           Mode Cabinet
         </div>
 
-        {/* Menu */}
+        {/* Menu — "Réglages cabinet" retiré v8.40 (déjà dans le popup ci-dessous) */}
         <nav style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
           <a href="/firm" className="nav-item">📊 Tableau de bord</a>
           <a href="/firm/clients" className="nav-item">👥 Mes clients</a>
           <a href="/firm/messages" className="nav-item">💬 Messages</a>
-          <a href="/firm/settings" className="nav-item">⚙ Réglages cabinet</a>
         </nav>
 
         {/* Bas : carte cabinet (logo + nom + email) */}

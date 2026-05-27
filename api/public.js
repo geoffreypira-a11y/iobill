@@ -295,6 +295,66 @@ async function getSignedLogoUrl(path, expiresIn = 3600) {
   }
 }
 
+// v8.39 — Upload un logo base64 (depuis IOCAR par ex.) vers le bucket
+// company-logos d'IOBILL. Retourne le path à stocker dans companies.logo_url.
+//
+// Accepte les data URLs : "data:image/png;base64,..." ou "data:image/jpeg;base64,..."
+// ou simplement la chaîne base64 brute (png par défaut).
+//
+// Le path retourné est de la forme "external/{companyId}.{ext}".
+async function uploadLogoFromBase64(companyId, base64Input) {
+  if (!base64Input || typeof base64Input !== "string") return null;
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+
+  // Parse data URL ou base64 brut
+  let mime = "image/png";
+  let b64 = base64Input;
+  const dataMatch = base64Input.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataMatch) {
+    mime = dataMatch[1];
+    b64 = dataMatch[2];
+  }
+
+  // Garde-fou : taille raisonnable (max 2 MB en base64 ≈ 1.5 MB binaire)
+  if (b64.length > 2_700_000) {
+    console.warn("[uploadLogoFromBase64] logo trop volumineux:", b64.length);
+    return null;
+  }
+
+  // Détecte l'extension depuis le MIME
+  const ext = mime.includes("png") ? "png"
+    : mime.includes("jpeg") || mime.includes("jpg") ? "jpg"
+    : mime.includes("webp") ? "webp"
+    : mime.includes("svg") ? "svg"
+    : "png";
+
+  // Décode base64 → Buffer
+  const buffer = Buffer.from(b64, "base64");
+  const path = `external/${companyId}.${ext}`;
+
+  // Upload via Storage REST API (upsert pour remplacer si existe)
+  const r = await fetch(`${url}/storage/v1/object/company-logos/${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      apikey: key,
+      "Content-Type": mime,
+      "x-upsert": "true"
+    },
+    body: buffer
+  });
+
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    console.error("[uploadLogoFromBase64] FAIL", r.status, errText);
+    return null;
+  }
+
+  return path;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // EXTERNAL — Pont API pour les apps de l'écosystème OWL (IOCAR, IOBTP, ...)
 //
@@ -407,7 +467,16 @@ async function handleLinkAccount(body, res) {
       source_app,
       external_ref: String(external_ref),
       external_managed_fields: managedFields,
-      vat_regime: "franchise"
+      // v8.39 — NE PAS forcer vat_regime: "franchise" par défaut !
+      // Sans valeur explicite, vat_regime reste NULL et le PDF n'affichera
+      // PAS la mention "art 293 B" (qui s'applique uniquement à la franchise).
+      // L'user IOBILL configurera son régime dans ses paramètres si besoin.
+      //
+      // v8.40 — Régression C : sub_status='active' par défaut pour les
+      // ponts écosystème (IOCAR offre l'accès IOBILL aux garages abonnés,
+      // donc pas de période d'essai ni de blocage "mode découverte").
+      sub_status: "active",
+      is_active: true
     });
     const newCompany = insertedRows && insertedRows[0];
     if (!newCompany) return json(res, 500, { error: "Échec création company IOBILL" });
@@ -487,6 +556,23 @@ async function handlePushInvoice(body, res) {
         fillEmpty[k] = v;
       }
     }
+
+    // v8.39 — Logo base64 : on upload vers le bucket et on remplit logo_url.
+    // L'app source peut envoyer { logo_base64: "data:image/png;base64,..." }.
+    // On upload UNIQUEMENT si le logo_url côté IOBILL est vide (pour ne pas
+    // écraser un logo défini manuellement par l'user IOBILL).
+    if (body.company_update.logo_base64 && !company.logo_url) {
+      try {
+        const newLogoUrl = await uploadLogoFromBase64(company.id, body.company_update.logo_base64);
+        if (newLogoUrl) {
+          fillEmpty.logo_url = newLogoUrl;
+        }
+      } catch (e) {
+        console.warn("[push_invoice] logo upload failed:", e.message);
+        // On continue sans bloquer la facture
+      }
+    }
+
     if (Object.keys(fillEmpty).length > 0) {
       await applyCompanyUpdate(company.id, fillEmpty, /*managed*/ true);
       // Recharge la company pour les snapshots à venir
@@ -516,16 +602,17 @@ async function handlePushInvoice(body, res) {
     );
 
     // 3) Build payload invoice
-    const totals = computeTotalsFromLines(invoice.lines, invoice.totals);
+    // v8.39 — Passe les débours pour calculer le grand_total (lines + débours)
+    const totals = computeTotalsFromLines(invoice.lines, invoice.totals, invoice.debours);
     const companySnapshot = buildCompanySnapshot(company) || {};
     const clientSnapshot = (await buildClientSnapshot(clientId, invoice.client || {})) || {};
 
-    // v8.37 — Cohérence forcée : si status=paid, paid_cents == total_ttc_cents.
+    // v8.37 — Cohérence forcée : si status=paid, paid_cents == grand_total (lines + débours).
     // Évite tout désalignement entre le statut et les totaux.
     const requestedStatus = invoice.status || "issued";
     const isPaidStatus = requestedStatus === "paid";
     const paidCents = isPaidStatus
-      ? totals.total_ttc_cents
+      ? (totals.grand_total_cents || totals.total_ttc_cents)
       : totals.paid_cents;
 
     // v8.38 — Mode métier : auto-déduit depuis source_app
@@ -558,6 +645,10 @@ async function handlePushInvoice(body, res) {
       business_mode: businessMode,
       vehicle_meta: invoice.vehicle_meta || null,
       business_mentions: invoice.business_mentions || null,
+      // v8.39 — Débours (CG, malus...) hors base TVA mais à payer par le client
+      debours: invoice.debours || null,
+      // v8.39 — Régime TVA spécifique à cette facture (par véhicule)
+      vat_regime: invoice.vat_regime || null,
       // issued_at = maintenant car la facture est figée à la création depuis l'externe
       issued_at: new Date().toISOString()
     };
@@ -1000,7 +1091,9 @@ async function upsertClient(companyId, cli) {
 }
 
 // Calcule les totaux de facture à partir des lignes (cents)
-function computeTotalsFromLines(lines, providedTotals) {
+// v8.39 — Accepte un 3e paramètre `debours` (array) qui s'ajoute au TTC
+// sans entrer dans la base TVA (cf art. 267 II 2° CGI).
+function computeTotalsFromLines(lines, providedTotals, debours) {
   const breakdown = {};
   let ht = 0, vat = 0, ttc = 0;
   for (const ln of lines) {
@@ -1020,10 +1113,24 @@ function computeTotalsFromLines(lines, providedTotals) {
   }
   const breakdownArr = Object.values(breakdown);
 
+  // v8.39 — Ajoute les débours au total TTC final (à payer)
+  // sans toucher à ht ni vat ni breakdown (ils restent hors base TVA).
+  let debourCents = 0;
+  if (Array.isArray(debours)) {
+    for (const d of debours) {
+      debourCents += Math.abs(Number(d.amount_cents || 0));
+    }
+  }
+  const totalAvecDebours = ttc + debourCents;
+
   return {
     subtotal_ht_cents: ht,
     vat_total_cents: vat,
+    // total_ttc_cents = lignes uniquement (sans débours) — base TVA pure
     total_ttc_cents: ttc,
+    // v8.39 — Champs débours pour reflet client + comptable
+    debour_total_cents: debourCents,
+    grand_total_cents: totalAvecDebours,
     paid_cents: providedTotals?.paid_cents != null ? Number(providedTotals.paid_cents) : 0,
     vat_breakdown: breakdownArr
   };
