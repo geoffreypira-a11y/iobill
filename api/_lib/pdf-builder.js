@@ -331,94 +331,142 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   }
 
   // v8.39 — Détermine le régime TVA pour adapter l'affichage
-  // En mode marge (art. 297 A), on cache la colonne TVA et on n'affiche
-  // pas le breakdown TVA dans les totaux (mention légale en bas).
   const isMargeTva = doc.vat_regime === "margin_297a" || company.vat_regime === "margin_297a";
 
-  // ─── Tableau des lignes — v8.40 vrai tableau avec bordures ───
-  // Définition des colonnes : x = bord gauche de la colonne, w = largeur
-  // On mémorise les frontières verticales pour tracer le quadrillage
+  // ─── Tableau des lignes — v8.40.2 : alignement propre dans cellules ─
+  //
+  // Approche : chaque colonne a un x0 (bord gauche) et x1 (bord droit),
+  // calculés à partir de largeurs relatives qui somment au tableWidth.
+  // Le texte est ensuite aligné DANS sa cellule (left/center/right) avec
+  // un padding interne, garantissant qu'aucune valeur ne touche les
+  // bordures verticales.
   const tableLeft = 40;
   const tableRight = width - 40;
   const tableWidth = tableRight - tableLeft;
-  // Calcul des bordures de colonnes (les positions x sont les SÉPARATEURS entre colonnes)
-  // Désignation | Qté | Unité | P.U. | [TVA] | Total
-  const colBordersFull = [tableLeft, 295, 325, 365, 425, 480, tableRight];
-  const colBordersMarge = [tableLeft, 325, 365, 415, tableRight - 95, tableRight];
-  const cols = isMargeTva ? colBordersMarge : colBordersFull;
 
+  // Largeurs relatives des colonnes (doivent sommer à 1.0)
+  // Mode TVA normale : [Désignation, Qté, Unité, P.U., TVA, Total]
+  // Mode TVA marge   : [Désignation, Qté, Unité, P.U., Total]
+  const widthsFull  = [0.48, 0.07, 0.08, 0.13, 0.08, 0.16];
+  const widthsMarge = [0.52, 0.08, 0.09, 0.14, 0.17];
+  const widths = isMargeTva ? widthsMarge : widthsFull;
+  const headerLabels = isMargeTva
+    ? ["Désignation", "Qté", "Unité", "P.U. TTC", "Total TTC"]
+    : ["Désignation", "Qté", "Unité", "P.U. HT", "TVA", "Total HT"];
+  // Alignement par colonne
+  const aligns = isMargeTva
+    ? ["left", "center", "center", "right", "right"]
+    : ["left", "center", "center", "right", "center", "right"];
+
+  // Calcule les bornes x0/x1 de chaque colonne
+  const colBounds = [];
+  let cursorX = tableLeft;
+  for (const w of widths) {
+    const x0 = cursorX;
+    const x1 = cursorX + tableWidth * w;
+    colBounds.push({ x0, x1 });
+    cursorX = x1;
+  }
+  // Garantit que la dernière colonne touche pile le bord droit
+  colBounds[colBounds.length - 1].x1 = tableRight;
+
+  // Couleurs des bordures
+  const borderColor = rgb(0.55, 0.55, 0.6);
+  const innerLineColor = rgb(0.78, 0.78, 0.82);
+
+  // Helper : dessine du texte dans une cellule selon l'alignement défini
+  function drawInCell(text, colIdx, yPos, size, fontUsed, color) {
+    const padX = 6;
+    const { x0, x1 } = colBounds[colIdx];
+    if (aligns[colIdx] === "left") {
+      page.drawText(text, { x: x0 + padX, y: yPos, size, font: fontUsed, color });
+    } else if (aligns[colIdx] === "right") {
+      drawRight(page, text, x1 - padX, yPos, size, fontUsed, color);
+    } else {
+      // center
+      const w = fontUsed.widthOfTextAtSize(text, size);
+      const cx = (x0 + x1) / 2;
+      page.drawText(text, { x: cx - w / 2, y: yPos, size, font: fontUsed, color });
+    }
+  }
+
+  // ─── 1. Header ───
   const headerY = y;
   const headerHeight = 18;
-  // En-tête : fond beige clair
+  const headerTopY = headerY + headerHeight - 4;
+  const headerBottomY = headerY - 4;
+
+  // Fond beige du header
   page.drawRectangle({
     x: tableLeft, y: headerY - 4,
     width: tableWidth, height: headerHeight,
     color: rgb(0.96, 0.95, 0.92)
   });
-  // En-tête : bordure top et bottom
-  page.drawLine({
-    start: { x: tableLeft, y: headerY + headerHeight - 4 },
-    end: { x: tableRight, y: headerY + headerHeight - 4 },
-    thickness: 0.5, color: COLORS.lineGrey
-  });
-  page.drawLine({
-    start: { x: tableLeft, y: headerY - 4 },
-    end: { x: tableRight, y: headerY - 4 },
-    thickness: 0.5, color: COLORS.lineGrey
-  });
-
-  // Libellés colonnes
-  page.drawText("Désignation", { x: tableLeft + 4, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
-  drawRight(page, "Qté", 322, y + 2, 8, fontBold, COLORS.grey);
-  page.drawText("Unité", { x: 332, y: y + 2, size: 8, font: fontBold, color: COLORS.grey });
-  drawRight(page, isMargeTva ? "P.U. TTC" : "P.U. HT", isMargeTva ? 412 : 422, y + 2, 8, fontBold, COLORS.grey);
-  if (!isMargeTva) {
-    drawRight(page, "TVA", 477, y + 2, 8, fontBold, COLORS.grey);
+  // Libellés colonnes (alignés selon aligns[])
+  for (let i = 0; i < headerLabels.length; i++) {
+    drawInCell(headerLabels[i], i, y + 2, 8, fontBold, COLORS.grey);
   }
-  drawRight(page, isMargeTva ? "Total TTC" : "Total HT", tableRight - 4, y + 2, 8, fontBold, COLORS.grey);
   y -= 22;
 
-  // Mémoriser le Y de début des lignes pour tracer les bordures verticales à la fin
-  const rowsStartY = y + 14; // top du tableau body
-  let lastRowY = y; // sera mis à jour à chaque ligne
-
+  // ─── 2. Body (lignes) ───
+  const rowSeparators = [];
   for (const l of (lines || [])) {
-    const desc = (l.description || "").slice(0, 65);
+    const desc = (l.description || "").slice(0, 60);
     const ht = (Number(l.line_ht_cents) / 100).toFixed(2);
     const pu = (Number(l.unit_price_ht_cents) / 100).toFixed(2);
-    page.drawText(desc, { x: tableLeft + 4, y, size: 9, font, color: COLORS.dark });
-    drawRight(page, String(Number(l.quantity).toFixed(2)).replace(/\.00$/, ""), 322, y, 9, font, COLORS.dark);
-    page.drawText(l.unit || "u", { x: 332, y, size: 9, font, color: COLORS.dark });
-    drawRight(page, pu + " €", isMargeTva ? 412 : 422, y, 9, font, COLORS.dark);
+    const qty = String(Number(l.quantity).toFixed(2)).replace(/\.00$/, "");
+    const unit = l.unit || "u";
+
+    drawInCell(desc, 0, y, 9, font, COLORS.dark);
+    drawInCell(qty, 1, y, 9, font, COLORS.dark);
+    drawInCell(unit, 2, y, 9, font, COLORS.dark);
+    drawInCell(pu + " €", 3, y, 9, font, COLORS.dark);
     if (!isMargeTva) {
-      drawRight(page, Number(l.vat_rate).toFixed(0) + "%", 477, y, 9, font, COLORS.dark);
+      drawInCell(Number(l.vat_rate).toFixed(0) + "%", 4, y, 9, font, COLORS.dark);
+      drawInCell(ht + " €", 5, y, 9, font, COLORS.dark);
+    } else {
+      drawInCell(ht + " €", 4, y, 9, font, COLORS.dark);
     }
-    drawRight(page, ht + " €", tableRight - 4, y, 9, font, COLORS.dark);
-    lastRowY = y - 4;
     y -= 16;
-    // Ligne de séparation horizontale entre rows
+    rowSeparators.push(y + 2);
+  }
+  const tableContentBottomY = y + 2;
+
+  // ─── 3. Bordures (tracées en DERNIER, par-dessus le contenu) ───
+  // Horizontales : top, sous-header, séparateurs entre rows, bottom
+  page.drawLine({
+    start: { x: tableLeft, y: headerTopY },
+    end: { x: tableRight, y: headerTopY },
+    thickness: 1.0, color: borderColor
+  });
+  page.drawLine({
+    start: { x: tableLeft, y: headerBottomY },
+    end: { x: tableRight, y: headerBottomY },
+    thickness: 1.0, color: borderColor
+  });
+  for (let i = 0; i < rowSeparators.length - 1; i++) {
     page.drawLine({
-      start: { x: tableLeft, y: y + 2 },
-      end: { x: tableRight, y: y + 2 },
-      thickness: 0.3, color: COLORS.lineGrey
+      start: { x: tableLeft, y: rowSeparators[i] },
+      end: { x: tableRight, y: rowSeparators[i] },
+      thickness: 0.5, color: innerLineColor
     });
   }
-
-  // Bordure horizontale BOTTOM du tableau (plus marquée)
   page.drawLine({
-    start: { x: tableLeft, y: y + 2 },
-    end: { x: tableRight, y: y + 2 },
-    thickness: 0.5, color: COLORS.lineGrey
+    start: { x: tableLeft, y: tableContentBottomY },
+    end: { x: tableRight, y: tableContentBottomY },
+    thickness: 1.0, color: borderColor
   });
 
-  // Bordures VERTICALES — du haut du header (headerY + 14) au bas du tableau (y + 2)
-  const tableTopY = headerY + 14;
-  const tableBottomY = y + 2;
-  for (const colX of cols) {
+  // Verticales : à chaque x0 et x1 des colonnes
+  // (premier x0 + tous les x1)
+  const verticalXs = [colBounds[0].x0, ...colBounds.map(c => c.x1)];
+  for (let i = 0; i < verticalXs.length; i++) {
+    const isOuter = (i === 0 || i === verticalXs.length - 1);
     page.drawLine({
-      start: { x: colX, y: tableTopY },
-      end: { x: colX, y: tableBottomY },
-      thickness: 0.4, color: COLORS.lineGrey
+      start: { x: verticalXs[i], y: headerTopY },
+      end: { x: verticalXs[i], y: tableContentBottomY },
+      thickness: isOuter ? 1.0 : 0.5,
+      color: isOuter ? borderColor : innerLineColor
     });
   }
 
@@ -740,6 +788,12 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
 export function drawRight(page, text, xRight, y, size, font, color) {
   const w = font.widthOfTextAtSize(text, size);
   page.drawText(text, { x: xRight - w, y, size, font, color });
+}
+
+// v8.40 — Centre horizontalement un texte autour de xCenter
+export function drawCenter(page, text, xCenter, y, size, font, color) {
+  const w = font.widthOfTextAtSize(text, size);
+  page.drawText(text, { x: xCenter - w / 2, y, size, font, color });
 }
 
 export function drawWrapped(page, text, x, y, maxWidth, font, size, color, lineHeight = 12) {
