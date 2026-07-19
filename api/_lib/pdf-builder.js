@@ -133,8 +133,10 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       );
       const wmW = logoEmbeddedRef.width * wmRatio;
       const wmH = logoEmbeddedRef.height * wmRatio;
-      // v8.48.3 — Angle -28° pour matcher exactement le filigrane IOCAR (CSS rotate(-28deg))
-      const angleDeg = -28;
+      // v8.48.5 — Angle +28° dans pdf-lib pour matcher visuellement le -28° CSS d'IOCAR
+      // Note : le repère PDF a Y qui va vers le HAUT (inverse du DOM/CSS où Y va vers le BAS).
+      // Donc rotate(-28deg) en CSS = rotate(+28) en pdf-lib pour le même rendu visuel.
+      const angleDeg = 28;
       const angleRad = (angleDeg * Math.PI) / 180;
       const cx = width / 2;
       const cy = height / 2;
