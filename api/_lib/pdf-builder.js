@@ -84,6 +84,10 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   let leftBlockY = y;
   let leftBlockBottom = y;
 
+  // v8.47 — On garde la référence du logo embarqué pour pouvoir le
+  // dessiner ensuite en filigrane si source_app='iocar' (ou autre app OWL)
+  let logoEmbeddedRef = null;
+
   // 1) Tenter d'embarquer le logo
   let logoEmbedded = false;
   if (company?.logo_url) {
@@ -96,6 +100,7 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
         if (isPng) embedded = await pdfDoc.embedPng(logoBytes);
         else if (isJpg) embedded = await pdfDoc.embedJpg(logoBytes);
         if (embedded) {
+          logoEmbeddedRef = embedded; // v8.47 — pour filigrane
           // Logo max 200x60 (pattern IOcar)
           const maxW = 200, maxH = 60;
           const ratio = Math.min(maxW / embedded.width, maxH / embedded.height);
@@ -113,6 +118,30 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       }
     } catch (e) {
       console.warn("[pdf-builder] Logo embed failed:", e?.message);
+    }
+  }
+
+  // v8.47 — FILIGRANE : logo garage en fond de page (très transparent, grand, centré)
+  // Actif uniquement pour les apps externes (source_app renseigné) et si logo disponible.
+  // Dessiné TÔT (avant le reste du contenu) pour être en arrière-plan.
+  if (logoEmbeddedRef && company?.source_app && company.source_app !== "iobill") {
+    try {
+      const wmMaxSize = 380;
+      const wmRatio = Math.min(
+        wmMaxSize / logoEmbeddedRef.width,
+        wmMaxSize / logoEmbeddedRef.height
+      );
+      const wmW = logoEmbeddedRef.width * wmRatio;
+      const wmH = logoEmbeddedRef.height * wmRatio;
+      page.drawImage(logoEmbeddedRef, {
+        x: (width - wmW) / 2,
+        y: (height - wmH) / 2,
+        width: wmW,
+        height: wmH,
+        opacity: 0.06 // très discret
+      });
+    } catch (e) {
+      console.warn("[pdf-builder] Filigrane failed:", e?.message);
     }
   }
 
@@ -261,8 +290,33 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     const vm = doc.vehicle_meta;
     const vehLabel = [vm.marque, vm.modele, vm.finition].filter(Boolean).join(" ");
     if (vehLabel || vm.plate) {
-      // Hauteur du bloc : 50px de base + 14 par ligne d'info (2 colonnes)
-      const blockH = 56;
+      // v8.47 — Infos enrichies sur 2 colonnes (max 5 lignes chacune)
+      // Colonne gauche : identité + kilométrage + genre
+      // Colonne droite : identification VIN + puissance + carburant
+      const infosLeft = [];
+      const infosRight = [];
+      if (vm.annee) infosLeft.push(`Année : ${vm.annee}`);
+      if (vm.date_mise_en_circulation) infosLeft.push(`1ère circ. : ${vm.date_mise_en_circulation}`);
+      if (vm.kilometrage) infosLeft.push(`Kilométrage : ${Number(vm.kilometrage).toLocaleString("fr-FR")} km`);
+      if (vm.genre) infosLeft.push(`Genre : ${vm.genre}`);
+      if (vm.options) infosLeft.push(`Options : ${vm.options}`);
+      if (vm.vin) infosRight.push(`VIN : ${vm.vin}`);
+      if (vm.carburant) infosRight.push(`Carburant : ${vm.carburant}`);
+      // Puissance : combine ch et CV fiscaux si disponibles
+      if (vm.puissance_cv || vm.puissance_fiscale) {
+        const powerParts = [];
+        if (vm.puissance_cv) powerParts.push(`${vm.puissance_cv} ch`);
+        if (vm.puissance_fiscale) powerParts.push(`${vm.puissance_fiscale} CV`);
+        infosRight.push(`Puissance : ${powerParts.join(" · ")}`);
+      }
+      // Garantie
+      if (vm.garantie_mois && vm.garantie_mois > 0) {
+        infosRight.push(`Garantie : ${vm.garantie_mois} mois`);
+      }
+
+      // Calcul de la hauteur dynamique du bloc
+      const nbInfoLines = Math.max(infosLeft.length, infosRight.length);
+      const blockH = 40 + (nbInfoLines * 11) + 4; // 40 base + 11 par ligne + 4 padding
       const blockW = width - 80;
       const blockY = y - blockH + 14;
 
@@ -272,7 +326,7 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
         width: blockW, height: blockH,
         borderColor: brandRgb,
         borderWidth: 0.8,
-        color: rgb(0.99, 0.97, 0.92), // gold très léger
+        color: rgb(0.99, 0.97, 0.92),
         opacity: 1
       });
 
@@ -289,7 +343,6 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       page.drawText(vehLabel || "Véhicule", { x: 50, y: titleY, size: 11, font: fontBold, color: COLORS.dark });
 
       if (vm.plate) {
-        // Plaque comme un mini-encadré noir gold (style plaque française)
         const plateText = String(vm.plate).toUpperCase();
         const plateW = fontBold.widthOfTextAtSize(plateText, 10) + 16;
         page.drawRectangle({
@@ -309,18 +362,9 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
         });
       }
 
-      // Ligne 2 + 3 : infos sur 2 colonnes (gauche / droite)
-      const infosLeft = [];
-      const infosRight = [];
-      if (vm.kilometrage) infosLeft.push(`Kilométrage : ${Number(vm.kilometrage).toLocaleString("fr-FR")} km`);
-      if (vm.annee) infosLeft.push(`Année : ${vm.annee}`);
-      if (vm.carburant) infosLeft.push(`Carburant : ${vm.carburant}`);
-      if (vm.vin) infosRight.push(`VIN : ${vm.vin}`);
-      if (vm.genre) infosRight.push(`Genre : ${vm.genre}`);
-
+      // Lignes d'infos sur 2 colonnes
       let infoY = titleY - 14;
-      const maxInfoLines = Math.max(infosLeft.length, infosRight.length);
-      for (let i = 0; i < maxInfoLines; i++) {
+      for (let i = 0; i < nbInfoLines; i++) {
         if (infosLeft[i]) page.drawText(infosLeft[i], { x: 50, y: infoY, size: 8, font, color: COLORS.grey });
         if (infosRight[i]) page.drawText(infosRight[i], { x: width / 2, y: infoY, size: 8, font, color: COLORS.grey });
         infoY -= 11;
