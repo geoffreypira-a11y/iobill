@@ -205,16 +205,54 @@ async function handleRequest(req, res) {
       if (!companyId) return json(res, 400, { error: "companyId manquant" });
       const c = await sbAdmin.selectOne("companies", `id=eq.${companyId}`);
       if (!c) return json(res, 404, { error: "Company introuvable" });
-      // CASCADE manuel (FK CASCADE devrait suffire mais on est explicite)
+      // v8.46 — CASCADE manuel dans le BON ORDRE :
+      // 1) credit_notes AVANT invoices (FK invoice_id NOT NULL avec ON DELETE RESTRICT
+      //    → interdit de supprimer une invoice tant qu'un avoir la référence)
+      // 2) payments avant invoices (par prudence, FK sur invoice_id en SET NULL)
+      // 3) Tables externes du pont IOCAR/IOBILL (external_api_keys a CASCADE
+      //    mais on est explicite pour ne pas dépendre du CASCADE deferred)
+      // 4) Tables cabinet (firm_*) — le membre & lien pointent vers accounting_firms
+      //    et company_id, on nettoie les liens
       const cascadeTables = [
-        "invoices", "credit_notes", "quotes", "clients",
-        "purchases", "payments", "support_tickets", "notifications", "audit_log"
+        "credit_notes",         // 1. AVANT invoices (FK RESTRICT)
+        "payments",             // 2. paiements
+        "invoices",             // 3. maintenant on peut virer les factures
+        "quotes",               // 4. devis
+        "purchases",            // 5. achats
+        "clients",              // 6. CRM
+        "support_tickets",
+        "notifications",
+        "notifications_firm",
+        "firm_signals",         // signalements comptables
+        "firm_messages",        // messagerie
+        "firm_threads",
+        "firm_client_links",    // liens cabinet↔client
+        "external_api_keys",    // tokens IOCAR/etc
+        "audit_log"
       ];
+      const deleteErrors = [];
       for (const t of cascadeTables) {
-        try { await sbAdmin.delete(t, `company_id=eq.${companyId}`); } catch {}
+        try {
+          await sbAdmin.delete(t, `company_id=eq.${companyId}`);
+        } catch (e) {
+          // On log mais on continue : certaines tables peuvent ne pas exister
+          // sur toutes les instances (ex. firm_* si Mode Comptable pas installé)
+          deleteErrors.push({ table: t, error: String(e.message || e) });
+          console.warn(`[delete_company] ${t} → ${e.message}`);
+        }
       }
-      const ok = await sbAdmin.delete("companies", `id=eq.${companyId}`);
-      if (!ok) return json(res, 500, { error: "Échec delete company" });
+      try {
+        const ok = await sbAdmin.delete("companies", `id=eq.${companyId}`);
+        if (!ok) return json(res, 500, {
+          error: "Échec delete company (FK restante ?)",
+          cascade_errors: deleteErrors
+        });
+      } catch (e) {
+        return json(res, 500, {
+          error: `Échec delete company : ${e.message || e}`,
+          cascade_errors: deleteErrors
+        });
+      }
       // auth.users best-effort
       if (c.user_id) {
         try {
@@ -224,7 +262,7 @@ async function handleRequest(req, res) {
           });
         } catch {}
       }
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, cascade_errors: deleteErrors });
     }
 
     // ─── EXPORT / BACKUP ─────────────────────────────────
