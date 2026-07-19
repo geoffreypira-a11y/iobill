@@ -156,13 +156,9 @@ async function handleRequest(req, res) {
       try {
         await sbAdmin.delete("document_lines", `document_type=eq.${lineType}&document_id=eq.${id}`);
       } catch {}
-      // v8.46 — Si on supprime une invoice, il faut d'abord supprimer les
-      // avoirs qui la référencent (credit_notes.invoice_id a ON DELETE RESTRICT).
-      // C'est une protection comptable normale, mais en mode admin on cascade.
       const cascadeDetails = { credit_notes_deleted: 0, payments_unlinked: 0 };
       if (table === "invoices") {
         try {
-          // Récupère les avoirs liés pour aussi supprimer leurs document_lines
           const linkedCNs = await sbAdmin.select("credit_notes", {
             filter: `invoice_id=eq.${id}`,
             select: "id"
@@ -177,14 +173,30 @@ async function handleRequest(req, res) {
         } catch (e) {
           console.warn("[delete_doc] cascade credit_notes échec :", e.message);
         }
-        // Payments ont ON DELETE SET NULL donc pas besoin, mais on peut compter
       }
+      // v8.46 bis — Fetch direct pour capturer le vrai message d'erreur PostgREST
+      // (au lieu de perdre l'info dans sbAdmin.delete qui retourne juste boolean)
       try {
-        const ok = await sbAdmin.delete(table, `id=eq.${id}`);
-        if (!ok) return json(res, 500, {
-          error: "Échec suppression (FK bloquante restante ?)",
-          cascade: cascadeDetails
+        const supaUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+        const srKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const r = await fetch(`${supaUrl}/rest/v1/${table}?id=eq.${id}`, {
+          method: "DELETE",
+          headers: {
+            apikey: srKey,
+            Authorization: `Bearer ${srKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal"
+          }
         });
+        if (!r.ok) {
+          const pgError = await r.text();
+          return json(res, 500, {
+            error: `Échec suppression (${r.status})`,
+            postgrest_error: pgError,
+            cascade: cascadeDetails,
+            hint: "Vérifier les FK ou RLS sur cette table"
+          });
+        }
       } catch (e) {
         return json(res, 500, {
           error: `Échec suppression : ${e.message || e}`,
