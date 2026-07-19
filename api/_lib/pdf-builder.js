@@ -1,7 +1,7 @@
 // IO BILL - Generation PDF partagee (devis + factures + avoirs)
 // pdf-lib uniquement, pas d'autre dependance.
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
 const COLORS = {
   gold: rgb(0.83, 0.66, 0.26),
@@ -121,24 +121,39 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     }
   }
 
-  // v8.47 — FILIGRANE : logo garage en fond de page (très transparent, grand, centré)
+  // v8.47.1 — FILIGRANE : logo garage en fond de page, EN DIAGONALE (-30°)
   // Actif uniquement pour les apps externes (source_app renseigné) et si logo disponible.
   // Dessiné TÔT (avant le reste du contenu) pour être en arrière-plan.
   if (logoEmbeddedRef && company?.source_app && company.source_app !== "iobill") {
     try {
-      const wmMaxSize = 380;
+      const wmMaxSize = 400;
       const wmRatio = Math.min(
         wmMaxSize / logoEmbeddedRef.width,
         wmMaxSize / logoEmbeddedRef.height
       );
       const wmW = logoEmbeddedRef.width * wmRatio;
       const wmH = logoEmbeddedRef.height * wmRatio;
+      // Rotation -30° : la position (x, y) est le coin bas-gauche AVANT rotation.
+      // Pour centrer visuellement l'image APRÈS rotation autour de son propre centre,
+      // on translate le point d'ancrage par le vecteur de rotation.
+      const angleDeg = -30;
+      const angleRad = (angleDeg * Math.PI) / 180;
+      const cx = width / 2;
+      const cy = height / 2;
+      // Point d'ancrage = centre - rotation(dimensions/2)
+      // cos et sin pour tourner (-wmW/2, -wmH/2) vers le nouveau point d'origine
+      const cos = Math.cos(angleRad);
+      const sin = Math.sin(angleRad);
+      const halfW = wmW / 2;
+      const halfH = wmH / 2;
+      const x = cx - (halfW * cos - halfH * sin);
+      const y = cy - (halfW * sin + halfH * cos);
       page.drawImage(logoEmbeddedRef, {
-        x: (width - wmW) / 2,
-        y: (height - wmH) / 2,
+        x, y,
         width: wmW,
         height: wmH,
-        opacity: 0.06 // très discret
+        rotate: degrees(angleDeg),
+        opacity: 0.06
       });
     } catch (e) {
       console.warn("[pdf-builder] Filigrane failed:", e?.message);
