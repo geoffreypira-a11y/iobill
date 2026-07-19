@@ -133,10 +133,8 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       );
       const wmW = logoEmbeddedRef.width * wmRatio;
       const wmH = logoEmbeddedRef.height * wmRatio;
-      // Rotation -30° : la position (x, y) est le coin bas-gauche AVANT rotation.
-      // Pour centrer visuellement l'image APRÈS rotation autour de son propre centre,
-      // on translate le point d'ancrage par le vecteur de rotation.
-      const angleDeg = -30;
+      // v8.48.1 — Rotation -60° pour matcher l'orientation du filigrane IOCAR
+      const angleDeg = -60;
       const angleRad = (angleDeg * Math.PI) / 180;
       const cx = width / 2;
       const cy = height / 2;
