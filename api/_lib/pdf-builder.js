@@ -133,8 +133,8 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       );
       const wmW = logoEmbeddedRef.width * wmRatio;
       const wmH = logoEmbeddedRef.height * wmRatio;
-      // v8.48.1 — Rotation -60° pour matcher l'orientation du filigrane IOCAR
-      const angleDeg = -60;
+      // v8.48.3 — Angle -28° pour matcher exactement le filigrane IOCAR (CSS rotate(-28deg))
+      const angleDeg = -28;
       const angleRad = (angleDeg * Math.PI) / 180;
       const cx = width / 2;
       const cy = height / 2;
