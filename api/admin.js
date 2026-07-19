@@ -156,9 +156,42 @@ async function handleRequest(req, res) {
       try {
         await sbAdmin.delete("document_lines", `document_type=eq.${lineType}&document_id=eq.${id}`);
       } catch {}
-      const ok = await sbAdmin.delete(table, `id=eq.${id}`);
-      if (!ok) return json(res, 500, { error: "Échec suppression" });
-      return json(res, 200, { ok: true });
+      // v8.46 — Si on supprime une invoice, il faut d'abord supprimer les
+      // avoirs qui la référencent (credit_notes.invoice_id a ON DELETE RESTRICT).
+      // C'est une protection comptable normale, mais en mode admin on cascade.
+      const cascadeDetails = { credit_notes_deleted: 0, payments_unlinked: 0 };
+      if (table === "invoices") {
+        try {
+          // Récupère les avoirs liés pour aussi supprimer leurs document_lines
+          const linkedCNs = await sbAdmin.select("credit_notes", {
+            filter: `invoice_id=eq.${id}`,
+            select: "id"
+          }) || [];
+          for (const cn of linkedCNs) {
+            try {
+              await sbAdmin.delete("document_lines", `document_type=eq.credit_note&document_id=eq.${cn.id}`);
+            } catch {}
+          }
+          await sbAdmin.delete("credit_notes", `invoice_id=eq.${id}`);
+          cascadeDetails.credit_notes_deleted = linkedCNs.length;
+        } catch (e) {
+          console.warn("[delete_doc] cascade credit_notes échec :", e.message);
+        }
+        // Payments ont ON DELETE SET NULL donc pas besoin, mais on peut compter
+      }
+      try {
+        const ok = await sbAdmin.delete(table, `id=eq.${id}`);
+        if (!ok) return json(res, 500, {
+          error: "Échec suppression (FK bloquante restante ?)",
+          cascade: cascadeDetails
+        });
+      } catch (e) {
+        return json(res, 500, {
+          error: `Échec suppression : ${e.message || e}`,
+          cascade: cascadeDetails
+        });
+      }
+      return json(res, 200, { ok: true, cascade: cascadeDetails });
     }
 
     case "toggle_active": {
@@ -208,26 +241,24 @@ async function handleRequest(req, res) {
       // v8.46 — CASCADE manuel dans le BON ORDRE :
       // 1) credit_notes AVANT invoices (FK invoice_id NOT NULL avec ON DELETE RESTRICT
       //    → interdit de supprimer une invoice tant qu'un avoir la référence)
-      // 2) payments avant invoices (par prudence, FK sur invoice_id en SET NULL)
-      // 3) Tables externes du pont IOCAR/IOBILL (external_api_keys a CASCADE
-      //    mais on est explicite pour ne pas dépendre du CASCADE deferred)
-      // 4) Tables cabinet (firm_*) — le membre & lien pointent vers accounting_firms
-      //    et company_id, on nettoie les liens
+      // 2) payments avant invoices (par prudence)
+      // 3) Tables externes du pont IOCAR/IOBILL
+      // 4) Tables cabinet (firm_*) au cas où
       const cascadeTables = [
-        "credit_notes",         // 1. AVANT invoices (FK RESTRICT)
-        "payments",             // 2. paiements
-        "invoices",             // 3. maintenant on peut virer les factures
-        "quotes",               // 4. devis
-        "purchases",            // 5. achats
-        "clients",              // 6. CRM
+        "credit_notes",         // AVANT invoices (FK RESTRICT)
+        "payments",
+        "invoices",
+        "quotes",
+        "purchases",
+        "clients",
         "support_tickets",
         "notifications",
         "notifications_firm",
-        "firm_signals",         // signalements comptables
-        "firm_messages",        // messagerie
+        "firm_signals",
+        "firm_messages",
         "firm_threads",
-        "firm_client_links",    // liens cabinet↔client
-        "external_api_keys",    // tokens IOCAR/etc
+        "firm_client_links",
+        "external_api_keys",
         "audit_log"
       ];
       const deleteErrors = [];
@@ -235,8 +266,6 @@ async function handleRequest(req, res) {
         try {
           await sbAdmin.delete(t, `company_id=eq.${companyId}`);
         } catch (e) {
-          // On log mais on continue : certaines tables peuvent ne pas exister
-          // sur toutes les instances (ex. firm_* si Mode Comptable pas installé)
           deleteErrors.push({ table: t, error: String(e.message || e) });
           console.warn(`[delete_company] ${t} → ${e.message}`);
         }
