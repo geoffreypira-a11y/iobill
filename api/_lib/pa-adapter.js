@@ -82,29 +82,58 @@ function toCents(v) {
 
 /**
  * L'objet renvoyé par SUPER PDP contient `en_invoice` déjà parsé
- * en EN 16931. On mappe vers les colonnes IO BILL.
+ * en EN 16931. Mapping vérifié sur payload réel (v8.48.3) :
+ *   totals.total_without_vat        → HT (string)
+ *   totals.total_with_vat           → TTC (string)
+ *   totals.total_vat_amount.value   → TVA (objet)
+ *   seller.name                     → Fournisseur
+ *   seller.legal_registration_identifier.value  → SIREN
+ *   seller.vat_identifier           → n° TVA
+ *   number                          → numéro facture
+ *   issue_date, payment_due_date    → dates
+ *   currency_code                   → devise
+ *   vat_break_down[]                → détail TVA (attention à l'underscore)
+ *   lines[]                         → lignes détaillées
  */
 export function normalizeInbound(raw, provider) {
   const en = raw.en_invoice || raw.enInvoice || {};
-  const seller = en.seller || en.accounting_supplier_party || {};
-  const totals = en.totals || en.legal_monetary_total || {};
+  const seller = en.seller || {};
+  const totals = en.totals || {};
+  // total_vat_amount peut être un objet {value, currency_code} ou un scalaire
+  const vatRaw = totals.total_vat_amount;
+  const vatValue = vatRaw && typeof vatRaw === "object" ? vatRaw.value : vatRaw;
+
+  const sirenFromLegal = seller.legal_registration_identifier?.value || null;
 
   return {
     provider,
     pa_document_id: String(raw.id ?? raw.invoice_id ?? ""),
-    supplier_name:       seller.name || seller.legal_name || raw.seller_name || null,
-    supplier_siren:      seller.siren || null,
-    supplier_siret:      seller.siret || seller.identifier || null,
-    supplier_vat_number: seller.vat_number || seller.vat_identifier || null,
-    invoice_number: en.number || en.id || raw.number || null,
-    invoice_date:   (en.issue_date || raw.issue_date || "").slice(0, 10) || null,
-    due_date:       (en.due_date || raw.due_date || "").slice(0, 10) || null,
-    currency: en.currency || en.currency_code || "EUR",
-    subtotal_ht_cents: toCents(totals.tax_exclusive_amount ?? en.total_ht ?? en.total_without_tax),
-    vat_total_cents:   toCents(totals.tax_amount ?? en.total_tax ?? en.vat_amount),
-    total_ttc_cents:   toCents(totals.tax_inclusive_amount ?? en.total_ttc ?? en.total_with_tax),
-    vat_breakdown: en.tax_breakdown || en.vat_breakdown || null,
-    lines: en.lines || en.invoice_lines || null,
+    supplier_name:       seller.name || null,
+    supplier_siren:      sirenFromLegal,                       // 9 chiffres
+    supplier_siret:      sirenFromLegal,                       // même valeur en sandbox
+    supplier_vat_number: seller.vat_identifier || null,
+    invoice_number: en.number || raw.number || null,
+    invoice_date:   (en.issue_date || "").slice(0, 10) || null,
+    due_date:       (en.payment_due_date || en.due_date || "").slice(0, 10) || null,
+    currency: en.currency_code || "EUR",
+    subtotal_ht_cents: toCents(totals.total_without_vat ?? totals.sum_invoice_lines_amount),
+    vat_total_cents:   toCents(vatValue),
+    total_ttc_cents:   toCents(totals.total_with_vat ?? totals.amount_due_for_payment),
+    vat_breakdown: (en.vat_break_down || []).map(v => ({
+      rate:        Number(v.vat_category_rate) || 0,
+      base_cents:  toCents(v.vat_category_taxable_amount),
+      vat_cents:   toCents(v.vat_category_tax_amount),
+      code:        v.vat_category_code || null
+    })),
+    lines: (en.lines || []).map(l => ({
+      label:            l.item_information?.name || null,
+      description:      l.item_information?.description || null,
+      qty:              Number(l.invoiced_quantity) || 0,
+      unit:             l.invoiced_quantity_code || null,
+      unit_price_cents: toCents(l.price_details?.item_net_price),
+      total_ht_cents:   toCents(l.net_amount),
+      vat_rate:         Number(l.vat_information?.invoiced_item_vat_rate) || 0
+    })),
     format: (raw.format || raw.doc_type || "factur-x").toLowerCase(),
     raw_payload: raw
   };

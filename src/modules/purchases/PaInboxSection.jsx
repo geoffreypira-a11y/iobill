@@ -24,6 +24,7 @@ export function PaInboxSection({ token, company, onConverted }) {
   const [hideRefused, setHideRefused] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [preview, setPreview] = useState(null); // v8.48.3 : modale PDF
 
   const load = useCallback(async () => {
     try {
@@ -88,10 +89,12 @@ export function PaInboxSection({ token, company, onConverted }) {
   }
 
   async function view(row) {
+    setBusyId(row.id);
     try {
       const r = await call("pa_inbox_file", { inbound_id: row.id });
-      window.open(r.url, "_blank", "noopener");
-    } catch (e) { setMsg({ t: "err", m: e.message }); }
+      setPreview({ url: r.url, row });
+    } catch (e) { setMsg({ t: "err", m: "Aperçu indisponible : " + e.message }); }
+    finally { setBusyId(null); }
   }
 
   async function ack(row, status) {
@@ -224,9 +227,8 @@ export function PaInboxSection({ token, company, onConverted }) {
                   </td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>
                     <div style={{ display: "inline-flex", gap: 4 }}>
-                      {r.file_url && (
-                        <button className="btn btn-ghost" onClick={() => view(r)} style={btnSm}>👁</button>
-                      )}
+                      <button className="btn btn-ghost" onClick={() => view(r)}
+                        disabled={busyId === r.id} style={btnSm} title="Aperçu du PDF">👁</button>
                       {!isRefused && (
                         <>
                           {r.status !== "approved" && (
@@ -249,6 +251,41 @@ export function PaInboxSection({ token, company, onConverted }) {
             })}
           </tbody>
         </table>
+      )}
+
+      {preview && (
+        <div className="modal-bg" onClick={() => setPreview(null)}>
+          <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 900, width: "92vw", height: "85vh", display: "flex", flexDirection: "column" }}>
+            <div className="modal-hd">
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  {preview.row.supplier_name || "Fournisseur"}
+                  {preview.row.invoice_number && (
+                    <span style={{ color: "var(--muted)", fontWeight: 400, marginLeft: 8 }}>
+                      · {preview.row.invoice_number}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  {preview.row.invoice_date || "—"} · {fmtEUR(preview.row.total_ttc_cents)} TTC · Factur-X
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <a href={preview.url} target="_blank" rel="noopener noreferrer"
+                  className="btn btn-ghost btn-sm"
+                  style={{ padding: "5px 12px", fontSize: 11, textDecoration: "none" }}>
+                  ⬇ Télécharger
+                </a>
+                <button className="close-btn" onClick={() => setPreview(null)}>×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
+              <iframe src={preview.url} title={preview.row.invoice_number || "facture"}
+                style={{ width: "100%", height: "100%", border: "none" }} />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
