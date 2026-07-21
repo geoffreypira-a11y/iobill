@@ -243,26 +243,78 @@ const superpdp = {
 
   /** Fichier d'une facture reçue. docType=Converted ⇒ format préféré (Factur-X). */
   async fetchFile(cfg, paDocId, kind = "pdf") {
-    // v8.48.5 — Endpoint réel repéré dans le back-office SUPER PDP :
-    //   GET /v1.beta/invoices/{id}?format=factur-x&download=true
-    // C'est un query param, pas un sous-chemin.
+    // v8.48.6 — La route /v1.beta/invoices/{id}?format=... renvoie 404.
+    // SUPER PDP mentionne explicitement "l'API AFNOR" dans son UI, avec
+    // docType=Converted → format préféré. On tente les 4 conventions
+    // AFNOR/PA les plus probables, avec log précis dans Vercel.
     const token = await this.auth(cfg);
     const headers = { Authorization: "Bearer " + token, Accept: "application/pdf,application/xml,*/*" };
     const id = encodeURIComponent(paDocId);
-    const format = kind === "xml" ? "cii" : "factur-x";
+    const docType = kind === "xml" ? "Original" : "Converted";
 
-    const url = cfg.base_url + "/v1.beta/invoices/" + id + "?format=" + format + "&download=true";
-    const r = await fetch(url, { headers });
-    if (!r.ok) throw new Error("[PA] fetchFile " + r.status + " @ " + url);
+    const attempts = [
+      // API AFNOR (XP Z12-013) — la plus probable vu leur UI
+      cfg.base_url + "/v1.beta/afnor/invoices/" + id + "?docType=" + docType,
+      cfg.base_url + "/afnor/v1/invoices/" + id + "?docType=" + docType,
+      // Route documents / attachments
+      cfg.base_url + "/v1.beta/invoices/" + id + "/documents?docType=" + docType,
+      cfg.base_url + "/v1.beta/invoices/" + id + "/attachments/factur-x",
+      // Variantes simples
+      cfg.base_url + "/v1.beta/invoices/" + id + "/pdf",
+      cfg.base_url + "/v1.beta/invoices/" + id + "/xml",
+      cfg.base_url + "/v1.beta/invoices/" + id + "/download?docType=" + docType,
+      cfg.base_url + "/v1.beta/invoices/" + id + "/file?docType=" + docType
+    ];
 
-    const ct = r.headers.get("content-type") || "application/pdf";
-    const buf = new Uint8Array(await r.arrayBuffer());
-    if (buf.length === 0) throw new Error("[PA] fetchFile réponse vide");
-    return {
-      bytes: buf,
-      contentType: ct,
-      ext: ct.includes("xml") ? "xml" : "pdf"
-    };
+    const errors = [];
+    for (const url of attempts) {
+      try {
+        const r = await fetch(url, { headers });
+        // Log CHAQUE tentative pour qu'on voie dans Vercel Logs ce qui répond quoi
+        console.log("[PA] fetchFile try", r.status, url);
+        if (r.ok) {
+          const ct = r.headers.get("content-type") || "";
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (buf.length < 100) {
+            errors.push("empty(" + buf.length + ") " + url);
+            continue;
+          }
+          // Si c'est du JSON avec un lien vers le fichier, on va chercher
+          if (ct.includes("json")) {
+            try {
+              const j = JSON.parse(new TextDecoder().decode(buf));
+              const link = j.url || j.download_url || j.file_url || j.href;
+              if (link) {
+                console.log("[PA] fetchFile follow", link);
+                const r2 = await fetch(link, { headers });
+                if (r2.ok) {
+                  const ct2 = r2.headers.get("content-type") || "application/pdf";
+                  return {
+                    bytes: new Uint8Array(await r2.arrayBuffer()),
+                    contentType: ct2,
+                    ext: ct2.includes("xml") ? "xml" : "pdf"
+                  };
+                }
+              }
+              errors.push("json-no-link " + url);
+              continue;
+            } catch {
+              errors.push("bad-json " + url);
+              continue;
+            }
+          }
+          return {
+            bytes: buf,
+            contentType: ct || "application/pdf",
+            ext: ct.includes("xml") ? "xml" : "pdf"
+          };
+        }
+        errors.push(r.status + " " + url);
+      } catch (e) {
+        errors.push(e.message + " " + url);
+      }
+    }
+    throw new Error("[PA] fetchFile aucun endpoint accessible — " + errors.join(" | "));
   },
 
   async parseWebhook(cfg, raw, headers) {
