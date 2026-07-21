@@ -100,12 +100,33 @@ export function PaInboxSection({ token, company, onConverted }) {
   async function ack(row, status) {
     let reason = null;
     if (status === "refused") {
-      reason = window.prompt("Motif du refus (transmis au fournisseur) :");
-      if (reason === null) return;
-      if (!reason.trim()) {
-        setMsg({ t: "err", m: "Motif obligatoire pour un refus" });
+      // v8.48.8 — SUPER PDP exige un code de motif AFNOR pour tout refus.
+      // Codes autorisés :
+      //   IC001 = Facture erronée
+      //   IC003 = Destinataire incorrect
+      //   IC005 = Montant erroné
+      //   IC006 = TVA erronée
+      //   IC008 = Autre motif
+      const CODES = [
+        ["IC001", "Facture erronée"],
+        ["IC003", "Destinataire incorrect"],
+        ["IC005", "Montant erroné"],
+        ["IC006", "TVA erronée"],
+        ["IC008", "Autre motif"]
+      ];
+      const menu = CODES.map((c, i) => (i + 1) + ". " + c[1]).join("\n");
+      const pick = window.prompt("Motif du refus (transmis à " + (row.supplier_name || "l'expéditeur") + ") :\n\n" + menu + "\n\nTapez le numéro (1-5) :");
+      if (pick === null) return;
+      const idx = parseInt(pick, 10) - 1;
+      if (isNaN(idx) || !CODES[idx]) {
+        setMsg({ t: "err", m: "Choix invalide" });
         return;
       }
+      const code = CODES[idx][0];
+      const defaultLabel = CODES[idx][1];
+      const label = window.prompt("Précision (facultatif) :", defaultLabel);
+      if (label === null) return;
+      reason = { code, label: label.trim() || defaultLabel };
     }
     setBusyId(row.id); setMsg(null);
     try {

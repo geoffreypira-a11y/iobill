@@ -210,15 +210,36 @@ const superpdp = {
     return { items, cursor: maxId };
   },
 
-  /** Remonte un statut de cycle de vie au fournisseur. */
+  /** Remonte un statut de cycle de vie au fournisseur.
+   * details peut être :
+   *   - une string : label libre
+   *   - un objet { code, label } : pour les refus (fr:210), code obligatoire.
+   *     Codes AFNOR : IC001 (facture erronée), IC003 (destinataire incorrect),
+   *     IC005 (montant erroné), IC006 (TVA erronée), IC008 (autre motif).
+   */
   async sendEvent(cfg, paDocId, statusCode, details) {
+    let payloadDetails = [];
+    if (details) {
+      if (typeof details === "object" && details.code) {
+        payloadDetails = [{
+          code: details.code,
+          label: String(details.label || "").slice(0, 500)
+        }];
+      } else {
+        // Motif libre : on met un code générique par défaut
+        payloadDetails = [{
+          code: "IC008",
+          label: String(details).slice(0, 500)
+        }];
+      }
+    }
     return req(cfg.base_url + "/v1.beta/invoice_events", {
       method: "POST",
       headers: await this._h(cfg, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         invoice_id: Number(paDocId),
         status_code: statusCode,
-        details: details ? [{ label: String(details).slice(0, 500) }] : []
+        details: payloadDetails
       })
     });
   },

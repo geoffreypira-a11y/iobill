@@ -260,9 +260,11 @@ export async function paInvoiceStatus(company, payload) {
 async function storeFile(companyId, impl, cfg, paDocId) {
   try {
     const f = await impl.fetchFile(cfg, paDocId, "pdf");
+    console.log("[PA] storeFile got bytes=" + f.bytes.length + " ct=" + f.contentType);
     const path = companyId + "/" + paDocId + "." + f.ext;
     const enc = path.split("/").map(encodeURIComponent).join("/");
-    const r = await fetch(SUPA_URL + "/storage/v1/object/" + BUCKET + "/" + enc, {
+    const uploadUrl = SUPA_URL + "/storage/v1/object/" + BUCKET + "/" + enc;
+    const r = await fetch(uploadUrl, {
       method: "POST",
       headers: {
         apikey: SR_KEY, Authorization: "Bearer " + SR_KEY,
@@ -270,9 +272,15 @@ async function storeFile(companyId, impl, cfg, paDocId) {
       },
       body: f.bytes
     });
-    return r.ok ? path : null;
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      console.error("[PA] storeFile upload " + r.status + " @ " + uploadUrl + " → " + body.slice(0, 300));
+      return null;
+    }
+    console.log("[PA] storeFile OK → " + path);
+    return path;
   } catch (e) {
-    console.warn("[PA] fichier indisponible", e.message);
+    console.warn("[PA] storeFile exception :", e.message);
     return null;
   }
 }
@@ -366,24 +374,37 @@ export async function paInboxAck(company, payload) {
 
   const row = await sbAdmin.selectOne("pa_inbound_invoices", "id=eq." + payload.inbound_id);
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
-  if (payload.status === "refused" && !String(payload.reason || "").trim()) {
-    throw fail(400, "Motif obligatoire pour un refus");
+
+  // v8.48.8 — reason est soit une string, soit un objet {code, label}
+  // pour les refus. SUPER PDP exige un code AFNOR (IC001..IC008).
+  const reason = payload.reason;
+  const isRefused = payload.status === "refused";
+  if (isRefused) {
+    const hasContent = typeof reason === "object"
+      ? !!(reason && reason.code)
+      : !!(reason && String(reason).trim());
+    if (!hasContent) throw fail(400, "Motif avec code obligatoire pour un refus");
   }
 
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
-  await impl.sendEvent(cfg, row.pa_document_id, code, payload.reason);
+  await impl.sendEvent(cfg, row.pa_document_id, code, reason);
+
+  // Message lisible pour l'audit et la BDD
+  const reasonText = typeof reason === "object"
+    ? (reason ? "[" + reason.code + "] " + reason.label : null)
+    : reason;
 
   await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
-    status: payload.status === "refused" ? "refused" : "approved",
-    refusal_reason: payload.status === "refused" ? payload.reason : null,
+    status: isRefused ? "refused" : "approved",
+    refusal_reason: isRefused ? reasonText : null,
     pa_ack_status: payload.status, pa_ack_sent_at: new Date().toISOString()
   });
   await logEvent({
     company_id: company.id, direction: "inbound", provider: creds.provider,
     pa_document_id: row.pa_document_id, inbound_id: row.id,
     event_type: "invoice." + payload.status, status: payload.status,
-    message: payload.reason || null
+    message: reasonText || null
   });
   return { ok: true };
 }
@@ -394,19 +415,68 @@ export async function paInboxConvert(company, payload) {
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
   if (row.purchase_id) return { ok: true, purchase_id: row.purchase_id, already: true };
 
-  // v8.48.4 — Comptabiliser envoie AUSSI l'approbation au fournisseur
-  // (fr:205). C'est le geste unifié : "je l'accepte et je l'enregistre".
-  // Un échec côté PA n'empêche pas la comptabilisation IO BILL — on log
-  // seulement, la ligne restera 'converted' côté IO BILL.
+  const creds = await loadCreds(company.id);
+  const { impl, cfg } = getProvider(creds);
+
+  // v8.48.4 — Comptabiliser envoie AUSSI l'approbation au fournisseur (fr:205)
   try {
-    const creds = await loadCreds(company.id);
-    const { impl, cfg } = getProvider(creds);
     await impl.sendEvent(cfg, row.pa_document_id, LIFECYCLE.approuvee);
     await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
       pa_ack_status: "approved", pa_ack_sent_at: new Date().toISOString()
     });
   } catch (e) {
     console.warn("[PA] ack approuvée échoué à la comptabilisation :", e.message);
+  }
+
+  // v8.48.8 — Copie le PDF vers le bucket purchases-attach que PurchasesPage
+  // sait lire. Sans ça, le purchase créé n'a pas d'aperçu utilisable.
+  // Auto-guérison : si le PDF n'a jamais été récupéré (file_url vide),
+  // on le fetch maintenant.
+  let purchasesAttachPath = null;
+  try {
+    let sourcePath = row.file_url;
+    let bytes = null;
+    let mime = "application/pdf";
+
+    if (sourcePath) {
+      // Lire depuis pa-inbound
+      const enc = sourcePath.split("/").map(encodeURIComponent).join("/");
+      const r = await fetch(SUPA_URL + "/storage/v1/object/pa-inbound/" + enc, {
+        headers: { apikey: SR_KEY, Authorization: "Bearer " + SR_KEY }
+      });
+      if (r.ok) {
+        bytes = new Uint8Array(await r.arrayBuffer());
+        mime = r.headers.get("content-type") || mime;
+      }
+    }
+
+    // Si toujours pas de bytes, on retente le fetch depuis la PA
+    if (!bytes) {
+      const f = await impl.fetchFile(cfg, row.pa_document_id, "pdf");
+      bytes = f.bytes;
+      mime = f.contentType || mime;
+    }
+
+    if (bytes && bytes.length > 100) {
+      const filename = (row.invoice_number || row.pa_document_id).replace(/[^a-zA-Z0-9._-]/g, "_") + ".pdf";
+      purchasesAttachPath = company.id + "/" + row.pa_document_id + "-" + filename;
+      const enc = purchasesAttachPath.split("/").map(encodeURIComponent).join("/");
+      const up = await fetch(SUPA_URL + "/storage/v1/object/purchases-attach/" + enc, {
+        method: "POST",
+        headers: {
+          apikey: SR_KEY, Authorization: "Bearer " + SR_KEY,
+          "Content-Type": mime, "x-upsert": "true"
+        },
+        body: bytes
+      });
+      if (!up.ok) {
+        const body = await up.text().catch(() => "");
+        console.error("[PA] convert upload purchases-attach " + up.status + " → " + body.slice(0, 300));
+        purchasesAttachPath = null;
+      }
+    }
+  } catch (e) {
+    console.warn("[PA] convert copy fichier échoué :", e.message);
   }
 
   const ins = await sbAdmin.insert("purchases", [{
@@ -422,10 +492,10 @@ export async function paInboxConvert(company, payload) {
     total_ttc_cents: row.total_ttc_cents,
     vat_breakdown: row.vat_breakdown || [],
     currency: row.currency || "EUR",
-    source: "api",              // manual | email | ocr | api
-    ocr_status: "done",         // pas d'OCR : données structurées EN 16931
-    status: "pending",          // pending | validated | paid | archived
-    file_url: row.file_url,     // ⚠️ purchases = file_url, PAS pdf_url
+    source: "api",
+    ocr_status: "done",
+    status: "pending",
+    file_url: purchasesAttachPath, // ⚠️ chemin dans purchases-attach maintenant
     file_mime: "application/pdf",
     notes: "Reçue via plateforme agréée (" + row.provider + ") — doc " + row.pa_document_id
   }]);
