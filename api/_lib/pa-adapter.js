@@ -243,16 +243,42 @@ const superpdp = {
 
   /** Fichier d'une facture reçue. docType=Converted ⇒ format préféré (Factur-X). */
   async fetchFile(cfg, paDocId, kind = "pdf") {
+    // v8.48.4 — SUPER PDP ne documente pas ces URLs. On teste en cascade,
+    // et si tout échoue on remonte l'erreur avec l'URL qui a répondu le
+    // plus proche du succès pour faciliter le debug.
+    const token = await this.auth(cfg);
+    const headers = { Authorization: "Bearer " + token, Accept: "application/pdf,application/xml,*/*" };
+    const id = encodeURIComponent(paDocId);
     const docType = kind === "original" ? "Original" : "Converted";
-    const url = cfg.base_url + "/v1.beta/invoices/" + encodeURIComponent(paDocId) + "/file?docType=" + docType;
-    const r = await fetch(url, { headers: { Authorization: "Bearer " + (await this.auth(cfg)) } });
-    if (!r.ok) throw new Error("[PA] fetchFile " + r.status);
-    const ct = r.headers.get("content-type") || "application/pdf";
-    return {
-      bytes: new Uint8Array(await r.arrayBuffer()),
-      contentType: ct,
-      ext: ct.includes("xml") ? "xml" : "pdf"
-    };
+
+    const attempts = [
+      cfg.base_url + "/v1.beta/invoices/" + id + "/file?docType=" + docType,
+      cfg.base_url + "/v1.beta/invoices/" + id + "/documents/factur-x",
+      cfg.base_url + "/v1.beta/invoices/" + id + "/pdf",
+      cfg.base_url + "/v1.beta/invoices/" + id + "/download",
+      cfg.base_url + "/v1.beta/invoices/" + id + "/file"
+    ];
+
+    let lastErr = null;
+    for (const url of attempts) {
+      try {
+        const r = await fetch(url, { headers });
+        if (r.ok) {
+          const ct = r.headers.get("content-type") || "application/pdf";
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (buf.length === 0) { lastErr = "empty body @ " + url; continue; }
+          return {
+            bytes: buf,
+            contentType: ct,
+            ext: ct.includes("xml") ? "xml" : "pdf"
+          };
+        }
+        lastErr = r.status + " @ " + url;
+      } catch (e) {
+        lastErr = e.message + " @ " + url;
+      }
+    }
+    throw new Error("[PA] fetchFile toutes tentatives KO — " + lastErr);
   },
 
   async parseWebhook(cfg, raw, headers) {

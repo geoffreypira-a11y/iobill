@@ -231,17 +231,15 @@ export function PaInboxSection({ token, company, onConverted }) {
                         disabled={busyId === r.id} style={btnSm} title="Aperçu du PDF">👁</button>
                       {!isRefused && (
                         <>
-                          {r.status !== "approved" && (
-                            <>
-                              <button className="btn btn-ghost" disabled={busyId === r.id}
-                                onClick={() => ack(r, "approved")} style={btnSm} title="Approuver">✅</button>
-                              <button className="btn btn-ghost" disabled={busyId === r.id}
-                                onClick={() => ack(r, "refused")} style={btnSm} title="Refuser">❌</button>
-                            </>
-                          )}
                           <button className="btn" disabled={busyId === r.id}
-                            onClick={() => convert(r)} style={{ ...btnSm, background: "var(--gold)", color: "#000" }}
-                            title="Comptabiliser (ajouter aux achats)">📗</button>
+                            onClick={() => convert(r)}
+                            style={{ ...btnSm, background: "var(--gold)", color: "#000" }}
+                            title="Approuver auprès du fournisseur et ajouter aux achats">
+                            📗 Comptabiliser
+                          </button>
+                          <button className="btn btn-ghost" disabled={busyId === r.id}
+                            onClick={() => ack(r, "refused")} style={btnSm}
+                            title="Refuser avec motif">❌</button>
                         </>
                       )}
                     </div>

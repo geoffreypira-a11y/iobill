@@ -394,6 +394,21 @@ export async function paInboxConvert(company, payload) {
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
   if (row.purchase_id) return { ok: true, purchase_id: row.purchase_id, already: true };
 
+  // v8.48.4 — Comptabiliser envoie AUSSI l'approbation au fournisseur
+  // (fr:205). C'est le geste unifié : "je l'accepte et je l'enregistre".
+  // Un échec côté PA n'empêche pas la comptabilisation IO BILL — on log
+  // seulement, la ligne restera 'converted' côté IO BILL.
+  try {
+    const creds = await loadCreds(company.id);
+    const { impl, cfg } = getProvider(creds);
+    await impl.sendEvent(cfg, row.pa_document_id, LIFECYCLE.approuvee);
+    await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
+      pa_ack_status: "approved", pa_ack_sent_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.warn("[PA] ack approuvée échoué à la comptabilisation :", e.message);
+  }
+
   const ins = await sbAdmin.insert("purchases", [{
     company_id: company.id,
     vendor_name: row.supplier_name || "Fournisseur inconnu",  // NOT NULL en base
@@ -425,9 +440,19 @@ export async function paInboxConvert(company, payload) {
 export async function paInboxFile(company, payload) {
   const row = await sbAdmin.selectOne("pa_inbound_invoices", "id=eq." + payload.inbound_id);
   if (!row || row.company_id !== company.id) throw fail(404, "Introuvable");
-  if (!row.file_url) throw fail(404, "Fichier absent");
 
-  const enc = row.file_url.split("/").map(encodeURIComponent).join("/");
+  // v8.48.4 — Auto-guérison : si le fichier n'a jamais été stocké
+  // (échec silencieux au sync initial), on retente maintenant à la demande.
+  let filePath = row.file_url;
+  if (!filePath) {
+    const creds = await loadCreds(company.id);
+    const { impl, cfg } = getProvider(creds);
+    filePath = await storeFile(company.id, impl, cfg, row.pa_document_id);
+    if (!filePath) throw fail(404, "Fichier indisponible chez la Plateforme Agréée");
+    await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, { file_url: filePath });
+  }
+
+  const enc = filePath.split("/").map(encodeURIComponent).join("/");
   const r = await fetch(SUPA_URL + "/storage/v1/object/sign/" + BUCKET + "/" + enc, {
     method: "POST",
     headers: { apikey: SR_KEY, Authorization: "Bearer " + SR_KEY, "Content-Type": "application/json" },
