@@ -216,31 +216,47 @@ const superpdp = {
    *   - un objet { code, label } : pour les refus (fr:210), code obligatoire.
    *     Codes AFNOR : IC001 (facture erronée), IC003 (destinataire incorrect),
    *     IC005 (montant erroné), IC006 (TVA erronée), IC008 (autre motif).
+   *
+   * v8.48.9 — SUPER PDP renvoie une erreur schéma AFNOR (MDT-113
+   * ProcessConditionCode) quand le motif n'est pas au bon endroit. Comme
+   * leur doc n'est pas publique, on envoie plusieurs variantes de champs
+   * en même temps ; SUPER PDP prendra celui qu'il connaît.
    */
   async sendEvent(cfg, paDocId, statusCode, details) {
-    let payloadDetails = [];
+    let code = null, label = null;
     if (details) {
       if (typeof details === "object" && details.code) {
-        payloadDetails = [{
-          code: details.code,
-          label: String(details.label || "").slice(0, 500)
-        }];
+        code = details.code;
+        label = String(details.label || "").slice(0, 500);
       } else {
-        // Motif libre : on met un code générique par défaut
-        payloadDetails = [{
-          code: "IC008",
-          label: String(details).slice(0, 500)
-        }];
+        code = "IC008"; // motif générique si simple string
+        label = String(details).slice(0, 500);
       }
     }
+
+    const body = {
+      invoice_id: Number(paDocId),
+      status_code: statusCode
+    };
+
+    if (code) {
+      // Toutes les variantes possibles du même contenu — SUPER PDP en
+      // gardera une, ignorera les autres.
+      body.details = [{ code, label }];
+      body.reason = { code, label };
+      body.reason_code = code;
+      body.reason_label = label;
+      body.motif = { code, label };
+      body.motif_code = code;
+      body.motif_label = label;
+      // Format AFNOR CDV brut (namespace ProcessConditionCode)
+      body.process_condition_code = code;
+    }
+
     return req(cfg.base_url + "/v1.beta/invoice_events", {
       method: "POST",
       headers: await this._h(cfg, { "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        invoice_id: Number(paDocId),
-        status_code: statusCode,
-        details: payloadDetails
-      })
+      body: JSON.stringify(body)
     });
   },
 
