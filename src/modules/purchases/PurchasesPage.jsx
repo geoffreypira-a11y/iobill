@@ -6,6 +6,7 @@ import { CameraCapture } from "../../components/CameraCapture.jsx";
 import { fmtEUR, fmtDate, todayISO, toCents, fromCents, uid } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
+import { PaInboxSection } from "./PaInboxSection.jsx";
 
 const PURCHASE_STATUTS = {
   pending:   { label: "En attente",        cls: "badge-muted",  icon: "📥" },
@@ -224,6 +225,12 @@ export function PurchasesPage({ token, company }) {
           <Icon name="plus" size={14} /> Nouvel achat
         </button>
       </div>
+
+      <PaInboxSection
+        token={token}
+        company={company}
+        onConverted={() => refreshPurchases(true)}
+      />
 
       <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
         <input

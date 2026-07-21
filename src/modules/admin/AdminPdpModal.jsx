@@ -71,6 +71,16 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
   }
 
   async function test() {
+    // v8.47.1 : le test lit en base. Interdit tant que rien n'est
+    // enregistré, sinon "Plateforme agréée non configurée" trompeur.
+    if (!meta?.configured) {
+      setMsg({ t: "err", m: "Enregistrez d'abord la configuration, puis testez." });
+      return;
+    }
+    if (!meta.has_client_secret && !cfg.client_secret) {
+      setMsg({ t: "err", m: "client_secret manquant en base." });
+      return;
+    }
     setBusy(true); setMsg(null);
     try {
       const r = await adminCall("pa_admin_test", { company_id: company.id });
@@ -186,6 +196,7 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
                 client_secret {meta?.has_client_secret ? "— enregistré, vide = inchangé" : ""}
               </label>
               <input type="password" value={cfg.client_secret} onChange={set("client_secret")}
+                autoComplete="new-password" data-lpignore="true" data-form-type="other"
                 style={{ ...input, marginBottom: 10 }}
                 placeholder={meta?.has_client_secret ? "••••••••" : ""} />
 
@@ -193,6 +204,7 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
                 webhook_secret (HMAC) {meta?.has_webhook_secret ? "— enregistré" : ""}
               </label>
               <input type="password" value={cfg.webhook_secret} onChange={set("webhook_secret")}
+                autoComplete="new-password" data-lpignore="true" data-form-type="other"
                 style={input}
                 placeholder={meta?.has_webhook_secret ? "••••••••" : ""} />
             </div>
@@ -234,9 +246,18 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, alignItems: "center", flexWrap: "wrap" }}>
               <button className="btn" onClick={save} disabled={busy}>💾 Enregistrer</button>
-              <button className="btn btn-ghost" onClick={test} disabled={busy}>🔍 Tester la connexion</button>
+              <button className="btn btn-ghost" onClick={test}
+                disabled={busy || !meta?.configured}
+                title={!meta?.configured ? "Enregistre d'abord la configuration" : ""}>
+                🔍 Tester la connexion
+              </button>
+              {!meta?.configured && (
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Enregistre d'abord, puis teste.
+                </span>
+              )}
             </div>
           </>
         )}

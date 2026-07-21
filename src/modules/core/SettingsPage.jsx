@@ -80,7 +80,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
       {tab === "notifications" && <NotificationsTab token={token} company={company} />}
       {tab === "billing" && <BillingTab token={token} company={company} setCompany={setCompany} />}
       {tab === "inbox" && <InboxTab token={token} company={company} setCompany={setCompany} />}
-      {tab === "pdp" && <PdpTab token={token} company={company} setCompany={setCompany} />}
+      {tab === "pdp" && <PdpTab token={token} company={company} />}
       {tab === "sms" && <SmsTab token={token} company={company} setCompany={setCompany} />}
       {tab === "security" && <SecurityTab token={token} user={user} onSignOut={onSignOut} />}
       {tab === "tickets" && <TicketsTab token={token} />}
@@ -1365,102 +1365,234 @@ function InboxTab({ token, company, setCompany }) {
   );
 }
 
-/* ─── PDP (V1.1) ──────────────────────────────────────── */
-function PdpTab({ token, company, setCompany }) {
-  const [data, setData] = useState({
-    pdp_enabled: !!company.pdp_enabled,
-    pdp_provider: company.pdp_provider || "ppf_test",
-    pdp_account_id: company.pdp_account_id || "",
-    pdp_api_key: ""
+/* ─── PDP (v8.47.1) ────────────────────────────────────────────────
+   Ancien composant retiré. La configuration PDP est désormais gérée
+   par l'admin depuis la zone Admin → bouton 🔌 PDP Access. L'abonné
+   voit sa config en lecture seule et peut demander une modification,
+   sauf si l'admin a activé le mode self-service pour son compte. */
+function PdpTab({ token, company }) {
+  const [state, setState] = useState({ loading: true, cfg: null, pending: null });
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState({ kind: null, text: "" });
+  // Formulaire self-service : uniquement affiché si self_service_allowed
+  const [form, setForm] = useState({
+    provider: "superpdp", environment: "sandbox", base_url: "",
+    client_id: "", client_secret: "", webhook_secret: "", enabled: false
   });
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
 
-  function update(k, v) { setData((d) => ({ ...d, [k]: v })); }
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "pa_config" })
+        });
+        const j = await r.json();
+        if (!alive) return;
+        const cfg = j.config || { configured: false };
+        const pending = (j.pending_requests || [])[0] || null;
+        setState({ loading: false, cfg, pending });
+        if (cfg.configured) {
+          setForm(f => ({
+            ...f,
+            provider: cfg.provider || "superpdp",
+            environment: cfg.environment || "sandbox",
+            base_url: cfg.base_url || "",
+            client_id: cfg.client_id || "",
+            enabled: !!cfg.enabled
+          }));
+        }
+      } catch (e) {
+        if (alive) setState({ loading: false, cfg: null, pending: null });
+      }
+    })();
+    return () => { alive = false; };
+  }, [token]);
 
-  async function save() {
-    setSaving(true); setMsg("");
-    const payload = {
-      pdp_enabled: data.pdp_enabled,
-      pdp_provider: data.pdp_provider,
-      pdp_account_id: data.pdp_account_id || null
-    };
-    // L'API key n'est mise à jour que si fournie (sinon on garde l'existante)
-    if (data.pdp_api_key) {
-      payload.pdp_api_key_encrypted = data.pdp_api_key; // V1.1 : stockage en clair, V1.2 : Vault
-    }
-    const updated = await sb.update(token, "companies", `id=eq.${company.id}`, payload);
-    if (updated && updated[0]) {
-      setCompany(updated[0]);
-      setMsg("Configuration PDP enregistrée");
-      setData((d) => ({ ...d, pdp_api_key: "" })); // on efface le champ pour la sécurité
-    }
-    setSaving(false);
+  async function submitRequest() {
+    if (!message.trim()) return;
+    setSending(true); setFeedback({ kind: null, text: "" });
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_request_change", payload: { message } })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Erreur");
+      setFeedback({ kind: "ok", text: "Demande envoyée à l'équipe IO BILL." });
+      setMessage("");
+      setState(s => ({ ...s, pending: { message, created_at: new Date().toISOString() } }));
+    } catch (e) { setFeedback({ kind: "err", text: e.message }); }
+    finally { setSending(false); }
   }
+
+  async function saveSelfService() {
+    setSending(true); setFeedback({ kind: null, text: "" });
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_config_save", payload: form })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Erreur");
+      setFeedback({ kind: "ok", text: "Configuration enregistrée." });
+      setForm(f => ({ ...f, client_secret: "", webhook_secret: "" }));
+    } catch (e) { setFeedback({ kind: "err", text: e.message }); }
+    finally { setSending(false); }
+  }
+
+  if (state.loading) {
+    return <div className="card card-pad" style={{ color: "var(--muted)" }}>Chargement…</div>;
+  }
+
+  const cfg = state.cfg || { configured: false };
+  const readOnly = !cfg.self_service_allowed;
 
   return (
     <div className="card card-pad">
       <h3 style={{ margin: "0 0 10px", fontFamily: "Syne, sans-serif", letterSpacing: 1, fontSize: 14 }}>
-        🏛️ Plateforme de Dématérialisation Partenaire (PDP)
+        🏛️ Plateforme Agréée (PA / ex-PDP)
       </h3>
       <p style={{ fontSize: 13, color: "var(--muted2)", lineHeight: 1.6, marginBottom: 16 }}>
-        À partir de septembre 2026, toutes les entreprises FR doivent recevoir leurs factures via une PDP certifiée.
-        À partir de septembre 2027, l'émission devient obligatoire pour toutes les entreprises FR.
-        IO BILL transmet automatiquement vos factures Factur-X au PDP de votre choix.
+        À partir de septembre 2026, toutes les entreprises FR reçoivent leurs factures via une Plateforme Agréée.
+        À partir de septembre 2027, l'émission devient obligatoire.
       </p>
 
-      <div className="form-row">
-        <label className="form-label">Activer la transmission PDP</label>
-        <input
-          type="checkbox"
-          checked={data.pdp_enabled}
-          onChange={(e) => update("pdp_enabled", e.target.checked)}
-          style={{ width: 18, height: 18, accentColor: "var(--gold)" }}
-        />
-      </div>
-
-      <div className="form-row" style={{ marginTop: 14 }}>
-        <label className="form-label">Provider</label>
-        <select className="form-input" value={data.pdp_provider} onChange={(e) => update("pdp_provider", e.target.value)}>
-          <option value="ppf_test">PPF Test (sandbox DGFiP, gratuit)</option>
-          <option value="iopole">Iopole (FR, certifiée)</option>
-          <option value="generix">Generix (V1.2)</option>
-          <option value="cegid">Cegid (V1.2)</option>
-        </select>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
-        <div className="form-row">
-          <label className="form-label">Account ID PDP</label>
-          <input
-            className="form-input mono"
-            value={data.pdp_account_id}
-            onChange={(e) => update("pdp_account_id", e.target.value)}
-            placeholder="Identifiant fourni par le PDP"
-          />
+      {readOnly && (
+        <div style={{
+          padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13,
+          background: "rgba(212,168,67,.10)", border: "1px solid rgba(212,168,67,.35)",
+          color: "var(--gold, #d4a843)"
+        }}>
+          🔒 Configuration gérée par IO BILL. Pour toute modification, utilisez le formulaire ci-dessous.
         </div>
-        <div className="form-row">
-          <label className="form-label">API Key</label>
-          <input
-            className="form-input mono"
-            type="password"
-            value={data.pdp_api_key}
-            onChange={(e) => update("pdp_api_key", e.target.value)}
-            placeholder={company.pdp_api_key_encrypted ? "•••••••••• (clé enregistrée)" : "Clé API PDP"}
-          />
+      )}
+
+      {/* État de la configuration — toujours en lecture */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <Info label="Statut" value={cfg.configured ? (cfg.enabled ? "✅ Actif" : "⏸️ Configuré mais désactivé") : "❌ Non configuré"} />
+        <Info label="Fournisseur" value={cfg.provider ? cfg.provider.toUpperCase() : "—"} />
+        <Info label="Environnement" value={cfg.environment === "production" ? "Production" : "Bac à sable"} />
+        <Info label="Dernière auth OK" value={cfg.last_auth_ok_at ? new Date(cfg.last_auth_ok_at).toLocaleString("fr-FR") : "—"} />
+      </div>
+      {cfg.last_error && (
+        <div style={{ padding: "8px 12px", borderRadius: 6, marginBottom: 12, fontSize: 12,
+          background: "rgba(229,73,73,.10)", color: "var(--red, #e54949)" }}>
+          ⚠️ {cfg.last_error}
         </div>
-      </div>
+      )}
 
-      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 14, lineHeight: 1.7 }}>
-        En mode <strong>PPF Test</strong>, les transmissions sont simulées (pas de vrai envoi).
-        En mode <strong>Iopole</strong>, vos factures sont réellement transmises selon les standards
-        de l'Article 289 bis du CGI (Factur-X CII profil BASIC WL).
-      </div>
+      {/* Mode lecture seule → demande de modification */}
+      {readOnly && (
+        <div style={{ marginTop: 6 }}>
+          {state.pending ? (
+            <div style={{ padding: 14, border: "1px dashed var(--border)", borderRadius: 10, fontSize: 13 }}>
+              <div style={{ color: "var(--muted)", marginBottom: 6 }}>⏳ Demande en cours de traitement</div>
+              <div style={{ whiteSpace: "pre-wrap" }}>{state.pending.message}</div>
+            </div>
+          ) : (
+            <>
+              <label className="form-label">Demander une modification</label>
+              <textarea
+                className="form-input"
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Décrivez ce qui doit être modifié (nouvelle PA, changement de codes, etc.)"
+                style={{ resize: "vertical" }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={submitRequest}
+                disabled={sending || !message.trim()}
+                style={{ marginTop: 10 }}
+              >
+                {sending ? "Envoi…" : "📩 Envoyer la demande"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
-      <button className="btn btn-primary" onClick={save} disabled={saving} style={{ marginTop: 18 }}>
-        {saving ? "Enregistrement..." : "Enregistrer la configuration"}
-      </button>
-      {msg && <div className="tipline" style={{ marginTop: 12 }}>{msg}</div>}
+      {/* Mode self-service → saisie libre */}
+      {!readOnly && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="form-row">
+              <label className="form-label">Fournisseur</label>
+              <select className="form-input" value={form.provider}
+                onChange={(e) => setForm(f => ({ ...f, provider: e.target.value }))}>
+                <option value="superpdp">SUPER PDP</option>
+                <option value="mock">Mock (test)</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="form-label">Environnement</label>
+              <select className="form-input" value={form.environment}
+                onChange={(e) => setForm(f => ({ ...f, environment: e.target.value }))}>
+                <option value="sandbox">Bac à sable</option>
+                <option value="production">Production</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <label className="form-label">client_id</label>
+            <input className="form-input mono" value={form.client_id}
+              onChange={(e) => setForm(f => ({ ...f, client_id: e.target.value }))} />
+          </div>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <label className="form-label">
+              client_secret {cfg.has_client_secret ? "— enregistré, vide = inchangé" : ""}
+            </label>
+            <input className="form-input mono" type="password"
+              autoComplete="new-password" data-lpignore="true"
+              value={form.client_secret}
+              onChange={(e) => setForm(f => ({ ...f, client_secret: e.target.value }))}
+              placeholder={cfg.has_client_secret ? "••••••••" : ""} />
+          </div>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <label className="form-label">
+              webhook_secret (HMAC) {cfg.has_webhook_secret ? "— enregistré" : ""}
+            </label>
+            <input className="form-input mono" type="password"
+              autoComplete="new-password" data-lpignore="true"
+              value={form.webhook_secret}
+              onChange={(e) => setForm(f => ({ ...f, webhook_secret: e.target.value }))}
+              placeholder={cfg.has_webhook_secret ? "••••••••" : ""} />
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 13 }}>
+            <input type="checkbox" checked={form.enabled}
+              onChange={(e) => setForm(f => ({ ...f, enabled: e.target.checked }))} />
+            Activer l'émission et la réception via la PA
+          </label>
+          <button className="btn btn-primary" onClick={saveSelfService}
+            disabled={sending} style={{ marginTop: 14 }}>
+            {sending ? "Enregistrement…" : "💾 Enregistrer"}
+          </button>
+        </div>
+      )}
+
+      {feedback.kind && (
+        <div style={{
+          marginTop: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: feedback.kind === "err" ? "rgba(229,73,73,.10)" : "rgba(62,207,122,.10)",
+          color: feedback.kind === "err" ? "var(--red, #e54949)" : "var(--green, #3ecf7a)"
+        }}>{feedback.text}</div>
+      )}
+    </div>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13 }}>{value}</div>
     </div>
   );
 }

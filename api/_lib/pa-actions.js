@@ -378,16 +378,23 @@ export async function paInboxConvert(company, payload) {
 
   const ins = await sbAdmin.insert("purchases", [{
     company_id: company.id,
-    supplier_name: row.supplier_name,
-    invoice_number: row.invoice_number,
-    purchase_date: row.invoice_date,
+    vendor_name: row.supplier_name || "Fournisseur inconnu",  // NOT NULL en base
+    vendor_siret: row.supplier_siret,
+    vendor_vat_number: row.supplier_vat_number,
+    number: row.invoice_number,
+    issue_date: row.invoice_date,
+    due_date: row.due_date,
     subtotal_ht_cents: row.subtotal_ht_cents,
     vat_total_cents: row.vat_total_cents,
     total_ttc_cents: row.total_ttc_cents,
-    vat_breakdown: row.vat_breakdown,
+    vat_breakdown: row.vat_breakdown || [],
     currency: row.currency || "EUR",
-    file_url: row.file_url,   // ⚠️ purchases = file_url, PAS pdf_url
-    status: "to_pay"
+    source: "api",              // manual | email | ocr | api
+    ocr_status: "done",         // pas d'OCR : données structurées EN 16931
+    status: "pending",          // pending | validated | paid | archived
+    file_url: row.file_url,     // ⚠️ purchases = file_url, PAS pdf_url
+    file_mime: "application/pdf",
+    notes: "Reçue via plateforme agréée (" + row.provider + ") — doc " + row.pa_document_id
   }]);
   if (!ins || !ins[0]) throw fail(500, "Création de l'achat échouée : " + JSON.stringify(sbAdmin._lastError || {}));
 

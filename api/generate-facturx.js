@@ -111,55 +111,17 @@ async function handleRequest(req, res) {
 
   // ═══════════════════════════════════════════════════════════
   // MODE : TRANSMISSION PDP (administration fiscale)
+  // ⚠️ v8.47.1 — Chemin legacy neutralisé. La transmission passe
+  // désormais par l'adapter Plateforme Agréée réel :
+  //     POST /api/admin  { action: "pa_send", payload: { invoice_id } }
+  // qui utilise pdp_transmission_id sur la vraie PA.
+  // Laisser ce code actif écrivait des ID factices "PPF-TEST-..."
+  // qui bloquaient ensuite la vraie transmission (déjà transmise).
   // ═══════════════════════════════════════════════════════════
   if (transmitPdp) {
-    if (!cfg.issuedStatuses.includes(doc.status)) {
-      return json(res, 400, {
-        error: `Le document doit être émis avant d'être transmis. Cliquez d'abord sur 🔒 Émettre.`
-      });
-    }
-    if (!company.pdp_provider) {
-      return json(res, 400, {
-        error: "Aucune PDP configurée. Allez dans Paramètres → 🏛️ PDP pour configurer votre Plateforme de Dématérialisation Partenaire."
-      });
-    }
-    if (!company.pdp_api_key_encrypted && company.pdp_provider !== "ppf_test") {
-      return json(res, 400, {
-        error: "Clé API PDP manquante. Allez dans Paramètres → 🏛️ PDP pour la configurer."
-      });
-    }
-    if (doc.pdp_transmitted_at) {
-      return json(res, 400, {
-        error: `${cfg.label} déjà transmis le ` + new Date(doc.pdp_transmitted_at).toLocaleDateString("fr-FR") + " (provider: " + (doc.pdp_provider || "?") + ", ID: " + (doc.pdp_transmission_id || "?") + ")"
-      });
-    }
-    try {
-      const transmissionResult = await transmitToPdp({
-        provider: company.pdp_provider,
-        accountId: company.pdp_account_id,
-        apiKey: company.pdp_api_key_encrypted,
-        doc,
-        docType: documentType,
-        company
-      });
-      const updatePayload = {
-        pdp_provider: company.pdp_provider,
-        pdp_transmission_id: transmissionResult.transmission_id,
-        pdp_transmitted_at: new Date().toISOString(),
-        facturx_status: "transmitted"
-      };
-      await sbAdmin.update(cfg.table, `id=eq.${documentId}`, updatePayload);
-      return json(res, 200, {
-        ok: true,
-        transmission_id: transmissionResult.transmission_id,
-        provider: company.pdp_provider,
-        message: transmissionResult.message || `${cfg.label} transmis à l'administration`
-      });
-    } catch (e) {
-      return json(res, 500, {
-        error: "Échec de transmission : " + (e.message || "erreur inconnue") + ". Vérifiez votre configuration PDP."
-      });
-    }
+    return json(res, 410, {
+      error: "Le chemin de transmission PDP historique est désactivé. Utilisez le bouton « Transmettre » sur la facture qui appelle la Plateforme Agréée configurée par l'admin."
+    });
   }
 
   // ═══════════════════════════════════════════════════════════
