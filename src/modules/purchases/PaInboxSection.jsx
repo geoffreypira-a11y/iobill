@@ -41,14 +41,30 @@ export function PaInboxSection({ token, company, onConverted }) {
     }
   }, [token, company.id]);
 
-  useEffect(() => { load(); }, [load]);
+  // v8.48.1 — Sync silencieux avec la PA au montage puis toutes les 90 s.
+  // Aucune UI, aucun bouton nécessaire. Le composant n'est PAS visible
+  // tant que rien n'est en base, donc on doit forcer la sync AVANT de
+  // dépendre du fait qu'il soit monté. Comme on est monté (même invisible),
+  // on peut piloter la sync ici.
+  const silentSync = useCallback(async () => {
+    try {
+      await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_inbox_sync" })
+      });
+    } catch { /* pas de PDP configurée : silencieux, c'est normal */ }
+    await load();
+  }, [token, load]);
 
-  // Polling léger : le webhook fait 99 % du travail, on refetch
-  // toutes les 5 min en filet de sécurité.
+  useEffect(() => { silentSync(); }, [silentSync]);
+
+  // Polling continu : 90 s. En-dessous ce n'est pas raisonnable
+  // pour un endpoint tiers ; au-dessus l'utilisateur attend trop.
   useEffect(() => {
-    const id = setInterval(load, 5 * 60 * 1000);
+    const id = setInterval(silentSync, 90 * 1000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [silentSync]);
 
   async function call(action, payload = {}) {
     const r = await fetch("/api/admin", {
