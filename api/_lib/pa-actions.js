@@ -278,7 +278,23 @@ async function storeFile(companyId, impl, cfg, paDocId) {
 }
 
 async function persistInbound(companyId, creds, impl, cfg, item) {
-  const norm = normalizeInbound(item, creds.provider);
+  // v8.48.2 — Fix majeur : SUPER PDP /v1.beta/invoices renvoie juste
+  // { id, direction, company_id, created_at }. Le détail (numéro, montants,
+  // vendeur, en_invoice) est dans GET /v1.beta/invoices/{id}. Il FAUT
+  // hydrater avant de normaliser, sinon la ligne créée est vide.
+  const rawId = String(item.id ?? item.invoice_id ?? item.pa_document_id ?? "");
+  if (!rawId) return null;
+
+  // Hydratation systématique : le hit /invoices/{id} est peu coûteux et
+  // idempotent, ça évite tous les cas où la liste renvoie une projection légère.
+  let full = item;
+  try {
+    full = await impl.getInvoice(cfg, rawId);
+  } catch (e) {
+    console.warn("[PA] getInvoice indisponible, fallback sur item de liste :", e.message);
+  }
+
+  const norm = normalizeInbound(full, creds.provider);
   if (!norm.pa_document_id) return null;
 
   const ex = await strictSelect(
@@ -330,8 +346,10 @@ export async function paInboxSync(company) {
   let created = 0;
   for (const it of items) {
     // On ne garde que les factures d'ACHAT (reçues), pas nos propres ventes.
+    // v8.48.2 — SUPER PDP utilise direction = "in" (entrant) ou "out" (sortant).
+    // On ne persiste QUE les entrantes ; les sortantes sont nos propres émissions.
     const dir = String(it.direction || it.type || it.kind || "").toLowerCase();
-    if (dir && /sale|vente|outbound|sent/.test(dir)) continue;
+    if (dir === "out" || /sale|vente|outbound|sent/.test(dir)) continue;
     const r = await persistInbound(company.id, creds, impl, cfg, it);
     if (r) created++;
   }
