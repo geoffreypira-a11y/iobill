@@ -12,14 +12,57 @@
 
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
 
+// v8.47 : bodyParser désactivé pour pouvoir vérifier la signature HMAC
+// du webhook PA sur les octets BRUTS. Les autres ops reçoivent un
+// req.body réhydraté à l'identique juste en dessous.
+export const config = { api: { bodyParser: false } };
+
+async function readRaw(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export default async function handler(req, res) {
   // Détermine l'opération
   const op = (req.query && req.query.op) || inferOp(req);
 
+  // ─── WEBHOOK PLATEFORME AGRÉÉE (non authentifié, HMAC obligatoire) ───
+  if (op === "pa_webhook") {
+    if (req.method !== "POST") return json(res, 405, { error: "POST requis" });
+    let raw = "";
+    try { raw = await readRaw(req); } catch { return json(res, 400, { error: "body illisible" }); }
+    let pa;
+    try {
+      pa = await import("./_lib/pa-actions.js");
+    } catch (e) {
+      console.error("[public] module PA indisponible", e?.stack || e?.message);
+      return json(res, 503, { error: "Module PA indisponible" });
+    }
+    try {
+      const companyId = req.query && req.query.company_id;
+      const out = await pa.paWebhook(companyId, raw, req.headers);
+      return json(res, out.status, out.body);
+    } catch (e) {
+      console.error("[public/pa_webhook]", e?.stack || e?.message);
+      return json(res, 500, { error: "Erreur webhook" });
+    }
+  }
+
+  // Réhydrate req.body pour les ops historiques (bodyParser désactivé).
+  if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
+    if (req.body === undefined) {
+      try {
+        const raw = await readRaw(req);
+        req.body = raw ? JSON.parse(raw) : {};
+      } catch { req.body = {}; }
+    }
+  }
+
   if (op === "share") return handleShare(req, res);
   if (op === "fetch") return handleFetch(req, res);
   if (op === "external") return handleExternal(req, res);
-  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch or ?op=external" });
+  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=external or ?op=pa_webhook" });
 }
 
 function inferOp(req) {

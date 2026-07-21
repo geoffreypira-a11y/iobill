@@ -102,6 +102,35 @@ async function handleRequest(req, res) {
     return json(res, 200, { tickets: tickets || [] });
   }
 
+  // ─── ACTIONS PLATEFORME AGRÉÉE (v8.47) ────────────────────
+  // Import DYNAMIQUE : si le module PA casse, il n'emporte pas
+  // toute la zone admin avec lui.
+  if (action && action.startsWith("pa_")) {
+    let pa;
+    try {
+      pa = await import("./_lib/pa-actions.js");
+    } catch (e) {
+      console.error("[admin] module PA indisponible", e?.stack || e?.message);
+      return json(res, 503, { error: "Module Plateforme Agréée indisponible" });
+    }
+    const isAdmin = !!(company && company.is_admin === true);
+
+    // Actions abonné : exigent une company. Les actions admin non.
+    if (pa.PA_SUBSCRIBER_ACTIONS.has(action) && !company) {
+      return json(res, 403, { error: "Aucune entreprise associée" });
+    }
+    if (pa.PA_ADMIN_ACTIONS.has(action) && !isAdmin) {
+      return json(res, 403, { error: "Accès refusé (admin uniquement)" });
+    }
+    try {
+      const out = await pa.handlePaAction({ action, payload, user, company, isAdmin });
+      return json(res, 200, out);
+    } catch (e) {
+      console.error("[admin/pa]", action, e?.stack || e?.message);
+      return json(res, e?.paStatus || 500, { error: e?.message || "Erreur PA" });
+    }
+  }
+
   // ─── À PARTIR D'ICI : ADMIN UNIQUEMENT ────────────────────
   // On exige une company pour le check is_admin.
   if (!company) {

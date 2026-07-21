@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
 import { AdminFirmsTab } from "./AdminFirmsTab.jsx";
+import { AdminPdpModal } from "./AdminPdpModal.jsx";
 
 /**
  * AdminPage — Panel admin IO BILL
@@ -21,6 +22,7 @@ export function AdminPage({ token, company }) {
   const [expandedCompany, setExpandedCompany] = useState(null);
   const [companyData, setCompanyData] = useState(null);
   const [showArchiveModal, setShowArchiveModal] = useState(null); // companyId
+  const [pdpCompany, setPdpCompany] = useState(null); // v8.47 — modale PDP Access
 
   // Backup
   const [backupInfo, setBackupInfo] = useState(null);
@@ -295,6 +297,7 @@ export function AdminPage({ token, company }) {
                 onUnarchive={(reactivate) => unarchiveCompany(c.id, reactivate)}
                 onDelete={() => deleteCompany(c)}
                 onExport={() => exportCompany(c)}
+                onPdp={() => setPdpCompany(c)}
                 onDeleteDoc={(table, id) => deleteDoc(table, id)}
               />
             ))
@@ -372,6 +375,14 @@ export function AdminPage({ token, company }) {
           onConfirm={(reason) => archiveCompany(showArchiveModal, reason)}
         />
       )}
+
+      {pdpCompany && (
+        <AdminPdpModal
+          company={pdpCompany}
+          adminCall={adminCall}
+          onClose={() => setPdpCompany(null)}
+        />
+      )}
     </div>
   );
 }
@@ -379,7 +390,7 @@ export function AdminPage({ token, company }) {
 // ═══════════════════════════════════════════════════════════
 // CompanyCard
 // ═══════════════════════════════════════════════════════════
-function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc }) {
+function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp }) {
   const statusBadge = (() => {
     if (c._archived) return { label: "Archivé", color: "var(--muted)", bg: "rgba(255,255,255,0.05)" };
     if (c.sub_status === "active") return { label: "Abonné", color: "var(--green, #3ecf7a)", bg: "rgba(62,207,122,0.12)" };
@@ -427,6 +438,9 @@ function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, o
           </button>
           <button className="btn btn-ghost" onClick={onExport} style={{ fontSize: 12 }} title="Export JSON">
             ⬇ Export
+          </button>
+          <button className="btn btn-ghost" onClick={onPdp} style={{ fontSize: 12, color: "var(--gold, #d4a843)" }} title="Plateforme agréée (Factur-X)">
+            🔌 PDP Access
           </button>
           {!c._archived ? (
             <>
