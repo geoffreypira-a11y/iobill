@@ -1002,6 +1002,44 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     return json(res, 200, { ok: true, url: freshUrl });
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // FIRM_LINK_COMPANIES : hydrate les noms/SIRET des companies liées.
+  // v8.48.34 — Nécessaire parce que RLS bloque le cabinet sur companies
+  // tant que le lien est pending. Retour : { link_id: {name, siret} }.
+  // ═══════════════════════════════════════════════════════════════════
+  if (action === "firm_link_companies") {
+    const { firm_id } = p;
+    if (!firm_id) return json(res, 400, { error: "firm_id requis" });
+
+    // Autorisation : le user doit être membre du firm
+    const members = await sbSelect("firm_members", {
+      firm_id: `eq.${firm_id}`,
+      user_id: `eq.${user.id}`,
+      limit: 1
+    });
+    if (!members || members.length === 0) {
+      return json(res, 403, { error: "Non membre de ce cabinet" });
+    }
+
+    // Charge tous les links + leurs companies via service role
+    const links = await sbSelect("firm_client_links", {
+      firm_id: `eq.${firm_id}`,
+      select: "id,company_id",
+      limit: 200
+    });
+    const out = {};
+    for (const l of (links || [])) {
+      if (!l.company_id) continue;
+      const c = await sbSelect("companies", {
+        id: `eq.${l.company_id}`,
+        select: "legal_name,siret",
+        limit: 1
+      });
+      if (c && c[0]) out[l.id] = { name: c[0].legal_name, siret: c[0].siret };
+    }
+    return json(res, 200, { ok: true, companies: out });
+  }
+
   return json(res, 400, { error: "Action inconnue : " + action });
 }
 

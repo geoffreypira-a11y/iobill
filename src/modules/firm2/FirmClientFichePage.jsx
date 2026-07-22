@@ -472,12 +472,28 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
 
   useEffect(() => { load(); }, [company?.id]);
 
-  function openPreview(p) {
+  async function openPreview(p) {
     if (!p.file_url) { alert("PDF non disponible pour cet achat"); return; }
+    // v8.48.34 — Utiliser pdf_refresh_url pour obtenir une URL signée
+    // (le cabinet n'a pas d'accès direct au bucket purchases-attach).
     const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
     const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${p.file_url}`;
-    setPreviewUrl(storedUrl);
-    setPreviewTitle(`Achat ${p.vendor_name} · ${fmtDate(p.issue_date)}`);
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.pdf_url) {
+        alert(j.error || "Impossible d'ouvrir le PDF");
+        return;
+      }
+      setPreviewUrl(j.pdf_url);
+      setPreviewTitle(`Achat ${p.vendor_name} · ${fmtDate(p.issue_date)}`);
+    } catch (e) {
+      alert("Erreur : " + e.message);
+    }
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;

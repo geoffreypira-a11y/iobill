@@ -44,18 +44,25 @@ function ClientsList({ token, firm, isPreview }) {
       order: "created_at.desc",
       limit: 100
     });
-    // Hydrater avec les noms + SIRET de companies
-    const out = [];
-    for (const l of (rows || [])) {
-      let companyName = null;
-      let companySiret = null;
-      if (l.company_id) {
-        const c = await sb.selectOne(token, "companies", `id=eq.${l.company_id}`, "legal_name,siret");
-        companyName = c?.legal_name;
-        companySiret = c?.siret;
-      }
-      out.push({ ...l, _company_name: companyName, _company_siret: companySiret });
-    }
+
+    // v8.48.34 — Hydrate via action serveur pour bypass RLS
+    // (le cabinet ne peut pas lire directement companies quand pending)
+    let companiesMap = {};
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "firm_link_companies", payload: { firm_id: firm.id } })
+      });
+      const j = await r.json();
+      if (r.ok && j.companies) companiesMap = j.companies;
+    } catch { /* silence */ }
+
+    const out = (rows || []).map((l) => ({
+      ...l,
+      _company_name: companiesMap[l.id]?.name || null,
+      _company_siret: companiesMap[l.id]?.siret || null
+    }));
     setLinks(out);
     setLoading(false);
   }
