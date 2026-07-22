@@ -291,13 +291,25 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
   // v8.48.21 — Fix BR-CO-14 : reconstruit vat_breakdown depuis les lignes
   // si vide, sinon Σ(TVA par catégorie) ≠ TVA totale et la validation échoue.
+  // v8.48.23 — Fix BR-CO-17 : les vraies colonnes de document_lines sont
+  // line_ht_cents et line_vat_cents (pas total_ht_cents). Sans ça, la
+  // base restait à 0 et le calcul base × rate ne matchait pas la TVA.
   let breakdown = doc.vat_breakdown || [];
   if (!Array.isArray(breakdown) || breakdown.length === 0) {
     const byRate = new Map();
     for (const l of (lines || [])) {
       const rate = Number(l.vat_rate ?? 0);
-      const baseC = Number(l.total_ht_cents ?? 0);
-      const vatC = Math.round(baseC * rate / 100);
+      // Fallback en cascade sur les noms de colonnes possibles
+      const baseC = Number(
+        l.line_ht_cents ??
+        l.total_ht_cents ??
+        (Number(l.unit_price_ht_cents ?? 0) * Number(l.quantity ?? 1)) ??
+        0
+      );
+      const vatC = Number(
+        l.line_vat_cents ??
+        Math.round(baseC * rate / 100)
+      );
       const key = rate.toFixed(2);
       const prev = byRate.get(key) || { rate, base_cents: 0, vat_cents: 0 };
       prev.base_cents += baseC;
