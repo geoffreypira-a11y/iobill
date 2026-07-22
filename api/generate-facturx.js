@@ -373,7 +373,7 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     </ram:IncludedNote>
     <ram:IncludedNote>
       <ram:Content>Aucun escompte n'est accordé en cas de paiement anticipé.</ram:Content>
-      <ram:SubjectCode>AAK</ram:SubjectCode>
+      <ram:SubjectCode>AAB</ram:SubjectCode>
     </ram:IncludedNote>
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
