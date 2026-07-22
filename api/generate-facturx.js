@@ -348,6 +348,13 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
   xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
   xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
   <rsm:ExchangedDocumentContext>
+    <!-- v8.48.27 — Mode de facturation Chorus Pro requis par BR-FR-08.
+         S1 = Service simple (cas standard). Autres valeurs possibles :
+         B1/B2/B4/B7/B8/B9 (biens), S1/S2/S3/S4/S5/S6/S7/S8/S9 (services),
+         M1/M2/M4/M8/M9 (mixte). -->
+    <ram:BusinessProcessSpecifiedDocumentContextParameter>
+      <ram:ID>S1</ram:ID>
+    </ram:BusinessProcessSpecifiedDocumentContextParameter>
     <ram:GuidelineSpecifiedDocumentContextParameter>
       <ram:ID>${cfg.profile}</ram:ID>
     </ram:GuidelineSpecifiedDocumentContextParameter>
@@ -381,12 +388,13 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       <ram:SellerTradeParty>
         <ram:Name>${supplierName}</ram:Name>
         ${(() => {
+          // v8.48.27 — BR-FR-10 : AFNOR exige SIREN (9 chiffres) avec
+          // schemeID="0002" pour le vendeur, même si techniquement 0002=SIRET
+          // dans ISO 6523. On extrait toujours les 9 premiers chiffres.
           const raw = String(co.siret || "").replace(/\s/g, "");
-          if (raw.length === 14) {
-            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          }
-          if (raw.length === 9) {
-            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
+          if (siren) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
           }
           return "";
         })()}
@@ -402,17 +410,11 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       <ram:BuyerTradeParty>
         <ram:Name>${buyerName}</ram:Name>
         ${(() => {
-          // v8.48.19 — Le schéma Factur-X XSD n'autorise QU'UN SEUL
-          // SpecifiedLegalOrganization par party (cardinalité 0..1).
-          // On privilégie le SIRET (0002) quand on l'a, sinon le SIREN
-          // (0009). C'est le SIRET qui identifie précisément l'établissement,
-          // et l'annuaire PPF sait remonter au SIREN à partir du SIRET.
+          // v8.48.27 — Idem BR-FR : SIREN 9 chiffres pour l'acheteur.
           const raw = String(cs.siret || "").replace(/\s/g, "");
-          if (raw.length === 14) {
-            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          }
-          if (raw.length === 9) {
-            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
+          if (siren) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
           }
           return "";
         })()}
