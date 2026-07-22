@@ -405,6 +405,12 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(co.city)}</ram:CityName>
           <ram:CountryID>${x(co.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
+        <!-- v8.48.28 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
+             Identifiant électronique Peppol pour le routage AFNOR. À défaut
+             d'email disponible, on utilise le SIREN comme fallback. -->
+        <ram:URIUniversalCommunication>
+          <ram:URIID schemeID="EM">${x(co.email || co.contact_email || (co.siret ? "siren-" + String(co.siret).replace(/\s/g, "").slice(0, 9) + "@iobill.online" : "contact@iobill.online"))}</ram:URIID>
+        </ram:URIUniversalCommunication>
         ${co.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(co.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}
       </ram:SellerTradeParty>
       <ram:BuyerTradeParty>
@@ -425,6 +431,11 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(cs.city)}</ram:CityName>
           <ram:CountryID>${x(cs.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
+        <!-- v8.48.28 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
+             Identifiant électronique Peppol pour le routage AFNOR. -->
+        <ram:URIUniversalCommunication>
+          <ram:URIID schemeID="EM">${x(cs.email || cs.contact_email || (cs.siret ? "siren-" + String(cs.siret).replace(/\s/g, "").slice(0, 9) + "@iobill.online" : "client@iobill.online"))}</ram:URIID>
+        </ram:URIUniversalCommunication>
         ${cs.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(cs.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}
       </ram:BuyerTradeParty>
       ${billingRefBlock}
