@@ -240,8 +240,9 @@ const superpdp = {
     };
 
     if (code) {
-      // Toutes les variantes possibles du même contenu — SUPER PDP en
-      // gardera une, ignorera les autres.
+      // v8.48.11 — L'erreur SUPER PDP mentionne le chemin XPath AFNOR :
+      //   ReferenceReferencedDocument/ProcessConditionCode
+      // On tente à la fois les variantes plates ET les variantes imbriquées.
       body.details = [{ code, label }];
       body.reason = { code, label };
       body.reason_code = code;
@@ -249,15 +250,40 @@ const superpdp = {
       body.motif = { code, label };
       body.motif_code = code;
       body.motif_label = label;
-      // Format AFNOR CDV brut (namespace ProcessConditionCode)
       body.process_condition_code = code;
+      body.processConditionCode = code;
+      // Structure imbriquée qui suit le XPath AFNOR
+      body.reference_referenced_document = {
+        process_condition_code: code,
+        processConditionCode: code
+      };
+      body.referenceReferencedDocument = {
+        processConditionCode: code
+      };
+      body.acknowledgement_document = {
+        reference_referenced_document: {
+          process_condition_code: code
+        }
+      };
     }
 
-    return req(cfg.base_url + "/v1.beta/invoice_events", {
+    // v8.48.10 — Log complet pour debug le format attendu par SUPER PDP.
+    const bodyStr = JSON.stringify(body);
+    console.log("[PA] sendEvent POST " + statusCode + " body=" + bodyStr);
+
+    const r = await fetch(cfg.base_url + "/v1.beta/invoice_events", {
       method: "POST",
       headers: await this._h(cfg, { "Content-Type": "application/json" }),
-      body: JSON.stringify(body)
+      body: bodyStr
     });
+    const respTxt = await r.text();
+    console.log("[PA] sendEvent RESP " + r.status + " " + respTxt.slice(0, 800));
+    if (!r.ok) {
+      const e = new Error("[PA] sendEvent " + r.status + " — " + respTxt.slice(0, 400));
+      e.status = r.status;
+      throw e;
+    }
+    try { return JSON.parse(respTxt); } catch { return { raw: respTxt }; }
   },
 
   /** Conformité : valide un fichier SANS l'envoyer. Gratuit. */
