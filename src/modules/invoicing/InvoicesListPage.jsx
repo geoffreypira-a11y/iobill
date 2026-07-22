@@ -190,20 +190,43 @@ export function InvoicesListPage({ token, company }) {
   async function transmitToAdmin(inv) {
     setActionLoading(`transmit-${inv.id}`);
     try {
-      const r = await fetch("/api/generate-facturx", {
+      // v8.48.15 — 2a : validation Factur-X AVANT transmission (gratuit
+      // chez SUPER PDP). Si non conforme, on bloque et on affiche l'erreur.
+      const validationResp = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ invoice_id: inv.id, transmit_pdp: true })
+        body: JSON.stringify({ action: "pa_validate", payload: { invoice_id: inv.id } })
+      });
+      const validation = await validationResp.json().catch(() => ({}));
+      if (!validationResp.ok) {
+        throw new Error(validation.error || "Validation Factur-X impossible");
+      }
+      if (validation.is_valid === false) {
+        const first = (validation.errors || [])[0];
+        const detail = first ? " — " + (first.message || first.description || first.code || JSON.stringify(first)) : "";
+        throw new Error("Facture non conforme à l'API AFNOR" + detail + ". Corrigez avant de retransmettre.");
+      }
+
+      // Confirmation utilisateur : on ne transmet pas par accident.
+      if (!window.confirm("Transmettre cette facture à " + (inv.client_name || "l'acheteur") + " via la Plateforme Agréée ?\n\nCette action est irréversible.")) {
+        setActionLoading(null);
+        return;
+      }
+
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_send", payload: { invoice_id: inv.id } })
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         throw new Error(j.error || `Erreur ${r.status}`);
       }
-      capture("invoice_pdp_transmitted", { invoice_id: inv.id, provider: j.provider });
+      capture("invoice_pdp_transmitted", { invoice_id: inv.id, pa_document_id: j.pa_document_id });
       await refreshInvoices();
-      showToast(`Facture transmise via ${j.provider || "PDP"} (ID: ${j.transmission_id || "?"})`);
+      showToast(`Facture transmise à la Plateforme Agréée (ID : ${j.pa_document_id || "?"})`);
     } catch (e) {
-      showToast(e.message || "Erreur transmission PDP", "error");
+      showToast(e.message || "Erreur transmission PA", "error");
     }
     setActionLoading(null);
   }
@@ -442,14 +465,29 @@ export function InvoicesListPage({ token, company }) {
                             {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
                           </button>
                         )}
-                        {alreadyTransmitted && (
-                          <span
-                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--green)", border: "1px solid rgba(62,207,122,0.3)", borderRadius: 6, whiteSpace: "nowrap" }}
-                            title={`Transmise via ${inv.pdp_provider || "PDP"} le ${new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR")}`}
-                          >
-                            ✓ Transmise
-                          </span>
-                        )}
+                        {alreadyTransmitted && (() => {
+                          // v8.48.15 — Affiche le vrai statut cycle de vie PA
+                          const fx = inv.facturx_status || "transmitted";
+                          const meta = {
+                            transmitted: { icon: "📤", label: "Transmise", color: "#4a9eff" },
+                            accepted:    { icon: "✅", label: "Approuvée", color: "#3ecf7a" },
+                            rejected:    { icon: "❌", label: "Refusée",   color: "#e54949" }
+                          }[fx] || { icon: "📤", label: fx, color: "#8a8a96" };
+                          const when = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR") : "";
+                          return (
+                            <span
+                              style={{
+                                padding: "5px 10px", fontSize: 10, color: meta.color,
+                                border: "1px solid " + meta.color + "55",
+                                background: meta.color + "18",
+                                borderRadius: 6, whiteSpace: "nowrap"
+                              }}
+                              title={"Transmise via " + (inv.pdp_provider || "PA") + (when ? " le " + when : "") + " · ID " + (inv.pdp_transmission_id || "?")}
+                            >
+                              {meta.icon} {meta.label}
+                            </span>
+                          );
+                        })()}
 
                         {/* Bouton kebab : trigger, menu rendu en portail plus bas */}
                         <button
