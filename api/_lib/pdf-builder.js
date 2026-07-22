@@ -276,6 +276,14 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   if (cs0.country) clientBlockTop = drawRightLine(cs0.country, clientBlockTop);
   if (cs0.email) clientBlockTop = drawRightLine(cs0.email, clientBlockTop);
   if (cs0.phone) clientBlockTop = drawRightLine(cs0.phone, clientBlockTop);
+  // v8.48.18 — Identifiants légaux du destinataire : indispensables
+  // pour la conformité Factur-X / Plateforme Agréée.
+  if (cs0.siret) {
+    const raw = String(cs0.siret).replace(/\s/g, "");
+    const label = raw.length === 14 ? "SIRET" : (raw.length === 9 ? "SIREN" : "N°");
+    clientBlockTop = drawRightLine(`${label} : ${raw}`, clientBlockTop);
+  }
+  if (cs0.vat_number) clientBlockTop = drawRightLine(`TVA : ${cs0.vat_number}`, clientBlockTop);
 
   // y = en dessous du bloc le plus bas (entre coordonnees emetteur et client) + divider
   y = Math.min(yLeft, clientBlockTop) - 14;
