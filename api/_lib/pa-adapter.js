@@ -290,16 +290,20 @@ const superpdp = {
   async validate(cfg, bytes, filename, contentType) {
     const fd = new FormData();
     fd.append("file", new Blob([bytes], { type: contentType || "application/pdf" }), filename || "invoice.pdf");
-    const j = await req(cfg.base_url + "/v1.beta/validation_reports", {
+    const url = cfg.base_url + "/v1.beta/validation_reports";
+    console.log("[PA] validate POST " + url + " file=" + (filename || "invoice.pdf") + " size=" + bytes.length);
+    const j = await req(url, {
       method: "POST",
       headers: await this._h(cfg), // pas de Content-Type : FormData le pose
       body: fd
     });
+    // v8.48.20 — Log complet du retour SUPER PDP pour debug conformité.
+    console.log("[PA] validate RESP " + JSON.stringify(j).slice(0, 3000));
     const rep = Array.isArray(j) ? j[0] : (j.data ? j.data[0] : j);
     return {
-      is_valid: rep?.is_valid === true,
+      is_valid: rep?.is_valid === true || rep?.valid === true || rep?.status === "valid",
       profile: rep?.profile || rep?.detected_profile || null,
-      errors: rep?.errors || rep?.violations || [],
+      errors: rep?.errors || rep?.violations || rep?.messages || rep?.warnings || [],
       raw: rep
     };
   },

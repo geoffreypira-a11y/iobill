@@ -189,10 +189,13 @@ export async function paValidateInvoice(company, payload) {
   const { impl, cfg } = getProvider(creds);
   const rep = await impl.validate(cfg, bytes, (inv.number || "facture") + ".pdf", "application/pdf");
 
+  // v8.48.20 — Log complet du retour SUPER PDP pour debug conformité.
+  console.log("[PA] validate response for invoice", inv.id, JSON.stringify(rep).slice(0, 2000));
+
   await logEvent({
     company_id: company.id, direction: "outbound", invoice_id: inv.id,
     event_type: "invoice.validated", status: rep.is_valid ? "valid" : "invalid",
-    message: rep.profile || null, payload: { errors: (rep.errors || []).slice(0, 20) }
+    message: rep.profile || null, payload: { errors: (rep.errors || []).slice(0, 20), raw: rep.raw }
   });
   return rep;
 }
@@ -368,50 +371,35 @@ export async function paInboxSync(company) {
 }
 
 export async function paInboxAck(company, payload) {
-  // v8.48.12 — fr:210 (Refusée) exige un MDT-113 dont on ne connaît
-  // pas encore le format JSON attendu par SUPER PDP. En attendant la
-  // réponse du support, on route le refus vers fr:207 (Litige) qui
-  // porte la même sémantique commerciale ("je conteste") sans les
-  // exigences strictes AFNOR sur le MOTIF.
-  const map = {
-    approved: LIFECYCLE.approuvee,   // fr:205
-    refused:  LIFECYCLE.litige,      // fr:207 au lieu de fr:210
-    paid:     LIFECYCLE.encaissee    // fr:212
-  };
+  // v8.48.13 — Le refus AFNOR (fr:210) exige un MDT-113 dont on n'a
+  // pas encore le format exact JSON attendu par SUPER PDP. Le support
+  // a été contacté. En attendant, on bloque l'action côté API en plus
+  // de l'UI, avec un message clair.
+  if (payload.status === "refused") {
+    throw fail(503,
+      "Le refus AFNOR est temporairement indisponible. Le support SUPER PDP a été contacté pour préciser la structure du MDT-113 (code motif de refus). La comptabilisation reste disponible."
+    );
+  }
+
+  const map = { approved: LIFECYCLE.approuvee, paid: LIFECYCLE.encaissee };
   const code = map[payload.status];
-  if (!code) throw fail(400, "status doit être approved | refused | paid");
+  if (!code) throw fail(400, "status doit être approved | paid");
 
   const row = await sbAdmin.selectOne("pa_inbound_invoices", "id=eq." + payload.inbound_id);
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
 
-  const reason = payload.reason;
-  const isRefused = payload.status === "refused";
-  if (isRefused) {
-    const hasContent = typeof reason === "object"
-      ? !!(reason && reason.code)
-      : !!(reason && String(reason).trim());
-    if (!hasContent) throw fail(400, "Motif avec code obligatoire pour un refus");
-  }
-
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
-  await impl.sendEvent(cfg, row.pa_document_id, code, reason);
-
-  // Message lisible pour l'audit et la BDD
-  const reasonText = typeof reason === "object"
-    ? (reason ? "[" + reason.code + "] " + reason.label : null)
-    : reason;
+  await impl.sendEvent(cfg, row.pa_document_id, code);
 
   await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
-    status: isRefused ? "refused" : "approved",
-    refusal_reason: isRefused ? reasonText : null,
+    status: "approved",
     pa_ack_status: payload.status, pa_ack_sent_at: new Date().toISOString()
   });
   await logEvent({
     company_id: company.id, direction: "inbound", provider: creds.provider,
     pa_document_id: row.pa_document_id, inbound_id: row.id,
-    event_type: "invoice." + payload.status, status: payload.status,
-    message: reasonText || null
+    event_type: "invoice." + payload.status, status: payload.status
   });
   return { ok: true };
 }

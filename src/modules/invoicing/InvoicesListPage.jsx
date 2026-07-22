@@ -202,9 +202,17 @@ export function InvoicesListPage({ token, company }) {
         throw new Error(validation.error || "Validation Factur-X impossible");
       }
       if (validation.is_valid === false) {
-        const first = (validation.errors || [])[0];
-        const detail = first ? " — " + (first.message || first.description || first.code || JSON.stringify(first)) : "";
-        throw new Error("Facture non conforme à l'API AFNOR" + detail + ". Corrigez avant de retransmettre.");
+        // v8.48.20 — Affiche TOUTES les erreurs SUPER PDP, pas juste la première.
+        const errs = validation.errors || [];
+        const detail = errs.length
+          ? "\n\n" + errs.slice(0, 5).map((e, i) =>
+              (i + 1) + ". " + (e.message || e.description || e.rule || e.code || e.text || JSON.stringify(e))
+            ).join("\n")
+          : "";
+        const rawInfo = !errs.length && validation.raw
+          ? "\n\nRetour brut : " + JSON.stringify(validation.raw).slice(0, 500)
+          : "";
+        throw new Error("Facture non conforme à l'API AFNOR." + detail + rawInfo);
       }
 
       // Confirmation utilisateur : on ne transmet pas par accident.
