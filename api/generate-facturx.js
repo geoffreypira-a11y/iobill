@@ -321,12 +321,13 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
         <ram:Name>${supplierName}</ram:Name>
         ${(() => {
           const raw = String(co.siret || "").replace(/\s/g, "");
-          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
-          const siret = raw.length === 14 ? raw : null;
-          let out = "";
-          if (siren) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          if (siret) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siret)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          return out;
+          if (raw.length === 14) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          }
+          if (raw.length === 9) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          }
+          return "";
         })()}
         <ram:PostalTradeAddress>
           <ram:PostcodeCode>${x(co.postal_code)}</ram:PostcodeCode>
@@ -340,17 +341,19 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       <ram:BuyerTradeParty>
         <ram:Name>${buyerName}</ram:Name>
         ${(() => {
-          // v8.48.16 — Émet SIREN (0009) et SIRET (0002) quand possible.
-          // SUPER PDP et l'annuaire PPF référencent par SIREN ; le SIRET
-          // est utile pour l'établissement précis. Un SIRET valide (14
-          // chiffres) contient le SIREN dans les 9 premiers.
+          // v8.48.19 — Le schéma Factur-X XSD n'autorise QU'UN SEUL
+          // SpecifiedLegalOrganization par party (cardinalité 0..1).
+          // On privilégie le SIRET (0002) quand on l'a, sinon le SIREN
+          // (0009). C'est le SIRET qui identifie précisément l'établissement,
+          // et l'annuaire PPF sait remonter au SIREN à partir du SIRET.
           const raw = String(cs.siret || "").replace(/\s/g, "");
-          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
-          const siret = raw.length === 14 ? raw : null;
-          let out = "";
-          if (siren) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          if (siret) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siret)}</ram:ID></ram:SpecifiedLegalOrganization>`;
-          return out;
+          if (raw.length === 14) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          }
+          if (raw.length === 9) {
+            return `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(raw)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          }
+          return "";
         })()}
         <ram:PostalTradeAddress>
           <ram:PostcodeCode>${x(cs.postal_code)}</ram:PostcodeCode>
