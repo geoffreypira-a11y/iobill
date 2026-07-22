@@ -279,7 +279,29 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
 
   const supplierName = x(co.legal_name);
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
-  const breakdown = doc.vat_breakdown || [];
+  // v8.48.21 — Fix BR-CO-14 : reconstruit vat_breakdown depuis les lignes
+  // si vide, sinon Σ(TVA par catégorie) ≠ TVA totale et la validation échoue.
+  let breakdown = doc.vat_breakdown || [];
+  if (!Array.isArray(breakdown) || breakdown.length === 0) {
+    const byRate = new Map();
+    for (const l of (lines || [])) {
+      const rate = Number(l.vat_rate ?? 0);
+      const baseC = Number(l.total_ht_cents ?? 0);
+      const vatC = Math.round(baseC * rate / 100);
+      const key = rate.toFixed(2);
+      const prev = byRate.get(key) || { rate, base_cents: 0, vat_cents: 0 };
+      prev.base_cents += baseC;
+      prev.vat_cents += vatC;
+      byRate.set(key, prev);
+    }
+    breakdown = Array.from(byRate.values());
+    // Correction d'arrondi cumulatif : force la somme TVA à matcher le total.
+    const totalC = Number(doc.vat_total_cents ?? 0);
+    const sumC = breakdown.reduce((s, v) => s + v.vat_cents, 0);
+    if (breakdown.length > 0 && totalC && sumC !== totalC) {
+      breakdown[breakdown.length - 1].vat_cents += (totalC - sumC);
+    }
+  }
   const vatBlocks = breakdown.map((v) => `
     <ram:ApplicableTradeTax>
       <ram:CalculatedAmount>${(v.vat_cents / 100).toFixed(2)}</ram:CalculatedAmount>
