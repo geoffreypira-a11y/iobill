@@ -13,7 +13,10 @@ const DOC_CONFIG = {
     table: "invoices",
     lineType: "invoice",
     typeCode: "380",          // Factur-X : 380 = Commercial invoice
-    profile: "urn:factur-x.eu:1p0:basicwl",
+    // v8.48.30 — Profil EN16931 (comme IO CAR). BASIC WL est accepté à la
+    // validation mais refusé à la transmission par SUPER PDP ("format not
+    // supported"). EN16931 est le vrai standard visé par la réforme 2026-2027.
+    profile: "urn:cen.eu:en16931:2017#conformant#urn:factur-x.eu:1p0:en16931",
     storageBucket: "invoices-pdf",
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
@@ -26,7 +29,7 @@ const DOC_CONFIG = {
     table: "credit_notes",
     lineType: "credit_note",
     typeCode: "381",          // Factur-X : 381 = Credit note
-    profile: "urn:factur-x.eu:1p0:basicwl",
+    profile: "urn:cen.eu:en16931:2017#conformant#urn:factur-x.eu:1p0:en16931",
     storageBucket: "invoices-pdf", // même bucket — différencié par préfixe nom
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
@@ -389,6 +392,45 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     </ram:IncludedNote>` : ""}
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
+    ${(() => {
+      // v8.48.30 — EN16931 exige IncludedSupplyChainTradeLineItem pour chaque
+      // ligne de facture. BASIC WL ne l'imposait pas ; EN16931 oui.
+      return (lines || []).map((l, i) => {
+        const qty = Number(l.quantity ?? 1);
+        const unit = l.unit || "C62"; // C62 = unité par défaut UN/ECE
+        const unitPriceC = Number(l.unit_price_ht_cents ?? 0);
+        const lineHtC = Number(l.line_ht_cents ?? Math.round(unitPriceC * qty));
+        const rate = Number(l.vat_rate ?? 20);
+        const desc = x(l.description || "Ligne " + (i + 1));
+        return `
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument>
+        <ram:LineID>${i + 1}</ram:LineID>
+      </ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedTradeProduct>
+        <ram:Name>${desc}</ram:Name>
+      </ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement>
+        <ram:NetPriceProductTradePrice>
+          <ram:ChargeAmount>${(unitPriceC / 100).toFixed(2)}</ram:ChargeAmount>
+        </ram:NetPriceProductTradePrice>
+      </ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeDelivery>
+        <ram:BilledQuantity unitCode="${x(unit)}">${qty}</ram:BilledQuantity>
+      </ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax>
+          <ram:TypeCode>VAT</ram:TypeCode>
+          <ram:CategoryCode>${rate > 0 ? "S" : "E"}</ram:CategoryCode>
+          <ram:RateApplicablePercent>${rate.toFixed(2)}</ram:RateApplicablePercent>
+        </ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation>
+          <ram:LineTotalAmount>${(lineHtC / 100).toFixed(2)}</ram:LineTotalAmount>
+        </ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>`;
+      }).join("");
+    })()}
     <ram:ApplicableHeaderTradeAgreement>
       <ram:SellerTradeParty>
         <ram:Name>${supplierName}</ram:Name>
