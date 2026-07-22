@@ -13,10 +13,11 @@ const DOC_CONFIG = {
     table: "invoices",
     lineType: "invoice",
     typeCode: "380",          // Factur-X : 380 = Commercial invoice
-    // v8.48.30 — Profil EN16931 (comme IO CAR). BASIC WL est accepté à la
-    // validation mais refusé à la transmission par SUPER PDP ("format not
-    // supported"). EN16931 est le vrai standard visé par la réforme 2026-2027.
-    profile: "urn:cen.eu:en16931:2017#conformant#urn:factur-x.eu:1p0:en16931",
+    // v8.48.31 — Retour à BASIC WL : SUPER PDP n'a pas de validateur EN16931
+    // en sandbox ("aucun validateur trouvé pour ce format de fichier").
+    // On garde le bloc IncludedSupplyChainTradeLineItem par ligne, il ne
+    // gêne pas BASIC WL mais servira quand SUPER PDP câblera EN16931.
+    profile: "urn:factur-x.eu:1p0:basicwl",
     storageBucket: "invoices-pdf",
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
@@ -29,7 +30,7 @@ const DOC_CONFIG = {
     table: "credit_notes",
     lineType: "credit_note",
     typeCode: "381",          // Factur-X : 381 = Credit note
-    profile: "urn:cen.eu:en16931:2017#conformant#urn:factur-x.eu:1p0:en16931",
+    profile: "urn:factur-x.eu:1p0:basicwl",
     storageBucket: "invoices-pdf", // même bucket — différencié par préfixe nom
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
