@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { sb } from "../lib/supabase.js";
-import { initials } from "../lib/helpers.js";
+import { initials, isSiretOrSiren, formatSiret } from "../lib/helpers.js";
 
 function displayName(c) {
   if (c.client_type === "individual") {
@@ -199,6 +199,7 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [siret, setSiret] = useState("");   // v8.48.17 — indispensable pour la PA
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -214,6 +215,10 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
       setErr("Au moins le nom ou le prénom est requis.");
       return;
     }
+    if (clientType === "company" && siret && !isSiretOrSiren(siret)) {
+      setErr("SIRET (14 chiffres) ou SIREN (9 chiffres) attendu.");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -223,6 +228,7 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
         legal_name: clientType === "company" ? legalName.trim() : null,
         first_name: clientType === "individual" ? firstName.trim() : null,
         last_name: clientType === "individual" ? lastName.trim() : null,
+        siret: clientType === "company" ? (siret.replace(/\s/g, "") || null) : null,
         email: email.trim() || null,
         phone: phone.trim() || null
       };
@@ -358,6 +364,22 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
               Recommandé pour envoyer devis et factures par email.
             </div>
           </div>
+
+          {clientType === "company" && (
+            <div className="form-row" style={{ marginBottom: 12 }}>
+              <label className="form-label">SIRET (14 chiffres) ou SIREN (9)</label>
+              <input
+                className="form-input mono"
+                value={siret}
+                onChange={(e) => setSiret(formatSiret(e.target.value))}
+                placeholder="123 456 789 00012"
+                disabled={saving}
+              />
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
+                Recommandé pour transmettre les factures via la Plateforme Agréée.
+              </div>
+            </div>
+          )}
 
           <div className="form-row" style={{ marginBottom: 16 }}>
             <label className="form-label">Téléphone</label>
