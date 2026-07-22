@@ -68,7 +68,11 @@ export function MyFirmSettingsPage({ token, user, company }) {
 
   if (loading) return <div style={loadingStyle}>Chargement...</div>;
 
-  const pending = links.filter((l) => l.status === "pending");
+  // v8.48.32 — Séparer les pending selon qui a initié :
+  //  - initiated_by="firm" : le cabinet t'invite, tu dois accepter/refuser
+  //  - initiated_by="client" : c'est TOI qui as invité le cabinet, tu attends sa réponse
+  const pendingFromFirm = links.filter((l) => l.status === "pending" && l.initiated_by === "firm");
+  const pendingSentByMe = links.filter((l) => l.status === "pending" && l.initiated_by === "client");
   const accepted = links.filter((l) => l.status === "accepted");
   const others = links.filter((l) => !["pending", "accepted"].includes(l.status));
 
@@ -82,11 +86,26 @@ export function MyFirmSettingsPage({ token, user, company }) {
       </div>
 
       {/* Invitations en attente */}
-      {pending.length > 0 && (
+      {pendingFromFirm.length > 0 && (
         <div style={{ marginBottom: 24 }}>
-          <h3 style={sectionTitleStyle}>⏳ Invitations en attente</h3>
-          {pending.map((l) => (
+          <h3 style={sectionTitleStyle}>⏳ Invitations reçues</h3>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+            Ces cabinets vous ont invité à leur donner accès à votre comptabilité.
+          </div>
+          {pendingFromFirm.map((l) => (
             <PendingCard key={l.id} link={l} onAccept={() => action(l.id, "accept")} onRefuse={() => action(l.id, "refuse")} />
+          ))}
+        </div>
+      )}
+
+      {pendingSentByMe.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={sectionTitleStyle}>📤 Invitations envoyées</h3>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+            Vous avez invité ces cabinets. En attente de leur acceptation.
+          </div>
+          {pendingSentByMe.map((l) => (
+            <SentInvitationCard key={l.id} link={l} onRevoke={() => action(l.id, "revoke")} />
           ))}
         </div>
       )}
@@ -95,20 +114,20 @@ export function MyFirmSettingsPage({ token, user, company }) {
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h3 style={sectionTitleStyle}>✅ Mon cabinet rattaché</h3>
-          {accepted.length === 0 && (
+          {accepted.length === 0 && pendingSentByMe.length === 0 && (
             <button className="btn btn-primary btn-sm" onClick={() => setShowInvite(true)}>
               + Inviter un cabinet
             </button>
           )}
         </div>
-        {accepted.length === 0 ? (
+        {accepted.length === 0 && pendingSentByMe.length === 0 ? (
           <div className="card card-pad" style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>
             <div style={{ fontSize: 13, marginBottom: 8 }}>Aucun cabinet rattaché.</div>
             <div style={{ fontSize: 11 }}>
               Si vous avez un comptable, vous pouvez l'inviter à gérer votre dossier sur IO BILL.
             </div>
           </div>
-        ) : (
+        ) : accepted.length === 0 ? null : (
           accepted.map((l) => (
             <ActiveFirmCard key={l.id} link={l} onRevoke={() => action(l.id, "revoke")} />
           ))
@@ -164,6 +183,38 @@ function PendingCard({ link, onAccept, onRefuse }) {
           <button className="btn btn-ghost btn-sm" onClick={onRefuse}>Refuser</button>
           <button className="btn btn-primary btn-sm" onClick={onAccept}>✅ Accepter</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// v8.48.32 — Carte pour une invitation ENVOYÉE par l'abonné, en attente
+// de réponse du cabinet. Pas de bouton Accepter (c'est au cabinet de le faire),
+// juste Annuler pour retirer l'invitation.
+function SentInvitationCard({ link, onRevoke }) {
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 8, border: "1px dashed rgba(212,168,67,0.4)", opacity: 0.85 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            {link._firm?.name || link.invited_email || "Cabinet"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>
+            {link.invited_siret ? `SIRET ${link.invited_siret} · ` : ""}
+            {link.invited_email} · Envoyée le {fmtDate(link.created_at)}
+          </div>
+          {link.message_invite && (
+            <div style={{ fontSize: 11, color: "var(--muted2)", marginTop: 6, fontStyle: "italic" }}>
+              « {link.message_invite} »
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--gold, #d4a843)", marginTop: 6 }}>
+            ⏳ En attente d'acceptation par le cabinet
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={onRevoke} style={{ fontSize: 11 }}>
+          Annuler l'invitation
+        </button>
       </div>
     </div>
   );
