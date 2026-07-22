@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { CLIENT_STATUTS, CLIENT_SOURCES } from "./constants.js";
-import { isEmail, isSiret, formatSiret } from "../../lib/helpers.js";
+import { isEmail, isSiret, isSiretOrSiren, formatSiret } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 export function ClientModal({ token, company, client, onSave, onClose }) {
@@ -40,7 +40,10 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
     if (type === "company" && !data.legal_name.trim()) { setErr("Raison sociale requise"); return; }
     if (type === "individual" && !data.last_name.trim()) { setErr("Nom requis"); return; }
     if (data.email && !isEmail(data.email)) { setErr("Email invalide"); return; }
-    if (data.siret && !isSiret(data.siret)) { setErr("SIRET : 14 chiffres attendus"); return; }
+    if (data.siret && !isSiretOrSiren(data.siret)) {
+      setErr("SIRET (14 chiffres) ou SIREN (9 chiffres) attendu");
+      return;
+    }
 
     setSaving(true);
     const payload = {
@@ -110,7 +113,7 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
               <>
                 <Field label="Raison sociale *" value={data.legal_name} onChange={(v) => update("legal_name", v)} full />
                 <Field label="Personne contact" value={data.contact_person} onChange={(v) => update("contact_person", v)} />
-                <Field label="SIRET" value={data.siret} onChange={(v) => update("siret", formatSiret(v))} />
+                <Field label="SIRET (14 chiffres) ou SIREN (9)" value={data.siret} onChange={(v) => update("siret", formatSiret(v))} />
                 <Field label="N° TVA intracom." value={data.vat_number} onChange={(v) => update("vat_number", v.toUpperCase())} />
               </>
             ) : (

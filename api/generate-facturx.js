@@ -319,7 +319,15 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     <ram:ApplicableHeaderTradeAgreement>
       <ram:SellerTradeParty>
         <ram:Name>${supplierName}</ram:Name>
-        ${co.siret ? `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(co.siret)}</ram:ID></ram:SpecifiedLegalOrganization>` : ""}
+        ${(() => {
+          const raw = String(co.siret || "").replace(/\s/g, "");
+          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
+          const siret = raw.length === 14 ? raw : null;
+          let out = "";
+          if (siren) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          if (siret) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siret)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          return out;
+        })()}
         <ram:PostalTradeAddress>
           <ram:PostcodeCode>${x(co.postal_code)}</ram:PostcodeCode>
           <ram:LineOne>${x(co.address_line1)}</ram:LineOne>
@@ -331,7 +339,19 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       </ram:SellerTradeParty>
       <ram:BuyerTradeParty>
         <ram:Name>${buyerName}</ram:Name>
-        ${cs.siret ? `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(cs.siret)}</ram:ID></ram:SpecifiedLegalOrganization>` : ""}
+        ${(() => {
+          // v8.48.16 — Émet SIREN (0009) et SIRET (0002) quand possible.
+          // SUPER PDP et l'annuaire PPF référencent par SIREN ; le SIRET
+          // est utile pour l'établissement précis. Un SIRET valide (14
+          // chiffres) contient le SIREN dans les 9 premiers.
+          const raw = String(cs.siret || "").replace(/\s/g, "");
+          const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
+          const siret = raw.length === 14 ? raw : null;
+          let out = "";
+          if (siren) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0009">${x(siren)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          if (siret) out += `<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">${x(siret)}</ram:ID></ram:SpecifiedLegalOrganization>`;
+          return out;
+        })()}
         <ram:PostalTradeAddress>
           <ram:PostcodeCode>${x(cs.postal_code)}</ram:PostcodeCode>
           <ram:LineOne>${x(cs.address_line1)}</ram:LineOne>
