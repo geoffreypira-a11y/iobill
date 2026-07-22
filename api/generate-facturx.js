@@ -382,6 +382,11 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       <ram:Content>Aucun escompte n'est accordé en cas de paiement anticipé.</ram:Content>
       <ram:SubjectCode>AAB</ram:SubjectCode>
     </ram:IncludedNote>
+    ${cs.client_type === "individual" ? `<!-- v8.48.29 — Note BAR=B2C obligatoire selon doc SUPER PDP pour les factures particulier -->
+    <ram:IncludedNote>
+      <ram:Content>B2C</ram:Content>
+      <ram:SubjectCode>BAR</ram:SubjectCode>
+    </ram:IncludedNote>` : ""}
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
     <ram:ApplicableHeaderTradeAgreement>
@@ -405,12 +410,16 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(co.city)}</ram:CityName>
           <ram:CountryID>${x(co.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.28 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
-             Identifiant électronique Peppol pour le routage AFNOR. À défaut
-             d'email disponible, on utilise le SIREN comme fallback. -->
-        <ram:URIUniversalCommunication>
-          <ram:URIID schemeID="EM">${x(co.email || co.contact_email || (co.siret ? "siren-" + String(co.siret).replace(/\s/g, "").slice(0, 9) + "@iobill.online" : "contact@iobill.online"))}</ram:URIID>
-        </ram:URIUniversalCommunication>
+        <!-- v8.48.29 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
+             SIREN avec schemeID="0009" (Peppol FR) pour du B2B propre. -->
+        ${(() => {
+          const rawSiret = String(co.siret || "").replace(/\s/g, "");
+          const siren = rawSiret.length === 14 ? rawSiret.slice(0, 9) : (rawSiret.length === 9 ? rawSiret : null);
+          if (siren) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          }
+          return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(co.email || "contact@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
+        })()}
         ${co.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(co.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}
       </ram:SellerTradeParty>
       <ram:BuyerTradeParty>
@@ -431,11 +440,25 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(cs.city)}</ram:CityName>
           <ram:CountryID>${x(cs.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.28 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
-             Identifiant électronique Peppol pour le routage AFNOR. -->
-        <ram:URIUniversalCommunication>
-          <ram:URIID schemeID="EM">${x(cs.email || cs.contact_email || (cs.siret ? "siren-" + String(cs.siret).replace(/\s/g, "").slice(0, 9) + "@iobill.online" : "client@iobill.online"))}</ram:URIID>
-        </ram:URIUniversalCommunication>
+        <!-- v8.48.29 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
+             ATTENTION : schemeID="EM" (email) déclenche la classification B2C
+             chez SUPER PDP. Pour du B2B on utilise le SIREN avec schemeID="0009".
+             SUPER PDP règle : "adresse email avec scheme EM ⇒ B2C". -->
+        ${(() => {
+          const isB2C = cs.client_type === "individual";
+          const rawSiret = String(cs.siret || "").replace(/\s/g, "");
+          const siren = rawSiret.length === 14 ? rawSiret.slice(0, 9) : (rawSiret.length === 9 ? rawSiret : null);
+          if (isB2C) {
+            const email = cs.email || cs.contact_email || "particulier@iobill.online";
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(email)}</ram:URIID></ram:URIUniversalCommunication>`;
+          }
+          // B2B : SIREN avec scheme 0009 (identifiant Peppol légal FR)
+          if (siren) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          }
+          // Fallback si aucun SIREN : email formel (peut re-déclencher B2C mais BR-FR-12 exige BT-49)
+          return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(cs.email || "client@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
+        })()}
         ${cs.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(cs.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}
       </ram:BuyerTradeParty>
       ${billingRefBlock}
