@@ -194,6 +194,16 @@ async function handleRequest(req, res) {
   let xml;
   try {
     xml = buildFacturxXml({ doc, lines: lines || [], company, cfg });
+    // v8.48.22 — Log les blocs TVA pour diagnostiquer BR-CO-17.
+    const vatBlocks = xml.match(/<ram:ApplicableTradeTax>[\s\S]*?<\/ram:ApplicableTradeTax>/g) || [];
+    console.log("[generate-facturx] ApplicableTradeTax count=" + vatBlocks.length);
+    vatBlocks.forEach((b, i) => console.log("[generate-facturx] block[" + i + "] " + b.replace(/\s+/g, " ")));
+    // Log le breakdown source et les lignes
+    console.log("[generate-facturx] doc.vat_breakdown=" + JSON.stringify(doc.vat_breakdown));
+    console.log("[generate-facturx] doc.vat_total_cents=" + doc.vat_total_cents + " subtotal_ht=" + doc.subtotal_ht_cents);
+    console.log("[generate-facturx] lines=" + JSON.stringify((lines || []).map(l => ({
+      total_ht_cents: l.total_ht_cents, vat_rate: l.vat_rate
+    }))));
   } catch (e) {
     throw new Error("buildFacturxXml: " + (e?.message || "?"));
   }
