@@ -288,11 +288,15 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const companies = await sbSelect("companies", {
       id: `eq.${company_id}`,
       user_id: `eq.${user.id}`,
-      select: "id,legal_name"
+      select: "id,legal_name,siret"
     });
     if (!companies || companies.length === 0) {
       return json(res, 403, { error: "Vous n'êtes pas propriétaire de cette company" });
     }
+    // v8.48.33 — On récupère aussi le SIRET de la company (l'abonné) pour
+    // le mail et l'affichage côté cabinet. Sans ça, on affichait par erreur
+    // le SIRET du cabinet lui-même dans la demande reçue.
+    const clientCompany = companies[0];
 
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
@@ -346,7 +350,7 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
         firm_id: existingFirm.id,
         company_id,
         type: "invitation_client_to_firm",
-        title: `${companies[0].legal_name} souhaite vous confier sa comptabilité`,
+        title: `${clientCompany.legal_name} souhaite vous confier sa comptabilité`,
         body: message || "Un client souhaite vous rattacher comme cabinet comptable.",
         link: "/firm/clients",
         metadata: { firm_id: existingFirm.id, company_id, link_id: link[0]?.id }
@@ -355,11 +359,11 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
 
     await sendEmail({
       to: existingFirm.email || cleanEmail,
-      subject: `Nouvelle demande client : ${companies[0].legal_name}`,
+      subject: `Nouvelle demande client : ${clientCompany.legal_name}`,
       html: `<div style="font-family: -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
 <h2 style="color: #d4a843;">🦉 IO BILL · Nouvelle demande client</h2>
 <p>Bonjour,</p>
-<p><strong>${companies[0].legal_name}</strong> (SIRET ${cleanSiret}) souhaite vous rattacher comme cabinet comptable sur IO BILL.</p>
+<p><strong>${clientCompany.legal_name}</strong>${clientCompany.siret ? ` (SIRET ${clientCompany.siret})` : ""} souhaite vous rattacher comme cabinet comptable sur IO BILL.</p>
 ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12px; margin: 16px 0; color: #555;">${String(message).replace(/</g, "&lt;")}</blockquote>` : ""}
 <p style="text-align: center; margin: 28px 0;">
 <a href="${APP_URL}/firm/clients" style="background: #d4a843; color: #0b0c10; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600;">Voir la demande</a>

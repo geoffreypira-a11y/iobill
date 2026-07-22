@@ -44,15 +44,17 @@ function ClientsList({ token, firm, isPreview }) {
       order: "created_at.desc",
       limit: 100
     });
-    // Hydrater avec les noms de companies
+    // Hydrater avec les noms + SIRET de companies
     const out = [];
     for (const l of (rows || [])) {
       let companyName = null;
+      let companySiret = null;
       if (l.company_id) {
         const c = await sb.selectOne(token, "companies", `id=eq.${l.company_id}`, "legal_name,siret");
         companyName = c?.legal_name;
+        companySiret = c?.siret;
       }
-      out.push({ ...l, _company_name: companyName });
+      out.push({ ...l, _company_name: companyName, _company_siret: companySiret });
     }
     setLinks(out);
     setLoading(false);
@@ -60,15 +62,30 @@ function ClientsList({ token, firm, isPreview }) {
 
   useEffect(() => { load(); }, [firm?.id]);
 
-  async function revoke(linkId) {
-    if (!confirm("Révoquer cette invitation / rompre la liaison ?")) return;
+  async function callAction(linkId, action, confirmMsg) {
+    if (confirmMsg && !confirm(confirmMsg)) return;
     const r = await fetch("/api/firm-invitation", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: "revoke", payload: { link_id: linkId } })
+      body: JSON.stringify({ action, payload: { link_id: linkId } })
     });
-    if (!r.ok) { alert("Échec révocation"); return; }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || `Échec ${action}`);
+      return;
+    }
     load();
+  }
+
+  async function revoke(linkId) {
+    await callAction(linkId, "revoke", "Révoquer cette invitation / rompre la liaison ?");
+  }
+  // v8.48.33 — accept/refuse pour les invitations initiées côté client
+  async function accept(linkId) {
+    await callAction(linkId, "accept", "Accepter cette demande client ?");
+  }
+  async function refuse(linkId) {
+    await callAction(linkId, "refuse", "Refuser cette demande client ?");
   }
 
   const filtered = links.filter((l) => filter === "all" || l.status === filter);
@@ -127,15 +144,26 @@ function ClientsList({ token, firm, isPreview }) {
       ) : filtered.length === 0 ? (
         <EmptyState filter={filter} onInvite={() => navigate("/firm/clients/new")} isPreview={isPreview} />
       ) : (
-        filtered.map((l) => <ClientLinkCard key={l.id} link={l} onRevoke={() => revoke(l.id)} />)
+        filtered.map((l) => (
+          <ClientLinkCard
+            key={l.id}
+            link={l}
+            onRevoke={() => revoke(l.id)}
+            onAccept={() => accept(l.id)}
+            onRefuse={() => refuse(l.id)}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function ClientLinkCard({ link, onRevoke }) {
+function ClientLinkCard({ link, onRevoke, onAccept, onRefuse }) {
   const statusBadge = STATUS_BADGES[link.status] || STATUS_BADGES.pending;
   const initiatedLabel = link.initiated_by === "firm" ? "Invité par le cabinet" : "Initié par le client";
+  // v8.48.33 — Quand c'est le CLIENT qui a initié, le cabinet doit pouvoir
+  // accepter ou refuser. Avant on n'avait que Annuler ce qui bloquait le flow.
+  const needsCabinetAction = link.status === "pending" && link.initiated_by === "client";
 
   return (
     <div className="card" style={{ marginBottom: 10, padding: 14 }}>
@@ -148,7 +176,8 @@ function ClientLinkCard({ link, onRevoke }) {
             <span className={`badge ${statusBadge.cls}`}>{statusBadge.label}</span>
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)" }}>
-            SIRET {link.invited_siret} · {link.invited_email} · {initiatedLabel}
+            {link._company_siret ? `SIRET ${link._company_siret} · ` : ""}
+            {link.invited_email} · {initiatedLabel}
           </div>
           {link.message_invite && link.status === "pending" && (
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted2)", fontStyle: "italic", padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 4 }}>
@@ -163,15 +192,25 @@ function ClientLinkCard({ link, onRevoke }) {
               : link.status === "refused" ? `Refusé le ${fmtDate(link.refused_at)}`
               : `Invité le ${fmtDate(link.created_at)}`}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {link.status === "accepted" && (
               <Link to={`/firm/clients/${link.id}`} className="btn btn-ghost btn-sm">
                 Ouvrir →
               </Link>
             )}
+            {needsCabinetAction && (
+              <>
+                <button className="btn btn-primary btn-sm" onClick={onAccept}>
+                  ✅ Accepter
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={onRefuse}>
+                  ❌ Refuser
+                </button>
+              </>
+            )}
             {(link.status === "pending" || link.status === "accepted") && (
               <button className="btn btn-ghost btn-sm" onClick={onRevoke}>
-                {link.status === "pending" ? "Annuler" : "Rompre"}
+                {link.status === "pending" ? (needsCabinetAction ? "Ignorer" : "Annuler") : "Rompre"}
               </button>
             )}
           </div>
