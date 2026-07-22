@@ -358,6 +358,23 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     <ram:IssueDateTime>
       <udt:DateTimeString format="102">${dt(doc.issue_date)}</udt:DateTimeString>
     </ram:IssueDateTime>
+    <!-- v8.48.24 — Mentions obligatoires FR (BR-FR-05/BT-22) requises par
+         SUPER PDP / AFNOR. Sinon la validation lève des warnings bloquants.
+         PMT : frais de recouvrement forfaitaires (Art. D. 441-5 Code de commerce)
+         PMD : pénalités de retard (Art. L. 441-10 Code de commerce)
+         DEP : indemnité forfaitaire d'escompte (Art. L. 441-10) -->
+    <ram:IncludedNote>
+      <ram:Content>En cas de retard de paiement, une indemnité forfaitaire de 40 € pour frais de recouvrement est due (Art. D. 441-5 du Code de commerce).</ram:Content>
+      <ram:SubjectCode>PMT</ram:SubjectCode>
+    </ram:IncludedNote>
+    <ram:IncludedNote>
+      <ram:Content>Tout retard de paiement entraîne l'application de pénalités égales à trois fois le taux d'intérêt légal en vigueur, sans qu'un rappel soit nécessaire (Art. L. 441-10 du Code de commerce).</ram:Content>
+      <ram:SubjectCode>PMD</ram:SubjectCode>
+    </ram:IncludedNote>
+    <ram:IncludedNote>
+      <ram:Content>Aucun escompte n'est accordé en cas de paiement anticipé.</ram:Content>
+      <ram:SubjectCode>AAK</ram:SubjectCode>
+    </ram:IncludedNote>
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
     <ram:ApplicableHeaderTradeAgreement>
