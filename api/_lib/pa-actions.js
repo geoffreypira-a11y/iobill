@@ -368,15 +368,22 @@ export async function paInboxSync(company) {
 }
 
 export async function paInboxAck(company, payload) {
-  const map = { approved: LIFECYCLE.approuvee, refused: LIFECYCLE.refusee, paid: LIFECYCLE.encaissee };
+  // v8.48.12 — fr:210 (Refusée) exige un MDT-113 dont on ne connaît
+  // pas encore le format JSON attendu par SUPER PDP. En attendant la
+  // réponse du support, on route le refus vers fr:207 (Litige) qui
+  // porte la même sémantique commerciale ("je conteste") sans les
+  // exigences strictes AFNOR sur le MOTIF.
+  const map = {
+    approved: LIFECYCLE.approuvee,   // fr:205
+    refused:  LIFECYCLE.litige,      // fr:207 au lieu de fr:210
+    paid:     LIFECYCLE.encaissee    // fr:212
+  };
   const code = map[payload.status];
   if (!code) throw fail(400, "status doit être approved | refused | paid");
 
   const row = await sbAdmin.selectOne("pa_inbound_invoices", "id=eq." + payload.inbound_id);
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
 
-  // v8.48.8 — reason est soit une string, soit un objet {code, label}
-  // pour les refus. SUPER PDP exige un code AFNOR (IC001..IC008).
   const reason = payload.reason;
   const isRefused = payload.status === "refused";
   if (isRefused) {
@@ -661,12 +668,50 @@ export async function paWebhook(companyId, rawBody, headers) {
   return { status: 200, body: { ok: true } };
 }
 
-/* ─── Routeur monté dans admin.js ──────────────────────────────── */
+export async function paPurchasePaid(company, payload) {
+  // v8.48.10 — Quand un achat provenant de la PA passe à "payé",
+  // on remonte l'événement fr:212 (Encaissée) au fournisseur.
+  const purchaseId = payload.purchase_id;
+  if (!purchaseId) throw fail(400, "purchase_id manquant");
+
+  const row = await sbAdmin.selectOne(
+    "pa_inbound_invoices",
+    "company_id=eq." + company.id + "&purchase_id=eq." + purchaseId
+  );
+  if (!row) {
+    // Silencieux : l'achat n'est pas issu de la PA, rien à faire.
+    return { ok: true, skipped: "not_from_pa" };
+  }
+  if (row.pa_ack_status === "paid") {
+    return { ok: true, skipped: "already_paid" };
+  }
+
+  const creds = await loadCreds(company.id);
+  const { impl, cfg } = getProvider(creds);
+  try {
+    await impl.sendEvent(cfg, row.pa_document_id, LIFECYCLE.encaissee);
+    await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
+      pa_ack_status: "paid", pa_ack_sent_at: new Date().toISOString()
+    });
+    await logEvent({
+      company_id: company.id, direction: "inbound", provider: creds.provider,
+      pa_document_id: row.pa_document_id, inbound_id: row.id,
+      event_type: "invoice.paid", status: "paid"
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn("[PA] fr:212 échoué :", e.message);
+    return { ok: false, message: e.message };
+  }
+}
+
+
 
 export const PA_SUBSCRIBER_ACTIONS = new Set([
   "pa_config", "pa_config_save", "pa_request_change",
   "pa_validate", "pa_send", "pa_status",
-  "pa_inbox_sync", "pa_inbox_ack", "pa_inbox_convert", "pa_inbox_file"
+  "pa_inbox_sync", "pa_inbox_ack", "pa_inbox_convert", "pa_inbox_file",
+  "pa_purchase_paid"
 ]);
 
 export const PA_ADMIN_ACTIONS = new Set([
@@ -686,6 +731,7 @@ export async function handlePaAction({ action, payload, user, company, isAdmin }
     case "pa_inbox_ack":       return paInboxAck(company, payload || {});
     case "pa_inbox_convert":   return paInboxConvert(company, payload || {});
     case "pa_inbox_file":      return paInboxFile(company, payload || {});
+    case "pa_purchase_paid":   return paPurchasePaid(company, payload || {});
   }
   if (!isAdmin) throw fail(403, "Accès refusé (admin uniquement)");
   switch (action) {
