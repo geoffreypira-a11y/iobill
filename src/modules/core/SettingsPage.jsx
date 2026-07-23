@@ -608,8 +608,24 @@ function BrandingTab({ token, company, setCompany }) {
         </div>
 
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 10, fontWeight: 600 }}>
+          <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 10, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 8 }}>
             {data.logo_url ? "Logo actuel" : "Aucun logo défini"}
+            {/* v8.49.8 — Badge "🚗 IO CAR" quand le logo est géré par une app source
+                externe (IOCAR, futur IOBTP, etc.). Cohérent avec les badges déjà
+                présents à côté des champs texte (Raison sociale, SIRET...). */}
+            {data.logo_url && isExternal && managedFields.has("logo_url") && (
+              <span style={{
+                fontSize: 9,
+                padding: "1px 6px",
+                borderRadius: 8,
+                background: "rgba(212,168,67,0.15)",
+                color: "var(--gold, #d4a843)",
+                fontWeight: 700,
+                letterSpacing: 0.5
+              }}>
+                🚗 {sourceLabel}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
@@ -755,7 +771,18 @@ function BillingTab({ token, company, setCompany }) {
       <SectionTitle>Plan actuel</SectionTitle>
       <div style={{ marginBottom: 22 }}>
         <div style={{ fontFamily: "Syne, sans-serif", fontSize: 22, fontWeight: 700, color: "var(--gold)", marginBottom: 4 }}>
-          {company.sub_status === "active" ? "Pro · 9,90 €/mois" : trial ? "Essai gratuit" : "Découverte"}
+          {/* v8.49.8 — Plan actuel : si le compte est lié à une app métier
+              (IOCAR, IOBTP...), on affiche "Pro · IO CAR" au lieu de
+              "Pro · 9,90 €/mois", car ces users ne payent pas Stripe directement. */}
+          {(() => {
+            const SOURCE_LABELS = { iocar: "IO CAR", iobtp: "IO BTP", ioinstitute: "IO INSTITUTE" };
+            const sourceApp = company.source_app;
+            const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
+            if (sourceLabel) return `Pro · ${sourceLabel}`;
+            if (company.sub_status === "active") return "Pro · 9,90 €/mois";
+            if (trial) return "Essai gratuit";
+            return "Découverte";
+          })()}
         </div>
         {company.sub_status === "active" && company.subscribed_at && (
           <div style={{ fontSize: 12, color: "var(--muted)" }}>

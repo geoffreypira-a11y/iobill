@@ -327,7 +327,24 @@ export function Sidebar({ token, company, user, onSignOut }) {
               <div className="userbox-info">
                 <div className="userbox-name">{company?.legal_name || user?.email || "—"}</div>
                 <div className="userbox-plan">
-                  {company?.sub_status === "active" ? "Pro · 9,90€" : company?.sub_status === "trialing" ? "Essai gratuit" : "Découverte"}
+                  {/* v8.49.8 — Si le compte est lié à une app métier (IOCAR, IOBTP…),
+                      on affiche "Pro · IO CAR" au lieu du prix, car ces users ne payent
+                      pas 9,90 € : leur accès IOBILL est inclus dans leur abonnement à
+                      l'app source (IOCAR, IOBTP...). Extensible : suffit d'ajouter des
+                      entrées au mapping SOURCE_LABELS pour de futures apps. */}
+                  {(() => {
+                    const SOURCE_LABELS = {
+                      iocar: "IO CAR",
+                      iobtp: "IO BTP",
+                      ioinstitute: "IO INSTITUTE"
+                    };
+                    const sourceApp = company?.source_app;
+                    const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
+                    if (sourceLabel) return `Pro · ${sourceLabel}`;
+                    if (company?.sub_status === "active") return "Pro · 9,90€";
+                    if (company?.sub_status === "trialing") return "Essai gratuit";
+                    return "Découverte";
+                  })()}
                 </div>
               </div>
               <div style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6, transform: userMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
