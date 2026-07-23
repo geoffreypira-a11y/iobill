@@ -402,19 +402,7 @@ async function uploadLogoFromBase64(companyId, base64Input) {
     : mime.includes("svg") ? "svg"
     : "png";
 
-  // v8.49.7 — Path conforme aux policies RLS du bucket company-logos.
-  // Les policies exigent que le PREMIER dossier du path soit l'ID de la
-  // company (pour que auth.uid() puisse signer). Avant on écrivait
-  // "external/{companyId}.{ext}" → RLS refusait le sign côté UI → le logo
-  // apparaissait dans les PDF (générés en service_role) mais PAS dans
-  // l'UI Paramètres ni dans la sidebar (qui utilisent auth utilisateur).
-  //
-  // Nouveau schéma : "{companyId}/external-logo.{ext}"
-  //   - Le premier dossier est bien l'ID company → RLS SELECT OK
-  //   - Nom "external-logo" pour identifier clairement l'origine (sync
-  //     externe IOCAR/IOBTP) vs upload direct dans l'UI qui fait
-  //     "{companyId}/logo-{timestamp}.{ext}"
-  const path = `${companyId}/external-logo.${ext}`;
+  const path = `external/${companyId}.${ext}`;
 
   // Upload via Storage REST API (upsert pour remplacer si existe)
   const r = await fetch(`${url}/storage/v1/object/company-logos/${path}`, {
@@ -1142,11 +1130,20 @@ async function handlePushCreditNote(body, res) {
     // 2) Client (upsert)
     const clientId = await upsertClient(company.id, credit_note.client || {}, { sourceApp: company.source_app });
 
-    // 3) Idempotence : credit_note déjà existant pour (external_source, external_id) ?
-    const existing = await sbAdmin.selectOne(
+    // 3) Idempotence : credit_note déjà existant ?
+    // v8.49.10 — On cherche d'abord par (external_source, external_id) qui est
+    // l'identifiant STABLE côté app source. Fallback sur (company_id, number)
+    // pour compat rétro-active des avoirs poussés AVANT ce patch.
+    let existing = await sbAdmin.selectOne(
       "credit_notes",
-      `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.number)}`
+      `company_id=eq.${company.id}&external_source=eq.${company.source_app}&external_id=eq.${encodeURIComponent(externalId)}`
     );
+    if (!existing) {
+      existing = await sbAdmin.selectOne(
+        "credit_notes",
+        `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.number)}`
+      );
+    }
 
     // 4) Totaux
     const totals = computeTotalsFromLines(credit_note.lines, null, null);
@@ -1167,7 +1164,12 @@ async function handlePushCreditNote(body, res) {
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
-      notes: credit_note.notes || null
+      notes: credit_note.notes || null,
+      // v8.49.10 — Marqueurs source (comme pour les invoices) : permet à l'UI
+      // IOBILL de savoir que cet avoir vient d'une app métier (IOCAR, IOBTP...)
+      // et d'afficher un badge "🚗 IO CAR" + bloquer la modif locale.
+      external_source: company.source_app,
+      external_id: String(externalId)
     };
 
     let creditNoteRow;

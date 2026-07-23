@@ -174,9 +174,31 @@ export function CreditNotesListPage({ token, company }) {
             <tbody>
               {filtered.map((c) => {
                 const badge = creditNoteStatusBadge(c.status);
+                // v8.49.10 — Badge "🚗 IO CAR" sur les avoirs venus d'une app source externe.
+                // Cohérent avec l'affichage des factures externes dans InvoicesListPage.
+                const isExternal = !!c.external_source && c.external_source !== "iobill";
+                const sourceLabel = c.external_source === "iocar" ? "IO CAR"
+                                  : c.external_source === "iobtp" ? "IO BTP"
+                                  : String(c.external_source || "").toUpperCase();
                 return (
                   <tr key={c.id} onClick={() => navigate(`/credit-notes/${c.id}`)} style={{ cursor: "pointer" }}>
-                    <td className="mono">{c.number}</td>
+                    <td className="mono">
+                      {c.number}
+                      {isExternal && (
+                        <span style={{
+                          marginLeft: 6,
+                          fontSize: 9,
+                          padding: "1px 6px",
+                          borderRadius: 8,
+                          background: "rgba(212,168,67,0.15)",
+                          color: "var(--gold, #d4a843)",
+                          fontWeight: 700,
+                          letterSpacing: 0.5
+                        }}>
+                          🚗 {sourceLabel}
+                        </span>
+                      )}
+                    </td>
                     <td>{snapshotDisplayName(c.client_snapshot)}</td>
                     <td>{fmtDate(c.issue_date)}</td>
                     <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
@@ -314,8 +336,13 @@ function InvoicePickerModal({ token, company, onCancel, onPick }) {
     let alive = true;
     (async () => {
       // On charge les factures émises (statuts éligibles à un avoir)
+      // v8.49.10 — On EXCLUT les factures externes (IOCAR, IOBTP...). Un avoir
+      // sur une facture externe doit être créé dans l'app source (bouton ↩️ IOCAR)
+      // puis synchronisé vers IOBILL via push_credit_note. Sinon on aurait 2
+      // sources de vérité pour la même annulation → risque de double
+      // comptabilisation TVA.
       const list = await sb.select(token, "invoices", {
-        filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)`,
+        filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)&external_source=is.null`,
         order: "issue_date.desc",
         limit: 100
       });
