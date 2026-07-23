@@ -142,9 +142,12 @@ export function InvoicesListPage({ token, company }) {
     return c;
   }, [invoices]);
 
+  // v8.49 — Utilise grand_total_cents (TTC + débours) au lieu de total_ttc_cents.
+  // Sinon paid_cents (qui inclut débours) > total_ttc_cents → reste négatif fantôme.
+  // Fallback sur total_ttc_cents pour les factures pré-v8.49 (pas encore migrées).
   const totalUnpaid = invoices
     .filter((inv) => ["issued", "sent", "partial", "overdue"].includes(inv.status))
-    .reduce((s, inv) => s + ((inv.total_ttc_cents || 0) - (inv.paid_cents || 0)), 0);
+    .reduce((s, inv) => s + (((inv.grand_total_cents || inv.total_ttc_cents) || 0) - (inv.paid_cents || 0)), 0);
 
   function showToast(msg, type = "success") {
     setToast({ msg, type });
@@ -425,7 +428,25 @@ export function InvoicesListPage({ token, company }) {
                     <td style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
                       {fmtDate(inv.due_date)}
                     </td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>
+                      {/* v8.49 — Affiche le grand_total (TTC + débours) comme montant principal
+                          = ce que le client paye réellement. Sous-ligne discrète "dont débours"
+                          quand il y en a, pour la transparence fiscale (art. 267 II 2° CGI). */}
+                      {(() => {
+                        const debTotal = inv.debour_total_cents || 0;
+                        const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                        return (
+                          <>
+                            <div>{fmtEUR(grandTotal)}</div>
+                            {debTotal > 0 && (
+                              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "inherit" }}>
+                                dont {fmtEUR(debTotal)} débours
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
                     <td>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>

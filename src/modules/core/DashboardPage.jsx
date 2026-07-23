@@ -37,7 +37,7 @@ export function DashboardPage({ token, company, user }) {
         const newStats = s || {};
         if (!prev) return newStats;
         // Comparaison shallow des cles principales
-        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "vat_deductible_pending_cents", "dso_days"];
+        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "vat_deductible_pending_cents", "dso_days", "debours_month_cents", "debours_year_cents"];
         for (const k of keys) {
           if (prev[k] !== newStats[k]) return newStats;
         }
@@ -114,6 +114,12 @@ export function DashboardPage({ token, company, user }) {
           <div className="kpi-val gold">{loading ? "—" : fmtEUR(stats?.ca_ht_month_cents)}</div>
           <div className="kpi-foot">
             {loading ? "" : `${t("Année")} : ${fmtEUR(stats?.ca_ht_year_cents)}`}
+            {!loading && (stats?.debours_month_cents || 0) > 0 && (
+              <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>
+                {/* v8.49 — Débours affichés séparément, HORS CA (art. 267 II 2° CGI) */}
+                + {fmtEUR(stats.debours_month_cents)} débours refacturés
+              </div>
+            )}
           </div>
         </div>
         <div className="kpi">
@@ -195,7 +201,7 @@ export function DashboardPage({ token, company, user }) {
                   <tr key={inv.id}>
                     <td className="mono">{inv.number}</td>
                     <td>{inv.client_snapshot?.legal_name || inv.client_snapshot?.name || "—"}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + (inv.debour_total_cents || 0)))}</td>
                     <td><InvoiceStatusBadge status={inv.status} /></td>
                   </tr>
                 ))}

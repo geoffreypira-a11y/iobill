@@ -685,6 +685,10 @@ async function handlePushInvoice(body, res) {
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
+      // v8.49 — Débours persistés en colonne pour affichage cohérent
+      // (avant : jetés après calcul → la liste affichait TTC hors débours
+      //  au lieu du montant réellement facturé au client).
+      debour_total_cents: totals.debour_total_cents || 0,
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),

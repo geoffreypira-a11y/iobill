@@ -182,7 +182,7 @@ function OverviewTab({ token, firm, company, signals }) {
     // CA facturé (toutes factures issued sur la période)
     const invoices = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}&status=in.(issued,sent,partial,paid,overdue)`,
-      select: "subtotal_ht_cents,vat_total_cents,total_ttc_cents,paid_cents,status"
+      select: "subtotal_ht_cents,vat_total_cents,total_ttc_cents,grand_total_cents,debour_total_cents,paid_cents,status"
     });
 
     let caFactureCents = 0;
@@ -279,7 +279,7 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
   async function load() {
     const rows = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}`,
-      select: "id,number,issue_date,due_date,status,subtotal_ht_cents,vat_total_cents,total_ttc_cents,paid_cents,pdf_url,facturx_pdf_url",
+      select: "id,number,issue_date,due_date,status,subtotal_ht_cents,vat_total_cents,total_ttc_cents,grand_total_cents,debour_total_cents,paid_cents,pdf_url,facturx_pdf_url",
       order: "issue_date.desc",
       limit: 100
     });
@@ -334,7 +334,23 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
                     <td>{fmtDate(inv.due_date)}</td>
                     <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(inv.subtotal_ht_cents || 0)}</td>
                     <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(inv.vat_total_cents || 0)}</td>
-                    <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fmtEUR(inv.total_ttc_cents || 0)}</td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>
+                      {/* v8.49 — grand_total = ce que le client paye. Sous-ligne débours si présents. */}
+                      {(() => {
+                        const debTotal = inv.debour_total_cents || 0;
+                        const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                        return (
+                          <>
+                            <div>{fmtEUR(grandTotal)}</div>
+                            {debTotal > 0 && (
+                              <div style={{ fontSize: 9, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                                dont {fmtEUR(debTotal)} débours
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td><StatusBadge status={inv.status} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       {hasPdf && (

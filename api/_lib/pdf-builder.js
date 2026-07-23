@@ -599,6 +599,8 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // v8.39 — DÉBOURS (art. 267 II 2° du CGI)
   // Affiché sous Total TTC, hors base TVA mais à ajouter au total à payer.
   // Cas typique : carte grise refacturée à l'identique (vente VO).
+  // v8.49 — Fix layout : le trait au-dessus de "TOTAL À PAYER" traversait
+  //   la mention légale "Sommes avancées...". Espacement corrigé.
   let debourTotalCents = 0;
   const deboursList = Array.isArray(doc.debours) ? doc.debours : [];
   if (deboursList.length > 0) {
@@ -618,16 +620,21 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       "Sommes avancées pour le compte du client, hors base d'imposition TVA.",
       { x: totalsX - 80, y, size: 7, font, color: COLORS.grey }
     );
-    y -= 12;
+    // v8.49 — Espacement augmenté (12 → 20) pour que le trait au-dessus de
+    // "TOTAL À PAYER" ne traverse plus la ligne de mention légale.
+    y -= 20;
 
     // Total à payer (Total TTC + débours)
-    // v8.40.4 — Le trait doit être AU-DESSUS du texte, pas dessous.
-    // Pour un texte size 11, le haut des majuscules est environ à y+9.
-    // On trace donc le trait à y+13 pour qu'il soit clairement au-dessus.
-    page.drawLine({ start: { x: totalsX - 80, y: y + 13 }, end: { x: width - 40, y: y + 13 }, thickness: 0.6, color: COLORS.dark });
+    // Trait AU-DESSUS de "TOTAL À PAYER" (au-dessus du texte, pas dessous).
+    page.drawLine({ start: { x: totalsX - 80, y: y + 14 }, end: { x: width - 40, y: y + 14 }, thickness: 0.6, color: COLORS.dark });
     page.drawText("TOTAL À PAYER", { x: totalsX - 80, y, size: 11, font: fontBold, color: COLORS.dark });
     drawRight(page, formatEUR(doc.total_ttc_cents + debourTotalCents), width - 40, y, 11, fontBold, COLORS.dark);
-    y -= 20;
+    y -= 12;
+    // v8.49 — Sous-ligne discrète "dont XXX € TVA · YYY € débours"
+    // pour la transparence commerciale (le client voit d'où viennent les 5 373,76).
+    const dontLine = "dont " + formatEUR(doc.vat_total_cents || 0) + " TVA · " + formatEUR(debourTotalCents) + " débours";
+    page.drawText(dontLine, { x: totalsX - 80, y, size: 7, font, color: COLORS.grey });
+    y -= 14;
   }
 
   // Reste a payer (factures uniquement)
