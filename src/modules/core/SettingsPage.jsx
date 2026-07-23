@@ -403,6 +403,21 @@ function BrandingTab({ token, company, setCompany }) {
   const [err, setErr] = useState("");
   const fileRef = useRef(null);
 
+  // v8.49.8 — Détection du "logo managed par une app source externe"
+  // pour afficher le badge "🚗 IO CAR" à côté de "Logo actuel".
+  // Les vars étaient définies dans ProfileTab et pas accessibles ici
+  // → causait un ReferenceError et un écran blanc React sur /settings.
+  const sourceApp = company.source_app || "iobill";
+  const managedFields = React.useMemo(
+    () => new Set(company.external_managed_fields || []),
+    [company.external_managed_fields]
+  );
+  const isExternal = sourceApp !== "iobill" && managedFields.size > 0;
+  const sourceLabel = sourceApp === "iocar" ? "IO CAR"
+    : sourceApp === "iobtp" ? "IO BTP"
+    : sourceApp === "ioinstitute" ? "IO INSTITUTE"
+    : sourceApp.toUpperCase();
+
   // Au montage : charger une URL signée du logo existant pour preview
   useEffect(() => {
     let alive = true;
