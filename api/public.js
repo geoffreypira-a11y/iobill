@@ -1476,13 +1476,40 @@ async function createAuthUser(email, password, metadata) {
 async function findUserByEmail(email) {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const r = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  // v8.49 — L'endpoint /auth/v1/admin/users ignore le paramètre ?email
+  // dans certaines versions de Supabase (bug/comportement non-documenté)
+  // et renvoie la liste paginée de TOUS les users. Résultat : le premier
+  // user pris n'a rien à voir avec l'email demandé → la company créée par
+  // link_account se retrouve rattachée au mauvais user.
+  //
+  // Fix : on récupère la réponse, on ITERE, et on retourne uniquement le
+  // user dont l'email correspond EXACTEMENT (case-insensitive).
+  const r = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(cleanEmail)}`, {
     headers: { apikey: key, Authorization: `Bearer ${key}` }
   });
   if (!r.ok) return null;
   const j = await r.json();
-  if (Array.isArray(j?.users) && j.users.length > 0) return j.users[0].id;
-  if (j?.id && j?.email === email) return j.id;
+
+  // Cas 1 : réponse paginée { users: [...], aud, ... }
+  if (Array.isArray(j?.users)) {
+    for (const u of j.users) {
+      if (u?.email && String(u.email).trim().toLowerCase() === cleanEmail) {
+        return u.id;
+      }
+    }
+    // Aucun match strict → l'endpoint a renvoyé la liste globale sans respecter le filtre
+    console.warn(`[findUserByEmail] ${j.users.length} user(s) retourné(s) par l'API admin mais AUCUN ne matche ${cleanEmail} — considéré comme absent`);
+    return null;
+  }
+
+  // Cas 2 : réponse directe { id, email, ... } (ancien format)
+  if (j?.id && String(j.email || "").trim().toLowerCase() === cleanEmail) {
+    return j.id;
+  }
+
   return null;
 }
 
