@@ -351,19 +351,48 @@ async function uploadLogoFromBase64(companyId, base64Input) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
 
-  // Parse data URL ou base64 brut
+  // v8.49 — Cas 3 : l'app source (IOCAR) peut envoyer une URL directe
+  // (pas un base64) — par ex. l'URL signée du logo dans son propre bucket.
+  // On fetch l'image et on récupère les bytes + le vrai MIME.
   let mime = "image/png";
-  let b64 = base64Input;
-  const dataMatch = base64Input.match(/^data:([^;]+);base64,(.+)$/);
-  if (dataMatch) {
-    mime = dataMatch[1];
-    b64 = dataMatch[2];
-  }
+  let buffer = null;
 
-  // Garde-fou : taille raisonnable (max 2 MB en base64 ≈ 1.5 MB binaire)
-  if (b64.length > 2_700_000) {
-    console.warn("[uploadLogoFromBase64] logo trop volumineux:", b64.length);
-    return null;
+  if (/^https?:\/\//i.test(base64Input)) {
+    try {
+      const r = await fetch(base64Input);
+      if (!r.ok) {
+        console.error("[uploadLogoFromBase64] URL fetch FAIL", r.status, base64Input.slice(0, 100));
+        return null;
+      }
+      const ct = r.headers.get("content-type") || "";
+      if (ct.startsWith("image/")) mime = ct.split(";")[0].trim();
+      const arrayBuf = await r.arrayBuffer();
+      buffer = Buffer.from(arrayBuf);
+      // Garde-fou taille (1.5 MB max)
+      if (buffer.length > 1_500_000) {
+        console.warn("[uploadLogoFromBase64] URL image trop volumineuse:", buffer.length);
+        return null;
+      }
+    } catch (e) {
+      console.error("[uploadLogoFromBase64] URL fetch exception:", e.message);
+      return null;
+    }
+  } else {
+    // Cas 1 : data URL "data:image/png;base64,..."
+    // Cas 2 : base64 brut (png par défaut)
+    let b64 = base64Input;
+    const dataMatch = base64Input.match(/^data:([^;]+);base64,(.+)$/);
+    if (dataMatch) {
+      mime = dataMatch[1];
+      b64 = dataMatch[2];
+    }
+
+    // Garde-fou : taille raisonnable (max 2 MB en base64 ≈ 1.5 MB binaire)
+    if (b64.length > 2_700_000) {
+      console.warn("[uploadLogoFromBase64] logo trop volumineux:", b64.length);
+      return null;
+    }
+    buffer = Buffer.from(b64, "base64");
   }
 
   // Détecte l'extension depuis le MIME
@@ -373,8 +402,6 @@ async function uploadLogoFromBase64(companyId, base64Input) {
     : mime.includes("svg") ? "svg"
     : "png";
 
-  // Décode base64 → Buffer
-  const buffer = Buffer.from(b64, "base64");
   const path = `external/${companyId}.${ext}`;
 
   // Upload via Storage REST API (upsert pour remplacer si existe)
@@ -583,6 +610,25 @@ async function handleSyncCompany(body, res) {
   if (!company) return json(res, 401, { error: "Invalid token" });
 
   const fields = buildCompanyFieldsFromBody(body);
+
+  // v8.49 — Gestion du logo_base64 envoyé par l'app source (IOCAR par ex.).
+  // Le logo n'est pas un champ SQL mais un binaire à uploader dans le bucket
+  // company-logos. On upload, on récupère le path et on l'ajoute à fields.logo_url.
+  // Contrairement à handlePushInvoice qui ne remplace le logo QUE si vide,
+  // ici c'est un sync explicite déclenché par l'user → on écrase toujours.
+  if (body.logo_base64 && typeof body.logo_base64 === "string") {
+    try {
+      const newLogoUrl = await uploadLogoFromBase64(company.id, body.logo_base64);
+      if (newLogoUrl) {
+        fields.logo_url = newLogoUrl;
+      } else {
+        console.warn("[sync_company] uploadLogoFromBase64 a retourné null (logo ignoré)");
+      }
+    } catch (e) {
+      console.error("[sync_company] Erreur upload logo:", e.message);
+    }
+  }
+
   if (Object.keys(fields).length === 0) {
     return json(res, 400, { error: "Aucun champ à synchroniser" });
   }
