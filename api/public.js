@@ -402,7 +402,19 @@ async function uploadLogoFromBase64(companyId, base64Input) {
     : mime.includes("svg") ? "svg"
     : "png";
 
-  const path = `external/${companyId}.${ext}`;
+  // v8.49.7 — Path conforme aux policies RLS du bucket company-logos.
+  // Les policies exigent que le PREMIER dossier du path soit l'ID de la
+  // company (pour que auth.uid() puisse signer). Avant on écrivait
+  // "external/{companyId}.{ext}" → RLS refusait le sign côté UI → le logo
+  // apparaissait dans les PDF (générés en service_role) mais PAS dans
+  // l'UI Paramètres ni dans la sidebar (qui utilisent auth utilisateur).
+  //
+  // Nouveau schéma : "{companyId}/external-logo.{ext}"
+  //   - Le premier dossier est bien l'ID company → RLS SELECT OK
+  //   - Nom "external-logo" pour identifier clairement l'origine (sync
+  //     externe IOCAR/IOBTP) vs upload direct dans l'UI qui fait
+  //     "{companyId}/logo-{timestamp}.{ext}"
+  const path = `${companyId}/external-logo.${ext}`;
 
   // Upload via Storage REST API (upsert pour remplacer si existe)
   const r = await fetch(`${url}/storage/v1/object/company-logos/${path}`, {
