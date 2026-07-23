@@ -483,8 +483,21 @@ async function handleLinkAccount(body, res) {
 
     if (existing) {
       const tokenRow = await ensureToken(existing.id, source_app);
+      // v8.49 — Assert : ensureToken DOIT retourner un token non vide.
+      // Sans ce garde-fou, on renvoyait 200 avec token=undefined et IOCAR
+      // écrivait un état partiel (company_id renseigné, token vide).
+      if (!tokenRow || !tokenRow.token) {
+        console.error("[external/link_account] ensureToken() n'a pas retourné de token pour company existante",
+          { company_id: existing.id, source_app, tokenRow });
+        return json(res, 500, {
+          error: "Token API introuvable pour cette company",
+          hint: "ensureToken a échoué — vérifier RLS/insert sur external_api_keys"
+        });
+      }
       // On sync les champs même si le compte existe déjà (idempotent + à jour)
       await applyCompanyUpdate(existing.id, companyFields, /*managed*/ true);
+      console.log("[external/link_account] company existante réutilisée",
+        { company_id: existing.id, source_app, external_ref, has_token: !!tokenRow.token });
       return json(res, 200, {
         ok: true, created: false,
         company_id: existing.id, user_id: existing.user_id,
@@ -533,6 +546,19 @@ async function handleLinkAccount(body, res) {
 
     // 5) Token API
     const tokenRow = await ensureToken(newCompany.id, source_app);
+    // v8.49 — Assert : sans token en base, on retourne 500 explicite
+    // (pas 200 avec token undefined qui corrompait IOCAR).
+    if (!tokenRow || !tokenRow.token) {
+      console.error("[external/link_account] ensureToken() n'a pas retourné de token après création company",
+        { company_id: newCompany.id, source_app, tokenRow });
+      return json(res, 500, {
+        error: "Company créée mais token API introuvable",
+        company_id: newCompany.id, // pour permettre à IOCAR de logger et retry
+        hint: "Ré-appelle link_account : le path 'existing' passera et rappellera ensureToken"
+      });
+    }
+    console.log("[external/link_account] nouvelle company créée",
+      { company_id: newCompany.id, user_id: userId, source_app, external_ref, has_token: !!tokenRow.token });
 
     return json(res, 200, {
       ok: true, created: true,
@@ -685,10 +711,6 @@ async function handlePushInvoice(body, res) {
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
-      // v8.49 — Débours persistés en colonne pour affichage cohérent
-      // (avant : jetés après calcul → la liste affichait TTC hors débours
-      //  au lieu du montant réellement facturé au client).
-      debour_total_cents: totals.debour_total_cents || 0,
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
