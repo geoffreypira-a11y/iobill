@@ -335,16 +335,20 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
                     <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(inv.subtotal_ht_cents || 0)}</td>
                     <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(inv.vat_total_cents || 0)}</td>
                     <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>
-                      {/* v8.49 — grand_total = ce que le client paye. Sous-ligne débours si présents. */}
+                      {/* v8.49 — grand_total = ce que le client paye. Sous-ligne "dont TVA · débours". */}
                       {(() => {
                         const debTotal = inv.debour_total_cents || 0;
+                        const vatTotal = inv.vat_total_cents || 0;
                         const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                        const parts = [];
+                        if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
+                        if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
                         return (
                           <>
                             <div>{fmtEUR(grandTotal)}</div>
-                            {debTotal > 0 && (
+                            {parts.length > 0 && (
                               <div style={{ fontSize: 9, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
-                                dont {fmtEUR(debTotal)} débours
+                                dont {parts.join(" · ")}
                               </div>
                             )}
                           </>

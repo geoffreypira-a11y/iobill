@@ -16,6 +16,8 @@ export function DashboardPage({ token, company, user }) {
   const [microProgress, setMicroProgress] = useState(null);
   const [recentInvoices, setRecentInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  // v8.49 — Sélecteur de période pour le KPI Débours refacturés
+  const [debourPeriod, setDebourPeriod] = useState("month"); // "day" | "month" | "6months" | "year"
 
   useEffect(() => {
     let alive = true;
@@ -37,7 +39,7 @@ export function DashboardPage({ token, company, user }) {
         const newStats = s || {};
         if (!prev) return newStats;
         // Comparaison shallow des cles principales
-        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "vat_deductible_pending_cents", "dso_days", "debours_month_cents", "debours_year_cents"];
+        const keys = ["ca_ht_month_cents", "ca_ht_year_cents", "unpaid_cents", "unpaid_count", "overdue_cents", "vat_collected_pending_cents", "vat_deductible_pending_cents", "dso_days", "debours_day_cents", "debours_month_cents", "debours_6months_cents", "debours_year_cents"];
         for (const k of keys) {
           if (prev[k] !== newStats[k]) return newStats;
         }
@@ -164,6 +166,44 @@ export function DashboardPage({ token, company, user }) {
           <div className="kpi-val green">{loading ? "—" : (stats?.dso_days || 0) + " j"}</div>
           <div className="kpi-foot">{t("Délai de paiement moyen")}</div>
         </div>
+        {/* v8.49 — KPI Débours refacturés avec mini sélecteur période
+            Info séparée : montre le volume refacturé (CG, malus...) HORS CA.
+            L'utilisateur peut choisir la période jour / mois / 6 mois / an. */}
+        {(() => {
+          const debourValue =
+            debourPeriod === "day"     ? (stats?.debours_day_cents || 0) :
+            debourPeriod === "month"   ? (stats?.debours_month_cents || 0) :
+            debourPeriod === "6months" ? (stats?.debours_6months_cents || 0) :
+                                         (stats?.debours_year_cents || 0);
+          const periodLabels = { day: "Aujourd'hui", month: "Ce mois", "6months": "6 mois", year: "Cette année" };
+          return (
+            <div className="kpi">
+              <div className="kpi-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                <span>🪪 {t("Débours refacturés") || "Débours refacturés"}</span>
+                <select
+                  value={debourPeriod}
+                  onChange={(e) => setDebourPeriod(e.target.value)}
+                  style={{
+                    fontSize: 10, padding: "2px 4px", borderRadius: 4,
+                    background: "transparent", color: "var(--muted)",
+                    border: "1px solid var(--border2)", cursor: "pointer"
+                  }}
+                >
+                  <option value="day">Jour</option>
+                  <option value="month">Mois</option>
+                  <option value="6months">6 mois</option>
+                  <option value="year">Année</option>
+                </select>
+              </div>
+              <div className="kpi-val" style={{ color: "var(--muted2)" }}>
+                {loading ? "—" : fmtEUR(debourValue)}
+              </div>
+              <div className="kpi-foot" style={{ fontSize: 10 }}>
+                {periodLabels[debourPeriod]} · hors CA (art. 267 II 2°)
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Row 1.5 : Graphiques */}
@@ -201,7 +241,27 @@ export function DashboardPage({ token, company, user }) {
                   <tr key={inv.id}>
                     <td className="mono">{inv.number}</td>
                     <td>{inv.client_snapshot?.legal_name || inv.client_snapshot?.name || "—"}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + (inv.debour_total_cents || 0)))}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>
+                      {/* v8.49 — grand_total + sous-ligne "dont TVA · débours" pour cohérence */}
+                      {(() => {
+                        const debTotal = inv.debour_total_cents || 0;
+                        const vatTotal = inv.vat_total_cents || 0;
+                        const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                        const parts = [];
+                        if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
+                        if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
+                        return (
+                          <>
+                            <div>{fmtEUR(grandTotal)}</div>
+                            {parts.length > 0 && (
+                              <div style={{ fontSize: 9, color: "var(--muted)", fontFamily: "inherit" }}>
+                                dont {parts.join(" · ")}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td><InvoiceStatusBadge status={inv.status} /></td>
                   </tr>
                 ))}

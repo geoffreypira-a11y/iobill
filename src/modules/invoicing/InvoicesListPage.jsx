@@ -430,17 +430,21 @@ export function InvoicesListPage({ token, company }) {
                     </td>
                     <td className="mono" style={{ textAlign: "right" }}>
                       {/* v8.49 — Affiche le grand_total (TTC + débours) comme montant principal
-                          = ce que le client paye réellement. Sous-ligne discrète "dont débours"
-                          quand il y en a, pour la transparence fiscale (art. 267 II 2° CGI). */}
+                          = ce que le client paye réellement. Sous-ligne discrète "dont TVA · débours"
+                          pour la transparence fiscale (art. 267 II 2° CGI). */}
                       {(() => {
                         const debTotal = inv.debour_total_cents || 0;
+                        const vatTotal = inv.vat_total_cents || 0;
                         const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                        const parts = [];
+                        if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
+                        if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
                         return (
                           <>
                             <div>{fmtEUR(grandTotal)}</div>
-                            {debTotal > 0 && (
+                            {parts.length > 0 && (
                               <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "inherit" }}>
-                                dont {fmtEUR(debTotal)} débours
+                                dont {parts.join(" · ")}
                               </div>
                             )}
                           </>
