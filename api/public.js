@@ -1130,20 +1130,11 @@ async function handlePushCreditNote(body, res) {
     // 2) Client (upsert)
     const clientId = await upsertClient(company.id, credit_note.client || {}, { sourceApp: company.source_app });
 
-    // 3) Idempotence : credit_note déjà existant ?
-    // v8.49.10 — On cherche d'abord par (external_source, external_id) qui est
-    // l'identifiant STABLE côté app source. Fallback sur (company_id, number)
-    // pour compat rétro-active des avoirs poussés AVANT ce patch.
-    let existing = await sbAdmin.selectOne(
+    // 3) Idempotence : credit_note déjà existant pour (external_source, external_id) ?
+    const existing = await sbAdmin.selectOne(
       "credit_notes",
-      `company_id=eq.${company.id}&external_source=eq.${company.source_app}&external_id=eq.${encodeURIComponent(externalId)}`
+      `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.number)}`
     );
-    if (!existing) {
-      existing = await sbAdmin.selectOne(
-        "credit_notes",
-        `company_id=eq.${company.id}&number=eq.${encodeURIComponent(credit_note.number)}`
-      );
-    }
 
     // 4) Totaux
     const totals = computeTotalsFromLines(credit_note.lines, null, null);
@@ -1164,12 +1155,7 @@ async function handlePushCreditNote(body, res) {
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
-      notes: credit_note.notes || null,
-      // v8.49.10 — Marqueurs source (comme pour les invoices) : permet à l'UI
-      // IOBILL de savoir que cet avoir vient d'une app métier (IOCAR, IOBTP...)
-      // et d'afficher un badge "🚗 IO CAR" + bloquer la modif locale.
-      external_source: company.source_app,
-      external_id: String(externalId)
+      notes: credit_note.notes || null
     };
 
     let creditNoteRow;
@@ -1192,21 +1178,40 @@ async function handlePushCreditNote(body, res) {
     }
 
     // 5) Lignes
-    const linesPayload = credit_note.lines.map((l, idx) => ({
-      document_type: 'credit_note',
-      document_id: creditNoteRow.id,
-      position: idx + 1,
-      description: l.description || '',
-      quantity: l.quantity || 1,
-      unit: l.unit || 'u',
-      unit_price_ht_cents: l.unit_price_ht_cents || 0,
-      vat_rate: l.vat_rate || 0,
-      discount_pct: l.discount_pct || 0,
-      line_ht_cents: l.line_ht_cents != null
+    // v8.49.12 — Fix critique : la colonne s'appelle `sort_order` (pas `position`)
+    // et `company_id` est NOT NULL. Sans ces 2 corrections, l'insert échoue
+    // silencieusement (aucune gestion d'erreur en aval), le credit_note est créé
+    // mais SANS lignes → le PDF Factur-X ne montre que les totaux, pas de désignation.
+    const linesPayload = credit_note.lines.map((l, idx) => {
+      const qty = l.quantity || 1;
+      const puHt = l.unit_price_ht_cents || 0;
+      const disc = l.discount_pct || 0;
+      const vatR = l.vat_rate || 0;
+      const lineHt = l.line_ht_cents != null
         ? l.line_ht_cents
-        : Math.round((l.quantity || 1) * (l.unit_price_ht_cents || 0) * (1 - (l.discount_pct || 0) / 100))
-    }));
-    await sbAdmin.insert("document_lines", linesPayload);
+        : Math.round(qty * puHt * (1 - disc / 100));
+      const lineVat = Math.round(lineHt * vatR / 100);
+      return {
+        company_id: company.id,           // v8.49.12 — obligatoire (NOT NULL)
+        document_type: 'credit_note',
+        document_id: creditNoteRow.id,
+        sort_order: idx + 1,              // v8.49.12 — vrai nom (pas "position")
+        description: l.description || '',
+        quantity: qty,
+        unit: l.unit || 'u',
+        unit_price_ht_cents: puHt,
+        vat_rate: vatR,
+        discount_pct: disc,
+        line_ht_cents: lineHt,
+        line_vat_cents: lineVat,
+        line_ttc_cents: lineHt + lineVat
+      };
+    });
+    const insertedLines = await sbAdmin.insert("document_lines", linesPayload);
+    if (!insertedLines || insertedLines.length !== linesPayload.length) {
+      console.error("[push_credit_note] insert lignes échoué",
+        { expected: linesPayload.length, got: insertedLines?.length });
+    }
 
     // 6) Génération PDF Factur-X en arrière-plan
     triggerFacturxGeneration(creditNoteRow.id, 'credit_note');
