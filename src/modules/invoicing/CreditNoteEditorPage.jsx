@@ -45,7 +45,15 @@ export function CreditNoteEditorPage({ token, company }) {
   const [previewDoc, setPreviewDoc] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const isReadonly = creditNote && creditNote.status === "issued";
+  // v8.49.13 — Un avoir venu d'une app source externe (IOCAR, IOBTP…) est
+  // géré chez la source. On force isReadonly pour bloquer toute modification
+  // ou suppression côté UI IOBILL — la source de vérité est côté app métier.
+  const isExternalCreditNote = !!(creditNote?.external_source
+    && creditNote.external_source !== "iobill");
+  const externalSourceLabel = creditNote?.external_source === "iocar" ? "IO CAR"
+    : creditNote?.external_source === "iobtp" ? "IO BTP"
+    : String(creditNote?.external_source || "").toUpperCase();
+  const isReadonly = creditNote && (creditNote.status === "issued" || isExternalCreditNote);
 
   function showToast(message, type = "success") {
     setToast({ message, type });
@@ -363,6 +371,12 @@ export function CreditNoteEditorPage({ token, company }) {
 
   async function deleteDraft() {
     if (!creditNote) return;
+    // v8.49.13 — Interdit sur avoirs externes : la suppression doit passer
+    // par l'app source (IOCAR) qui déclenchera la cascade automatiquement.
+    if (isExternalCreditNote) {
+      alert(`Cet avoir est géré depuis ${externalSourceLabel}.\n\nPour le supprimer, retournez sur ${externalSourceLabel} et supprimez-le depuis là. Il disparaîtra automatiquement d'IO BILL.`);
+      return;
+    }
     if (!confirm(`Supprimer définitivement l'avoir ${creditNote.number || "en brouillon"} ?`)) return;
     setSaving(true);
     await sb.delete(token, "document_lines", `document_type=eq.credit_note&document_id=eq.${creditNote.id}`);
@@ -493,11 +507,50 @@ export function CreditNoteEditorPage({ token, company }) {
         </Link>
       </div>
 
+      {/* v8.49.13 — Bandeau explicatif pour avoirs venus d'une app source externe */}
+      {isExternalCreditNote && (
+        <div style={{
+          background: "rgba(212,168,67,0.08)",
+          border: "1px solid rgba(212,168,67,0.3)",
+          borderRadius: 8,
+          padding: "10px 14px",
+          marginBottom: 14,
+          display: "flex",
+          gap: 10,
+          alignItems: "flex-start"
+        }}>
+          <div style={{ fontSize: 18 }}>🚗</div>
+          <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+            <div style={{ fontWeight: 700, marginBottom: 3, color: "var(--gold, #d4a843)" }}>
+              Avoir géré depuis {externalSourceLabel}
+            </div>
+            <div style={{ color: "var(--muted)" }}>
+              Cet avoir a été créé par {externalSourceLabel} et est en lecture seule ici.
+              Toute modification ou suppression doit se faire depuis {externalSourceLabel}.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div>
           <div className="page-title">{isNew ? "NOUVEL AVOIR" : (creditNote?.number || "AVOIR")}</div>
           <div className="page-sub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span className={"badge " + badge.cls}>{badge.label}</span>
+            {/* v8.49.13 — Badge visuel "🚗 IO CAR" pour avoirs externes */}
+            {isExternalCreditNote && (
+              <span style={{
+                fontSize: 10,
+                padding: "2px 8px",
+                borderRadius: 8,
+                background: "rgba(212,168,67,0.15)",
+                color: "var(--gold, #d4a843)",
+                fontWeight: 700,
+                letterSpacing: 0.5
+              }}>
+                🚗 {externalSourceLabel}
+              </span>
+            )}
             {sourceInvoice && (
               <span style={{ fontSize: 11 }}>
                 Émis sur facture{" "}
