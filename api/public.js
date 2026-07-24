@@ -402,7 +402,19 @@ async function uploadLogoFromBase64(companyId, base64Input) {
     : mime.includes("svg") ? "svg"
     : "png";
 
-  const path = `external/${companyId}.${ext}`;
+  // v8.49.7 — Path conforme aux policies RLS du bucket company-logos.
+  // Les policies exigent que le PREMIER dossier du path soit l'ID de la
+  // company (pour que auth.uid() puisse signer). Avant on écrivait
+  // "external/{companyId}.{ext}" → RLS refusait le sign côté UI → le logo
+  // apparaissait dans les PDF (générés en service_role) mais PAS dans
+  // l'UI Paramètres ni dans la sidebar (qui utilisent auth utilisateur).
+  //
+  // Nouveau schéma : "{companyId}/external-logo.{ext}"
+  //   - Le premier dossier est bien l'ID company → RLS SELECT OK
+  //   - Nom "external-logo" pour identifier clairement l'origine (sync
+  //     externe IOCAR/IOBTP) vs upload direct dans l'UI qui fait
+  //     "{companyId}/logo-{timestamp}.{ext}"
+  const path = `${companyId}/external-logo.${ext}`;
 
   // Upload via Storage REST API (upsert pour remplacer si existe)
   const r = await fetch(`${url}/storage/v1/object/company-logos/${path}`, {
@@ -1294,21 +1306,40 @@ async function handlePushCreditNote(body, res) {
     }
 
     // 5) Lignes
-    const linesPayload = credit_note.lines.map((l, idx) => ({
-      document_type: 'credit_note',
-      document_id: creditNoteRow.id,
-      position: idx + 1,
-      description: l.description || '',
-      quantity: l.quantity || 1,
-      unit: l.unit || 'u',
-      unit_price_ht_cents: l.unit_price_ht_cents || 0,
-      vat_rate: l.vat_rate || 0,
-      discount_pct: l.discount_pct || 0,
-      line_ht_cents: l.line_ht_cents != null
+    // v8.49.12 — Fix critique : la colonne s'appelle `sort_order` (pas `position`)
+    // et `company_id` est NOT NULL. Sans ces 2 corrections, l'insert échoue
+    // silencieusement (aucune gestion d'erreur en aval), le credit_note est créé
+    // mais SANS lignes → le PDF Factur-X ne montre que les totaux, pas de désignation.
+    const linesPayload = credit_note.lines.map((l, idx) => {
+      const qty = l.quantity || 1;
+      const puHt = l.unit_price_ht_cents || 0;
+      const disc = l.discount_pct || 0;
+      const vatR = l.vat_rate || 0;
+      const lineHt = l.line_ht_cents != null
         ? l.line_ht_cents
-        : Math.round((l.quantity || 1) * (l.unit_price_ht_cents || 0) * (1 - (l.discount_pct || 0) / 100))
-    }));
-    await sbAdmin.insert("document_lines", linesPayload);
+        : Math.round(qty * puHt * (1 - disc / 100));
+      const lineVat = Math.round(lineHt * vatR / 100);
+      return {
+        company_id: company.id,           // v8.49.12 — obligatoire (NOT NULL)
+        document_type: 'credit_note',
+        document_id: creditNoteRow.id,
+        sort_order: idx + 1,              // v8.49.12 — vrai nom (pas "position")
+        description: l.description || '',
+        quantity: qty,
+        unit: l.unit || 'u',
+        unit_price_ht_cents: puHt,
+        vat_rate: vatR,
+        discount_pct: disc,
+        line_ht_cents: lineHt,
+        line_vat_cents: lineVat,
+        line_ttc_cents: lineHt + lineVat
+      };
+    });
+    const insertedLines = await sbAdmin.insert("document_lines", linesPayload);
+    if (!insertedLines || insertedLines.length !== linesPayload.length) {
+      console.error("[push_credit_note] insert lignes échoué",
+        { expected: linesPayload.length, got: insertedLines?.length });
+    }
 
     // 6) Génération PDF Factur-X en arrière-plan
     triggerFacturxGeneration(creditNoteRow.id, 'credit_note');
