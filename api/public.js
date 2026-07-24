@@ -1283,7 +1283,13 @@ async function handlePushCreditNote(body, res) {
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
-      notes: credit_note.notes || null
+      notes: credit_note.notes || null,
+      // v8.49.13 — Marquage source pour l'UI IOBILL (badge 🚗 IO CAR) et pour
+      // le lookup idempotent côté cascade delete (handleDeleteCreditNote).
+      // Sans ces 2 champs, l'avoir apparaît sans badge dans la liste et
+      // handleDeleteCreditNote ne peut pas le retrouver depuis IOCAR.
+      external_source: company.source_app,
+      external_id: String(externalId)
     };
 
     let creditNoteRow;
