@@ -593,7 +593,7 @@ function TicketCard({ t, expanded, editNotes, onToggle, onStatusChange, onNotesC
             {Object.entries(STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
           <button className="btn btn-ghost" onClick={onToggle} style={{ fontSize: 12 }}>
-            {expanded ? "▲" : "▼"}
+            {expanded ? "▲" : "▼ 💬"}
           </button>
           <button
             onClick={onDelete}
@@ -606,22 +606,185 @@ function TicketCard({ t, expanded, editNotes, onToggle, onStatusChange, onNotesC
         </div>
       </div>
 
+      {/* v8.49.15 — Chat threadé (au lieu du simple champ notes) */}
       {expanded && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border, rgba(255,255,255,0.06))" }}>
-          <label className="form-label" style={{ fontSize: 11 }}>💬 Réponse (visible par l'auteur du ticket)</label>
+        <TicketChatPanel
+          ticketId={t.id}
+          ticketStatus={t.status}
+          onStatusAutoUpdate={onStatusChange}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TicketChatPanel — v8.49.15
+   Panneau de conversation admin pour un ticket : charge le
+   thread, subscribe au realtime, permet de répondre.
+═══════════════════════════════════════════════════════════ */
+function TicketChatPanel({ ticketId, ticketStatus, onStatusAutoUpdate }) {
+  const [messages, setMessages] = useState([]);
+  const [reply, setReply] = useState("");
+  const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const scrollRef = React.useRef(null);
+  const readOnly = ticketStatus === "resolved" || ticketStatus === "closed";
+
+  async function adminCallLocal(action, payload = {}) {
+    const { data: { session } } = await (window.__supabaseClient?.auth?.getSession
+      ? window.__supabaseClient.auth.getSession()
+      : Promise.resolve({ data: { session: null } }));
+    const token = session?.access_token || localStorage.getItem("iobill_token") || "";
+    const r = await fetch("/api/admin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ action, payload })
+    });
+    if (!r.ok) throw new Error((await r.json())?.error || "Erreur");
+    return r.json();
+  }
+
+  const loadThread = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const { messages: msgs } = await adminCallLocal("tickets_thread", { ticketId });
+      setMessages(msgs || []);
+    } catch (e) {
+      console.warn("[TicketChatPanel] load", e.message);
+    }
+    setLoading(false);
+  }, [ticketId]);
+
+  React.useEffect(() => { loadThread(); }, [loadThread]);
+
+  React.useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages.length]);
+
+  // Realtime subscribe
+  React.useEffect(() => {
+    let channel = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const mod = await import("@supabase/supabase-js");
+        const { createClient } = mod;
+        const supaUrl = window.__SUPABASE_URL || import.meta.env?.VITE_SUPABASE_URL;
+        const supaAnon = window.__SUPABASE_ANON_KEY || import.meta.env?.VITE_SUPABASE_ANON_KEY;
+        if (!supaUrl || !supaAnon) return;
+        const client = createClient(supaUrl, supaAnon);
+        channel = client
+          .channel(`admin_ticket_${ticketId}`)
+          .on("postgres_changes", {
+            event: "INSERT",
+            schema: "public",
+            table: "ticket_messages",
+            filter: `ticket_id=eq.${ticketId}`
+          }, (payload) => {
+            if (cancelled) return;
+            setMessages(prev => {
+              if (prev.some(m => m.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          })
+          .subscribe();
+      } catch (e) {
+        console.warn("[TicketChatPanel] Realtime indisponible:", e.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (channel && channel.unsubscribe) channel.unsubscribe();
+    };
+  }, [ticketId]);
+
+  async function send() {
+    if (!reply.trim() || sending) return;
+    setSending(true);
+    try {
+      const { message } = await adminCallLocal("tickets_reply", {
+        ticketId,
+        message: reply.trim()
+      });
+      if (message) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === message.id)) return prev;
+          return [...prev, message];
+        });
+      }
+      // Passage auto en 'in_progress' côté serveur — on reflète côté UI
+      if (ticketStatus === "new" && onStatusAutoUpdate) {
+        onStatusAutoUpdate("in_progress");
+      }
+      setReply("");
+    } catch (e) {
+      alert(e.message || "Échec envoi");
+    }
+    setSending(false);
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border, rgba(255,255,255,0.06))" }}>
+      <div ref={scrollRef} style={{ maxHeight: 380, overflowY: "auto", marginBottom: 10, padding: 8, background: "var(--card2, rgba(255,255,255,0.02))", borderRadius: 6 }}>
+        {loading && <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", padding: 10 }}>Chargement…</div>}
+        {!loading && messages.length === 0 && (
+          <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", padding: 10 }}>
+            Aucune réponse encore. Envoyez le premier message à l'abonné.
+          </div>
+        )}
+        {messages.map(m => {
+          const isAdmin = m.author_type === "admin";
+          return (
+            <div key={m.id} style={{ marginBottom: 10, display: "flex", flexDirection: "column", alignItems: isAdmin ? "flex-end" : "flex-start" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>
+                {isAdmin ? "🛠 Vous" : `👤 ${m.author_name || "Abonné"}`} · {fmtDate(m.created_at)}
+                {!isAdmin && !m.read_at && (
+                  <span style={{ marginLeft: 4, fontSize: 9, background: "var(--red)", color: "#fff", padding: "1px 4px", borderRadius: 3 }}>NON LU</span>
+                )}
+              </div>
+              <div style={{
+                background: isAdmin ? "var(--gold, #d4a843)" : "var(--card, rgba(255,255,255,0.05))",
+                color: isAdmin ? "#0a0a0a" : "var(--text)",
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+                maxWidth: "80%",
+                border: !isAdmin ? "1px solid var(--border, rgba(255,255,255,0.06))" : "none"
+              }}>
+                {m.message}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {readOnly ? (
+        <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", padding: 8 }}>
+          🔒 Ce ticket est {ticketStatus === "resolved" ? "résolu" : "fermé"} — repassez-le en "En cours" pour continuer la conversation.
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <textarea
             className="form-input"
-            rows={3}
-            value={editNotes ?? t.admin_notes ?? ""}
-            onChange={(e) => onNotesChange(e.target.value)}
-            placeholder="Tapez votre réponse au client/cabinet ici…"
-            style={{ fontSize: 12 }}
+            rows={2}
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            placeholder="Votre réponse à l'abonné…"
+            style={{ fontSize: 12, flex: 1, resize: "none" }}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
+                e.preventDefault(); send();
+              }
+            }}
           />
-          <div style={{ marginTop: 6, textAlign: "right" }}>
-            <button className="btn btn-primary" onClick={onSaveNotes} style={{ fontSize: 12 }}>
-              Envoyer la réponse
-            </button>
-          </div>
+          <button className="btn btn-primary" onClick={send} disabled={sending || !reply.trim()} style={{ fontSize: 12 }}>
+            {sending ? "…" : "📤 Envoyer"}
+          </button>
         </div>
       )}
     </div>
