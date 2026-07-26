@@ -512,6 +512,86 @@ async function handleRequest(req, res) {
       return json(res, 200, { deleted: (closed || []).length });
     }
 
+    // v8.49.15 — CHAT THREADÉ ADMIN ↔ ABONNÉ ────────────────
+    case "tickets_thread": {
+      const { ticketId } = payload || {};
+      if (!ticketId) return json(res, 400, { error: "ticketId manquant" });
+      const ticketRows = await sbAdmin.select("support_tickets", {
+        filter: `id=eq.${ticketId}`, limit: 1
+      });
+      const ticket = ticketRows?.[0];
+      if (!ticket) return json(res, 404, { error: "Ticket introuvable" });
+      const messages = await sbAdmin.select("ticket_messages", {
+        filter: `ticket_id=eq.${ticketId}`,
+        order: "created_at.asc",
+        limit: 500
+      });
+      // Marque comme lus tous les messages 'subscriber' non lus
+      // (dès que l'admin ouvre le thread, il est considéré comme les ayant vus)
+      const unreadIds = (messages || [])
+        .filter(m => m.author_type === "subscriber" && !m.read_at)
+        .map(m => m.id);
+      if (unreadIds.length > 0) {
+        await sbAdmin.update(
+          "ticket_messages",
+          `id=in.(${unreadIds.join(",")})`,
+          { read_at: new Date().toISOString() }
+        );
+      }
+      return json(res, 200, { ticket, messages: messages || [] });
+    }
+
+    case "tickets_reply": {
+      const { ticketId, message } = payload || {};
+      if (!ticketId) return json(res, 400, { error: "ticketId manquant" });
+      if (!message || typeof message !== "string") return json(res, 400, { error: "Message manquant" });
+      const clean = message.trim();
+      if (!clean) return json(res, 400, { error: "Message vide" });
+      if (clean.length > 5000) return json(res, 400, { error: "Message trop long (max 5000)" });
+
+      const ticketRows = await sbAdmin.select("support_tickets", {
+        filter: `id=eq.${ticketId}`, limit: 1
+      });
+      const ticket = ticketRows?.[0];
+      if (!ticket) return json(res, 404, { error: "Ticket introuvable" });
+
+      const inserted = await sbAdmin.insert("ticket_messages", {
+        ticket_id: ticketId,
+        author_type: "admin",
+        author_user_id: user.id,
+        author_name: user.email || "Support IO BILL",
+        message: clean
+      });
+
+      // Passage auto en 'in_progress' si le ticket était encore 'new'
+      if (ticket.status === "new") {
+        await sbAdmin.update("support_tickets", `id=eq.${ticketId}`, {
+          status: "in_progress"
+        });
+      }
+
+      // Email abonné (fire-and-forget)
+      sendAdminReplyEmail({ ticket, message: clean }).catch(() => {});
+
+      return json(res, 200, { ok: true, message: inserted?.[0] || null });
+    }
+
+    case "tickets_count_unread_from_subscriber": {
+      // Compte les messages non lus par l'admin (auteur = subscriber, read_at NULL)
+      // Pour badge sur icône tickets dans la sidebar admin.
+      const url = SUPA_URL + "/rest/v1/ticket_messages?select=id&author_type=eq.subscriber&read_at=is.null";
+      const r = await fetch(url, {
+        headers: {
+          apikey: SR_KEY,
+          Authorization: `Bearer ${SR_KEY}`,
+          Prefer: "count=exact"
+        }
+      });
+      const cr = r.headers.get("content-range") || "";
+      const m = cr.match(/\/(\d+)$/);
+      return json(res, 200, { count: m ? parseInt(m[1], 10) : 0 });
+    }
+
     // ─── CABINETS (Mode Comptable) ─────────────────────────
     case "firms_list": {
       const firms = await sbAdmin.select("accounting_firms", {
@@ -618,5 +698,52 @@ async function handleRequest(req, res) {
 
     default:
       return json(res, 400, { error: "Action inconnue : " + action });
+  }
+}
+
+// ─── v8.49.15 — HELPER EMAIL RÉPONSE ADMIN ─────────────
+async function sendAdminReplyEmail({ ticket, message }) {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+
+  const SUPA_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const SR_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  // Récupère l'email de l'abonné via son user_id
+  let subscriberEmail = null;
+  try {
+    const r = await fetch(`${SUPA_URL}/auth/v1/admin/users/${ticket.user_id}`, {
+      headers: { apikey: SR_KEY, Authorization: `Bearer ${SR_KEY}` }
+    });
+    if (r.ok) {
+      const u = await r.json();
+      subscriberEmail = u?.email;
+    }
+  } catch (e) {
+    console.error("[sendAdminReplyEmail] fetch user", e.message);
+  }
+  if (!subscriberEmail) return;
+
+  const emailFrom = process.env.SUPPORT_EMAIL_FROM || 'IO BILL Support <no-reply@iobill.online>';
+  const preview = message.slice(0, 200) + (message.length > 200 ? '…' : '');
+  const subject = `[IO BILL] Réponse à votre ticket support`;
+  const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const html = `
+    <div style="font-family: -apple-system, sans-serif; max-width: 600px;">
+      <h2 style="color: #d4a843;">Notre équipe vous a répondu</h2>
+      <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; white-space: pre-wrap;">${esc(preview)}</div>
+      <p style="color: #999; font-size: 12px; margin-top: 20px;">
+        Ticket #${String(ticket.id).slice(0, 8)} · Ouvrez votre dashboard IO BILL pour répondre.
+      </p>
+    </div>
+  `;
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: emailFrom, to: [subscriberEmail], subject, html })
+    });
+  } catch (e) {
+    console.error("[sendAdminReplyEmail] send", e.message);
   }
 }
