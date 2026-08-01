@@ -247,8 +247,18 @@ export default function App() {
   // Trial expiré : page de blocage en plein écran.
   // Exception : l'admin IO BILL en mode admin garde l'accès complet
   // (pour pouvoir tester / dépanner). Les autres sont redirigés.
+  //
+  // v8.49.17.1 — Le gate paywall bloque aussi quand :
+  //   • is_active=false (compte suspendu manuellement OU par cascade IOCAR)
+  //   • sub_status='canceled' (abonnement Stripe annulé)
+  // Ces cas correspondent au parcours "downgrade IOCAR → IOBILL only" :
+  // le user peut réactiver son accès IOBILL en payant 9,90€ (webhook Stripe
+  // remettra is_active=true + sub_status='active').
   const adminBypass = company.is_admin === true && getAdminMode() === "admin";
-  if (isTrialExpired(company) && !adminBypass) {
+  const isSuspended = company.is_active === false;
+  const isCanceled = company.sub_status === "canceled";
+  const trialExpired = isTrialExpired(company);
+  if ((isSuspended || isCanceled || trialExpired) && !adminBypass) {
     return (
       <TrialExpiredPage
         token={session.token}
