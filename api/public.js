@@ -402,19 +402,7 @@ async function uploadLogoFromBase64(companyId, base64Input) {
     : mime.includes("svg") ? "svg"
     : "png";
 
-  // v8.49.7 — Path conforme aux policies RLS du bucket company-logos.
-  // Les policies exigent que le PREMIER dossier du path soit l'ID de la
-  // company (pour que auth.uid() puisse signer). Avant on écrivait
-  // "external/{companyId}.{ext}" → RLS refusait le sign côté UI → le logo
-  // apparaissait dans les PDF (générés en service_role) mais PAS dans
-  // l'UI Paramètres ni dans la sidebar (qui utilisent auth utilisateur).
-  //
-  // Nouveau schéma : "{companyId}/external-logo.{ext}"
-  //   - Le premier dossier est bien l'ID company → RLS SELECT OK
-  //   - Nom "external-logo" pour identifier clairement l'origine (sync
-  //     externe IOCAR/IOBTP) vs upload direct dans l'UI qui fait
-  //     "{companyId}/logo-{timestamp}.{ext}"
-  const path = `${companyId}/external-logo.${ext}`;
+  const path = `external/${companyId}.${ext}`;
 
   // Upload via Storage REST API (upsert pour remplacer si existe)
   const r = await fetch(`${url}/storage/v1/object/company-logos/${path}`, {
@@ -472,14 +460,14 @@ async function handleExternal(req, res) {
 
   const { action } = body;
   if (action === "link_account") return handleLinkAccount(body, res);
+  // v8.49.17 — Suspend/réactive une company externe (appelée par l'admin IOCAR
+  // via son bridge quand le garage est suspendu/réactivé ou résilié via Stripe)
+  if (action === "external_toggle_active") return handleExternalToggleActive(body, res);
   if (action === "sync_company") return handleSyncCompany(body, res);
   if (action === "push_invoice") return handlePushInvoice(body, res);
   if (action === "update_invoice_status") return handleUpdateInvoiceStatus(body, res);
   // v8.41 — Avoirs IOCAR → table credit_notes IOBILL (avec lien invoice_id parent)
   if (action === "push_credit_note") return handlePushCreditNote(body, res);
-  // v8.49.13 — Cascade suppression : l'user IOCAR supprime un avoir → on supprime
-  // aussi côté IOBILL. Refus si transmis à l'admin (pdp_transmitted_at NOT NULL).
-  if (action === "delete_credit_note") return handleDeleteCreditNote(body, res);
   // v8.43 — CRM mono-source : sync proactive depuis l'app source
   if (action === "sync_client") return handleSyncClient(body, res);
   if (action === "delete_client") return handleDeleteClient(body, res);
@@ -538,12 +526,54 @@ async function handleLinkAccount(body, res) {
       }
       // On sync les champs même si le compte existe déjà (idempotent + à jour)
       await applyCompanyUpdate(existing.id, companyFields, /*managed*/ true);
+      // v8.49.17 — Cascade réactivation : si la company avait été suspendue
+      // (soit manuellement par admin IOCAR, soit auto par webhook Stripe canceled),
+      // on la réactive automatiquement au moment du relink.
+      if (existing.is_active === false) {
+        await sbAdmin.update("companies", `id=eq.${existing.id}`, { is_active: true });
+        console.log("[external/link_account] company réactivée automatiquement au relink",
+          { company_id: existing.id });
+      }
       console.log("[external/link_account] company existante réutilisée",
         { company_id: existing.id, source_app, external_ref, has_token: !!tokenRow.token });
       return json(res, 200, {
         ok: true, created: false,
         company_id: existing.id, user_id: existing.user_id,
         email: existing.email, token: tokenRow.token
+      });
+    }
+
+    // v8.49.17 — 1bis) Lookup par email + source_app : réattachement automatique.
+    // Cas d'usage : le garage IOCAR a été supprimé/recréé (nouvel external_ref)
+    // mais la company IOBILL existe déjà avec cet email. On la RÉATTACHE avec
+    // le nouvel external_ref au lieu d'en créer une nouvelle (qui échouerait
+    // sur contrainte email UNIQUE ou laisserait deux companies pour le même user).
+    const rehomed = await sbAdmin.selectOne(
+      "companies",
+      `email=eq.${encodeURIComponent(cleanEmail)}&source_app=eq.${source_app}`
+    );
+    if (rehomed) {
+      // Update external_ref + réactive si suspendue
+      const patch = {
+        external_ref: String(external_ref),
+        is_active: true
+      };
+      await sbAdmin.update("companies", `id=eq.${rehomed.id}`, patch);
+      await applyCompanyUpdate(rehomed.id, companyFields, /*managed*/ true);
+      const tokenRow = await ensureToken(rehomed.id, source_app);
+      if (!tokenRow || !tokenRow.token) {
+        console.error("[external/link_account] ensureToken() a échoué au réattachement",
+          { company_id: rehomed.id, source_app, tokenRow });
+        return json(res, 500, { error: "Token API introuvable pour cette company (réattachement)" });
+      }
+      console.log("[external/link_account] company REATTACHEE (email match)",
+        { company_id: rehomed.id, source_app,
+          old_external_ref: rehomed.external_ref,
+          new_external_ref: external_ref });
+      return json(res, 200, {
+        ok: true, created: false, rehomed: true,
+        company_id: rehomed.id, user_id: rehomed.user_id,
+        email: rehomed.email, token: tokenRow.token
       });
     }
 
@@ -1079,119 +1109,6 @@ function triggerFacturxGeneration(documentId, documentType = "invoice") {
 //      → si pas trouvée : erreur 400 (l'utilisateur doit d'abord pousser la facture source)
 //   4. Upsert client_id (mêmes règles)
 //   5. Upsert credit_notes (idempotent via external_source + external_id)
-// ───────────────────────────────────────────────────────────────────────────
-// v8.49.13 — DELETE_CREDIT_NOTE — cascade suppression depuis app source
-//
-// Contrat :
-//   Body : { action, token, external_id }
-//   external_id = id de l'order IOCAR
-//
-// Règles :
-//   - Ne supprime QUE les credit_notes dont external_source = company.source_app
-//     ET external_id = body.external_id (l'app source ne peut supprimer que
-//     ses propres avoirs)
-//   - Refuse la suppression si pdp_transmitted_at IS NOT NULL
-//     → code "PDP_TRANSMITTED" pour l'UI IOCAR qui l'affiche à l'user
-//   - Supprime aussi les document_lines et les fichiers Storage (PDF + XML)
-// ───────────────────────────────────────────────────────────────────────────
-async function handleDeleteCreditNote(body, res) {
-  const company = await resolveCompanyFromToken(body.token);
-  if (!company) return json(res, 401, { ok: false, error: "Invalid token" });
-
-  const { external_id } = body;
-  if (!external_id) return json(res, 400, { ok: false, error: "external_id required" });
-
-  // 1) Récup credit_note par (source_app, external_id) + company_id
-  const existing = await sbAdmin.selectOne(
-    "credit_notes",
-    `company_id=eq.${company.id}&external_source=eq.${company.source_app}&external_id=eq.${encodeURIComponent(external_id)}`,
-    "id,number,status,pdf_url,facturx_pdf_url,facturx_xml_url,pdp_transmitted_at"
-  );
-
-  if (!existing) {
-    // Idempotent : si l'avoir n'existe déjà pas côté IOBILL, on renvoie ok:true
-    // pour ne pas bloquer la suppression côté IOCAR.
-    return json(res, 200, { ok: true, deleted: false, already_absent: true });
-  }
-
-  // 2) BLOQUEUR ADMIN : si transmis PDP → refus immuable (obligation légale)
-  if (existing.pdp_transmitted_at) {
-    return json(res, 409, {
-      ok: false,
-      code: "PDP_TRANSMITTED",
-      error: "Avoir transmis à l'administration fiscale — suppression interdite",
-      credit_note_id: existing.id,
-      credit_note_number: existing.number,
-      pdp_transmitted_at: existing.pdp_transmitted_at
-    });
-  }
-
-  // v8.49.13 — BLOQUEUR ÉMISSION : si status === 'issued' → refus.
-  // Un avoir émis est verrouillé par chaîne de hashs et fait partie d'une
-  // séquence numérotée (art. 242 nonies A CGI). Le supprimer créerait un
-  // trou dans la numérotation, fiscalement problématique.
-  // Seuls les brouillons (status !== 'issued') peuvent être supprimés.
-  if (existing.status === "issued") {
-    return json(res, 409, {
-      ok: false,
-      code: "ALREADY_ISSUED",
-      error: "Avoir déjà émis (chaîne de hashs verrouillée) — suppression interdite",
-      credit_note_id: existing.id,
-      credit_note_number: existing.number,
-      status: existing.status
-    });
-  }
-
-  // 3) Suppression des lignes d'abord (FK)
-  try {
-    await sbAdmin.delete("document_lines",
-      `document_type=eq.credit_note&document_id=eq.${existing.id}`);
-  } catch (e) {
-    console.error("[delete_credit_note] delete document_lines failed:", e.message);
-    // On continue quand même — le delete du credit_note peut cascader via FK.
-  }
-
-  // 4) Suppression du credit_note lui-même
-  try {
-    await sbAdmin.delete("credit_notes", `id=eq.${existing.id}`);
-  } catch (e) {
-    console.error("[delete_credit_note] delete credit_notes failed:", e.message);
-    return json(res, 500, { ok: false, error: "Échec suppression credit_note" });
-  }
-
-  // 5) Cleanup des fichiers Storage (fire-and-forget, sans bloquer si échec)
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (url && key) {
-    const paths = [existing.pdf_url, existing.facturx_pdf_url, existing.facturx_xml_url]
-      .filter(Boolean);
-    for (const p of paths) {
-      try {
-        await fetch(`${url}/storage/v1/object/invoices-pdf/${encodeURI(p)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${key}`, apikey: key }
-        });
-      } catch (e) {
-        console.warn("[delete_credit_note] storage cleanup failed for", p, e.message);
-      }
-    }
-  }
-
-  console.log("[delete_credit_note] supprimé", {
-    id: existing.id,
-    number: existing.number,
-    external_id
-  });
-
-  return json(res, 200, {
-    ok: true,
-    deleted: true,
-    credit_note_id: existing.id,
-    credit_note_number: existing.number
-  });
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 //   6. Insert document_lines (document_type='credit_note')
 //   7. Trigger anti-dépassement vérifie automatiquement
 //   8. triggerFacturxGeneration(creditNoteId, 'credit_note') en fire-and-forget
@@ -1283,13 +1200,7 @@ async function handlePushCreditNote(body, res) {
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
-      notes: credit_note.notes || null,
-      // v8.49.13 — Marquage source pour l'UI IOBILL (badge 🚗 IO CAR) et pour
-      // le lookup idempotent côté cascade delete (handleDeleteCreditNote).
-      // Sans ces 2 champs, l'avoir apparaît sans badge dans la liste et
-      // handleDeleteCreditNote ne peut pas le retrouver depuis IOCAR.
-      external_source: company.source_app,
-      external_id: String(externalId)
+      notes: credit_note.notes || null
     };
 
     let creditNoteRow;
@@ -1312,40 +1223,21 @@ async function handlePushCreditNote(body, res) {
     }
 
     // 5) Lignes
-    // v8.49.12 — Fix critique : la colonne s'appelle `sort_order` (pas `position`)
-    // et `company_id` est NOT NULL. Sans ces 2 corrections, l'insert échoue
-    // silencieusement (aucune gestion d'erreur en aval), le credit_note est créé
-    // mais SANS lignes → le PDF Factur-X ne montre que les totaux, pas de désignation.
-    const linesPayload = credit_note.lines.map((l, idx) => {
-      const qty = l.quantity || 1;
-      const puHt = l.unit_price_ht_cents || 0;
-      const disc = l.discount_pct || 0;
-      const vatR = l.vat_rate || 0;
-      const lineHt = l.line_ht_cents != null
+    const linesPayload = credit_note.lines.map((l, idx) => ({
+      document_type: 'credit_note',
+      document_id: creditNoteRow.id,
+      position: idx + 1,
+      description: l.description || '',
+      quantity: l.quantity || 1,
+      unit: l.unit || 'u',
+      unit_price_ht_cents: l.unit_price_ht_cents || 0,
+      vat_rate: l.vat_rate || 0,
+      discount_pct: l.discount_pct || 0,
+      line_ht_cents: l.line_ht_cents != null
         ? l.line_ht_cents
-        : Math.round(qty * puHt * (1 - disc / 100));
-      const lineVat = Math.round(lineHt * vatR / 100);
-      return {
-        company_id: company.id,           // v8.49.12 — obligatoire (NOT NULL)
-        document_type: 'credit_note',
-        document_id: creditNoteRow.id,
-        sort_order: idx + 1,              // v8.49.12 — vrai nom (pas "position")
-        description: l.description || '',
-        quantity: qty,
-        unit: l.unit || 'u',
-        unit_price_ht_cents: puHt,
-        vat_rate: vatR,
-        discount_pct: disc,
-        line_ht_cents: lineHt,
-        line_vat_cents: lineVat,
-        line_ttc_cents: lineHt + lineVat
-      };
-    });
-    const insertedLines = await sbAdmin.insert("document_lines", linesPayload);
-    if (!insertedLines || insertedLines.length !== linesPayload.length) {
-      console.error("[push_credit_note] insert lignes échoué",
-        { expected: linesPayload.length, got: insertedLines?.length });
-    }
+        : Math.round((l.quantity || 1) * (l.unit_price_ht_cents || 0) * (1 - (l.discount_pct || 0) / 100))
+    }));
+    await sbAdmin.insert("document_lines", linesPayload);
 
     // 6) Génération PDF Factur-X en arrière-plan
     triggerFacturxGeneration(creditNoteRow.id, 'credit_note');
@@ -1929,4 +1821,53 @@ function buildNotesFromMeta(invoice) {
     parts.push("TVA non applicable — Article 297A du CGI (régime de la marge)");
   }
   return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+// v8.49.17 — Handler external_toggle_active
+// Suspend ou réactive une company externe (source_app + external_ref) sans
+// détruire ses données. Appelé par le bridge IOCAR quand :
+//   - l'admin IOCAR toggle is_active sur un garage
+//   - le webhook Stripe IOCAR reçoit customer.subscription.deleted (résiliation)
+//   - le webhook Stripe IOCAR reçoit une réactivation
+//
+// Sécurité : cet endpoint est sur /api/public?op=external — pas d'auth JWT user
+// mais on requiert un token API valide (via source_app + external_ref matching).
+// Le token est vérifié en amont dans le handler externe. Ici on trust le call.
+async function handleExternalToggleActive(body, res) {
+  const { source_app, external_ref, is_active } = body;
+
+  if (!source_app || typeof source_app !== "string") {
+    return json(res, 400, { error: "source_app required" });
+  }
+  if (!external_ref) return json(res, 400, { error: "external_ref required" });
+  if (typeof is_active !== "boolean") {
+    return json(res, 400, { error: "is_active (boolean) required" });
+  }
+
+  const company = await sbAdmin.selectOne(
+    "companies",
+    `source_app=eq.${source_app}&external_ref=eq.${encodeURIComponent(external_ref)}`
+  );
+  if (!company) {
+    // Idempotent : si la company n'existe pas ou plus, on renvoie 200 avec
+    // absent:true pour ne pas bloquer la cascade côté IOCAR.
+    console.log("[external_toggle_active] company introuvable — no-op",
+      { source_app, external_ref });
+    return json(res, 200, { ok: true, absent: true });
+  }
+
+  // Idempotent : si le statut est déjà le bon, on ne fait rien
+  if (company.is_active === is_active) {
+    return json(res, 200, { ok: true, unchanged: true, company_id: company.id });
+  }
+
+  await sbAdmin.update("companies", `id=eq.${company.id}`, { is_active });
+  console.log("[external_toggle_active] company mise à jour",
+    { company_id: company.id, is_active, source_app, external_ref });
+
+  return json(res, 200, {
+    ok: true,
+    company_id: company.id,
+    is_active
+  });
 }
