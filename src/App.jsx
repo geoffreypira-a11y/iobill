@@ -122,8 +122,17 @@ export default function App() {
       // v8.51 — EXCEPTION type=recovery : ne PAS auto-signer l'user quand il vient
       // d'un reset password. Le hash sera préservé pour que le gate de rendu
       // détecte type=recovery et affiche ResetPasswordPage.
+      //
+      // v8.51.1 — On doit AUSSI clear la session existante (localStorage), sinon
+      // l'user reste connecté avec son ancienne session et le gate ne matche pas.
       const hash = window.location.hash || "";
-      if (hash.length > 1 && hash.includes("access_token=") && !hash.includes("type=recovery")) {
+      const isRecovery = hash.includes("type=recovery");
+      if (isRecovery) {
+        clearSession();
+        setBootstrapping(false);
+        return; // On stoppe ici, le gate va détecter le hash et afficher ResetPasswordPage
+      }
+      if (hash.length > 1 && hash.includes("access_token=")) {
         try {
           const params = new URLSearchParams(hash.substring(1));
           const accessToken = params.get("access_token");
