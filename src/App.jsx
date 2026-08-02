@@ -118,8 +118,12 @@ export default function App() {
       // Quand l'user clique le lien dans l'email de confirmation, il revient sur
       // app.iobill.online/#access_token=...&refresh_token=...&type=signup
       // On extrait ces tokens, on les sauvegarde, on nettoie l'URL.
+      //
+      // v8.51 — EXCEPTION type=recovery : ne PAS auto-signer l'user quand il vient
+      // d'un reset password. Le hash sera préservé pour que le gate de rendu
+      // détecte type=recovery et affiche ResetPasswordPage.
       const hash = window.location.hash || "";
-      if (hash.length > 1 && hash.includes("access_token=")) {
+      if (hash.length > 1 && hash.includes("access_token=") && !hash.includes("type=recovery")) {
         try {
           const params = new URLSearchParams(hash.substring(1));
           const accessToken = params.get("access_token");
