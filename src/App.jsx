@@ -8,6 +8,8 @@ import { VatReminderBanner } from "./components/VatReminderBanner.jsx";
 
 // Core
 import { AuthPage } from "./modules/core/AuthPage.jsx";
+// v8.51 — Écran de reset password (activé quand hash contient type=recovery)
+import { ResetPasswordPage } from "./modules/core/ResetPasswordPage.jsx";
 import { Onboarding } from "./modules/core/Onboarding.jsx";
 import { DashboardPage } from "./modules/core/DashboardPage.jsx";
 import { SettingsPage } from "./modules/core/SettingsPage.jsx";
@@ -196,7 +198,23 @@ export default function App() {
     );
   }
 
-  if (!session) return <AuthPage onAuthed={handleAuthed} />;
+  if (!session) {
+    // v8.51 — Détection du flow reset password.
+    // Supabase redirige avec un hash du type :
+    //   #access_token=xxx&refresh_token=yyy&type=recovery&expires_in=3600
+    // Si détecté, on affiche ResetPasswordPage au lieu d'AuthPage.
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash || "";
+      if (hash.includes("type=recovery")) {
+        const params = new URLSearchParams(hash.substring(1));
+        const recoveryToken = params.get("access_token");
+        if (recoveryToken) {
+          return <ResetPasswordPage accessToken={recoveryToken} />;
+        }
+      }
+    }
+    return <AuthPage onAuthed={handleAuthed} />;
+  }
 
   // Détection du type d'utilisateur :
   //   - Pro : a une company, peut avoir is_admin
@@ -247,18 +265,8 @@ export default function App() {
   // Trial expiré : page de blocage en plein écran.
   // Exception : l'admin IO BILL en mode admin garde l'accès complet
   // (pour pouvoir tester / dépanner). Les autres sont redirigés.
-  //
-  // v8.49.17.1 — Le gate paywall bloque aussi quand :
-  //   • is_active=false (compte suspendu manuellement OU par cascade IOCAR)
-  //   • sub_status='canceled' (abonnement Stripe annulé)
-  // Ces cas correspondent au parcours "downgrade IOCAR → IOBILL only" :
-  // le user peut réactiver son accès IOBILL en payant 9,90€ (webhook Stripe
-  // remettra is_active=true + sub_status='active').
   const adminBypass = company.is_admin === true && getAdminMode() === "admin";
-  const isSuspended = company.is_active === false;
-  const isCanceled = company.sub_status === "canceled";
-  const trialExpired = isTrialExpired(company);
-  if ((isSuspended || isCanceled || trialExpired) && !adminBypass) {
+  if (isTrialExpired(company) && !adminBypass) {
     return (
       <TrialExpiredPage
         token={session.token}

@@ -70,10 +70,16 @@ export const sb = {
   },
 
   async resetPassword(email) {
+    // v8.51 — Ajout redirectTo explicite pour que le mail redirige vers l'app prod
+    // (sinon Supabase utilise le "Site URL" configuré qui peut être localhost:3000).
+    const origin = (typeof window !== "undefined" && window.location?.origin) || "https://app.iobill.online";
     const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
       method: "POST",
       headers: baseHeaders(),
-      body: JSON.stringify({ email })
+      body: JSON.stringify({
+        email,
+        redirect_to: `${origin}/reset-password`
+      })
     });
     return { ok: r.ok, data: await safeJson(r) };
   },
