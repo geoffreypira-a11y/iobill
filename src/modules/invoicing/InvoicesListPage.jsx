@@ -294,9 +294,11 @@ export function InvoicesListPage({ token, company }) {
 
       if (!silent) {
         const labelMap = {
-          transmitted: "Transmise",
-          accepted:    "Approuvée par l'acheteur",
-          rejected:    "Refusée par l'acheteur"
+          transmitted:  "Transmise",
+          accepted:     "Approuvée par l'acheteur",
+          payment_sent: "Paiement transmis par l'acheteur",
+          paid:         "Encaissée",
+          rejected:     "Refusée par l'acheteur"
         };
         const label = labelMap[newFx] || newFx || "statut inchangé";
         if (force && newFx === oldFx) {
@@ -574,11 +576,14 @@ export function InvoicesListPage({ token, company }) {
                         )}
                         {alreadyTransmitted && (() => {
                           // v8.48.15 — Affiche le vrai statut cycle de vie PA
+                          // v8.57.8 — 5 états au lieu de 3
                           const fx = inv.facturx_status || "transmitted";
                           const meta = {
-                            transmitted: { icon: "📤", label: "Transmise", color: "#4a9eff" },
-                            accepted:    { icon: "✅", label: "Approuvée", color: "#3ecf7a" },
-                            rejected:    { icon: "❌", label: "Refusée",   color: "#e54949" }
+                            transmitted:  { icon: "📤", label: "Transmise",           color: "#4a9eff" },
+                            accepted:     { icon: "✅", label: "Approuvée",           color: "#3ecf7a" },
+                            payment_sent: { icon: "💸", label: "Paiement transmis",   color: "#d4a843" },
+                            paid:         { icon: "💰", label: "Encaissée",           color: "#2ecc71" },
+                            rejected:     { icon: "❌", label: "Refusée",             color: "#e54949" }
                           }[fx] || { icon: "📤", label: fx, color: "#8a8a96" };
                           const when = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR") : "";
                           return (

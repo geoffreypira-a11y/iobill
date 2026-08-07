@@ -267,48 +267,55 @@ export async function paInvoiceStatus(company, payload) {
   const { impl, cfg } = getProvider(creds);
   const j = await impl.getInvoice(cfg, inv.pdp_transmission_id);
 
-  // v8.57.3 — SUPER PDP renvoie un tableau `events[]` où chaque event a un
-  // `status_code` et un `created_at`. Il N'Y A PAS de champ `status_code`
-  // au niveau racine. Avant v8.57.3 on lisait `j.status_code` qui était
-  // toujours undefined → le fx restait "transmitted" éternellement.
+  // v8.57.8 — Lecture du cycle de vie complet AFNOR avec 5 états UI :
   //
-  // Nouvelle logique : parcourir tous les events dans l'ordre chronologique
-  // et retenir le statut le plus "avancé" du cycle de vie :
-  //   fr:210 (refus) > fr:213 (rejet) > fr:212 (encaissée) >
-  //   fr:205 (approuvée) > tout le reste = "transmitted"
+  //   PRIORITÉ (du plus terminal au moins) :
+  //     rejected      = fr:210 (refus manuel) / fr:213 (rejet plateforme) / fr:501 (irrecevable)
+  //     paid          = fr:212 (Encaissée, le vendeur confirme réception paiement)
+  //     payment_sent  = fr:211 (Paiement transmis par l'acheteur)
+  //     accepted      = fr:205 (Approuvée par l'acheteur)
+  //     transmitted   = fr:200 → fr:204 (cycle en cours, aucun terminal atteint)
+  //
+  // Un refus (rejected) est ABSOLU : dès qu'il apparaît, il l'emporte sur tout.
+  // Pour les autres, on prend le plus avancé chronologiquement.
   const events = Array.isArray(j.events) ? j.events : [];
-  let code = null;
-  let latestFinalCode = null;
 
-  // Priorité aux statuts terminaux (refus, rejet). Sinon on prend le plus récent.
-  const TERMINAL_REFUSE = new Set([LIFECYCLE.refusee, LIFECYCLE.rejetee]);
-  const TERMINAL_ACCEPT = new Set([LIFECYCLE.approuvee, LIFECYCLE.encaissee]);
+  const REJECT_CODES = new Set([LIFECYCLE.refusee, LIFECYCLE.rejetee, LIFECYCLE.irrecevable]);
+  const PAID_CODE    = LIFECYCLE.encaissee;    // fr:212
+  const PSENT_CODE   = LIFECYCLE.paiement_tx;  // fr:211
+  const ACCEPT_CODE  = LIFECYCLE.approuvee;    // fr:205
+
+  let seenRejected = false;
+  let seenPaid = false;
+  let seenPaymentSent = false;
+  let seenAccepted = false;
+  let latestCode = null;
+  let latestCreatedAt = "";
 
   for (const e of events) {
     const c = e?.status_code;
     if (!c) continue;
-    if (TERMINAL_REFUSE.has(c)) { latestFinalCode = c; break; } // stop dès qu'on voit un refus
-    if (TERMINAL_ACCEPT.has(c)) { latestFinalCode = c; }        // on garde le dernier accept
-  }
-  // Fallback : dernier event en date pour affichage/debug
-  if (!latestFinalCode && events.length > 0) {
-    const sorted = [...events].sort((a, b) =>
-      String(b.created_at || "").localeCompare(String(a.created_at || "")));
-    code = sorted[0]?.status_code || null;
-  } else {
-    code = latestFinalCode;
+    if (REJECT_CODES.has(c)) seenRejected = true;
+    if (c === PAID_CODE)     seenPaid = true;
+    if (c === PSENT_CODE)    seenPaymentSent = true;
+    if (c === ACCEPT_CODE)   seenAccepted = true;
+    const ts = String(e.created_at || "");
+    if (ts >= latestCreatedAt) { latestCreatedAt = ts; latestCode = c; }
   }
 
-  const fx = TERMINAL_REFUSE.has(code) ? "rejected"
-           : TERMINAL_ACCEPT.has(code) ? "accepted"
+  // Résolution du fx selon la priorité
+  const fx = seenRejected    ? "rejected"
+           : seenPaid        ? "paid"
+           : seenPaymentSent ? "payment_sent"
+           : seenAccepted    ? "accepted"
            : "transmitted";
 
-  // Ne met à jour que si le statut a changé (économise Realtime/UI churn)
+  // Ne met à jour la base que si le statut a effectivement changé
   if (fx !== inv.facturx_status) {
     await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: fx });
   }
 
-  return { ok: true, status_code: code, facturx_status: fx, events_count: events.length };
+  return { ok: true, status_code: latestCode, facturx_status: fx, events_count: events.length };
 }
 
 /* ─── Réception ─────────────────────────────────────────────────── */
@@ -724,11 +731,28 @@ export async function paWebhook(companyId, rawBody, headers) {
   } else {
     const inv = await sbAdmin.selectOne("invoices", "pdp_transmission_id=eq." + encodeURIComponent(evt.pa_document_id));
     if (inv) {
+      // v8.57.8 — Mapping événement unique reçu → facturx_status.
+      // Un webhook reçoit un seul event, on ne peut pas voir tout l'historique.
+      // Règle : on ne dégrade JAMAIS un statut plus terminal vers un moins
+      // terminal. Ex : si on a déjà "paid" et qu'on reçoit un fr:205 en
+      // retard, on ne repasse pas à "accepted".
       const c = evt.status_code;
-      const fx = c === LIFECYCLE.refusee || c === LIFECYCLE.rejetee ? "rejected"
-               : c === LIFECYCLE.approuvee || c === LIFECYCLE.encaissee ? "accepted"
-               : "transmitted";
-      await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: fx });
+      const RANK = { transmitted: 0, accepted: 1, payment_sent: 2, paid: 3, rejected: 99 };
+      const REJECT_CODES = new Set([LIFECYCLE.refusee, LIFECYCLE.rejetee, LIFECYCLE.irrecevable]);
+      let newFx = null;
+      if (REJECT_CODES.has(c))              newFx = "rejected";
+      else if (c === LIFECYCLE.encaissee)   newFx = "paid";
+      else if (c === LIFECYCLE.paiement_tx) newFx = "payment_sent";
+      else if (c === LIFECYCLE.approuvee)   newFx = "accepted";
+
+      if (newFx) {
+        const currentRank = RANK[inv.facturx_status] ?? -1;
+        const newRank = RANK[newFx];
+        // Rejet toujours prioritaire, sinon on n'écrase que si "plus terminal"
+        if (newFx === "rejected" || newRank > currentRank) {
+          await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: newFx });
+        }
+      }
       await logEvent({
         company_id: inv.company_id, direction: "outbound", provider: creds.provider,
         pa_document_id: evt.pa_document_id, invoice_id: inv.id,
