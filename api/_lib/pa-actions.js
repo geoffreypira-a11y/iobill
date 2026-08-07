@@ -786,7 +786,6 @@ export async function paInvoiceEncaisser(company, payload) {
   if (inv.company_id !== company.id) throw fail(403, "Facture hors périmètre");
 
   // Skip silencieux si la facture n'est pas transmise à un PDP.
-  // Ex : facture manuellement marquée payée avant même d'être transmise.
   if (!inv.pdp_transmission_id) {
     return { ok: true, skipped: "not_transmitted" };
   }
@@ -800,8 +799,7 @@ export async function paInvoiceEncaisser(company, payload) {
     return { ok: true, skipped: "already_sent" };
   }
 
-  // Date d'encaissement = MAX(payments.paid_at). Si aucun paiement enregistré
-  // (cas où la facture est marquée payée sans détail), fallback = aujourd'hui.
+  // Date d'encaissement = MAX(payments.paid_at). Sinon aujourd'hui.
   let paymentDate = new Date().toISOString().slice(0, 10);
   const payments = await sbAdmin.select("payments", {
     filter: "invoice_id=eq." + inv.id,
@@ -812,37 +810,71 @@ export async function paInvoiceEncaisser(company, payload) {
     paymentDate = String(payments[0].paid_at).slice(0, 10);
   }
 
-  // Montant encaissé = grand_total_cents si dispo (inclut débours),
-  // sinon total_ttc_cents. Divisé par 100 pour le format decimal string.
-  const totalCents = Number(inv.grand_total_cents || inv.total_ttc_cents || 0);
-  const amount = (totalCents / 100).toFixed(2);
   const currency = inv.currency || "EUR";
 
-  // Structure reported_data selon OpenAPI SUPER PDP :
-  //   type_code = "MEN" (Montant encaissé net, MDT-207)
-  //   date      = MDT-219 date d'encaissement
-  const detail = {
-    reported_data: [{
+  // v8.57.10 — SUPER PDP exige (règle BR-FR-CDV-14/MDT-207) :
+  //   "Si status_code = fr:212, ALORS ≥ 1 bloc MDG-43 avec type_code='MEN'
+  //    et chaque bloc MEN doit contenir MDT-215 (amount) ET MDT-224 (VAT %)."
+  //
+  // Le champ MDT-224 (value_percent dans l'OpenAPI SUPER PDP) manquait
+  // dans le payload v8.57 initial → 400. Fix : lire vat_breakdown de la
+  // facture et générer un bloc MEN par taux de TVA distinct.
+  //
+  // Multi-TVA : si la facture a des lignes à 20% et 10%, on envoie 2 blocs :
+  //   { type_code: "MEN", amount: base+vat 20%, value_percent: "20.00" }
+  //   { type_code: "MEN", amount: base+vat 10%, value_percent: "10.00" }
+  //
+  // Mono-TVA / pas de breakdown : fallback à un seul bloc avec le taux
+  // calculé depuis vat_total / subtotal_ht (ou 0 si franchise TVA).
+  const breakdown = Array.isArray(inv.vat_breakdown) ? inv.vat_breakdown : [];
+  const reportedData = [];
+
+  if (breakdown.length > 0) {
+    for (const br of breakdown) {
+      const base  = Number(br.base_cents || 0);
+      const vat   = Number(br.vat_cents || 0);
+      const rate  = Number(br.rate || 0);
+      const cents = base + vat;
+      if (cents <= 0) continue;
+      reportedData.push({
+        type_code: "MEN",
+        amount: (cents / 100).toFixed(2),
+        currency_code: currency,
+        date: paymentDate,
+        value_percent: rate.toFixed(2)
+      });
+    }
+  }
+
+  // Fallback : pas de breakdown → un seul bloc MEN au taux global.
+  if (reportedData.length === 0) {
+    const totalCents  = Number(inv.grand_total_cents || inv.total_ttc_cents || 0);
+    const subHtCents  = Number(inv.subtotal_ht_cents || 0);
+    const vatCents    = Number(inv.vat_total_cents || 0);
+    const globalRate  = subHtCents > 0 ? (vatCents / subHtCents) * 100 : 0;
+    reportedData.push({
       type_code: "MEN",
-      amount,
+      amount: (totalCents / 100).toFixed(2),
       currency_code: currency,
-      date: paymentDate
-    }]
-  };
+      date: paymentDate,
+      value_percent: globalRate.toFixed(2)
+    });
+  }
+
+  const detail = { reported_data: reportedData };
 
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
   try {
-    // sendEvent accepte un objet { code, label } pour le motif mais ici on
-    // veut passer reported_data — on injecte via un helper direct côté adapter.
-    // v8.57 : sendEvent(cfg, id, status, details) où details peut être null.
-    // On passe le detail complet en objet spécial reconnu par l'adapter v8.57.
     await impl.sendEvent(cfg, inv.pdp_transmission_id, LIFECYCLE.encaissee, detail);
+    const summary = reportedData
+      .map((r) => r.amount + " @ " + r.value_percent + "%")
+      .join(" + ");
     await logEvent({
       company_id: company.id, direction: "outbound", provider: creds.provider,
       pa_document_id: inv.pdp_transmission_id, invoice_id: inv.id,
       event_type: "invoice.paid", status: "paid",
-      message: "fr:212 encaissée · " + amount + " " + currency + " · " + paymentDate
+      message: "fr:212 encaissée · " + summary + " " + currency + " · " + paymentDate
     });
     return { ok: true };
   } catch (e) {
