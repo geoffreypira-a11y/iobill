@@ -23,20 +23,33 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 /* ─── Statuts cycle de vie AFNOR (codes fr:2xx) ────────────────────
    ⚠️ À reconfirmer dans la doc SUPER PDP : ce mapping est le seul
    endroit à corriger si un code diffère.                            */
+// v8.57.7 — Mapping ALIGNÉ sur l'OpenAPI SUPER PDP officielle.
+// Corrections critiques :
+//   - `emise: "fr:201"` (avant à tort mappé sur `rejetee`)
+//   - `rejetee: "fr:213"` (avant mappé à tort sur "fr:201" = émise-par-plateforme)
+//   - Ajout `irrecevable: "fr:501"` (Inadmissible)
+//   - `suspendue` renommé `on_hold` (fr:208) pour clarté (nom AFNOR)
+//   - `litige` reste "fr:207" (Disputed), `en_litige` alias conservé
+// Le bug rejetee=fr:201 était présent depuis v8.48 mais latent, car aucun
+// code ne parcourait les events avant v8.57.3. Dès que paInvoiceStatus
+// s'est mis à parser les events, il classait fr:201 (cycle normal après
+// émission) comme un refus → badge "Refusée" au lieu de "Transmise".
 export const LIFECYCLE = {
-  deposee:      "fr:200",
-  rejetee:      "fr:201",
-  recue:        "fr:202",
-  mise_a_dispo: "fr:203",
-  prise_charge: "fr:204",
-  approuvee:    "fr:205",
-  approuvee_p:  "fr:206",
-  litige:       "fr:207",
-  suspendue:    "fr:208",
-  completee:    "fr:209",
-  refusee:      "fr:210",
-  paiement_tx:  "fr:211",
-  encaissee:    "fr:212"
+  deposee:      "fr:200",  // Submitted
+  emise:        "fr:201",  // Sent (émise par la plateforme) — cycle normal
+  recue:        "fr:202",  // Received
+  mise_a_dispo: "fr:203",  // Made available
+  prise_charge: "fr:204",  // Acknowledged
+  approuvee:    "fr:205",  // Accepted
+  approuvee_p:  "fr:206",  // Partly accepted
+  litige:       "fr:207",  // Disputed
+  suspendue:    "fr:208",  // On hold
+  completee:    "fr:209",  // Completed
+  refusee:      "fr:210",  // Refused (côté acheteur, terminal négatif)
+  paiement_tx:  "fr:211",  // Payment sent (acheteur → vendeur)
+  encaissee:    "fr:212",  // Payment received (vendeur confirme)
+  rejetee:      "fr:213",  // Rejected (terminal négatif automatique plateforme)
+  irrecevable:  "fr:501"   // Inadmissible (terminal négatif)
 };
 
 /* ─── HTTP ────────────────────────────────────────────────────────── */
