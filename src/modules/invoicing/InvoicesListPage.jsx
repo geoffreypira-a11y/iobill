@@ -318,6 +318,92 @@ export function InvoicesListPage({ token, company }) {
     }
   }
 
+  // v8.57.9 — Marquer une facture émise comme "Encaissée" côté vendeur.
+  //
+  // Sémantique AFNOR : envoie fr:212 (Payment received) qui informe le PPF et
+  // l'acheteur que le vendeur a bien constaté le paiement. C'est le signal
+  // fiscal qui déclenche l'exigibilité TVA sur les prestations de services.
+  //
+  // Ce bouton n'apparaît QUE si :
+  //   - la facture est transmise à un PDP (pdp_transmission_id NOT NULL)
+  //   - l'acheteur a déjà approuvé ou signalé un paiement (facturx_status
+  //     = "accepted" ou "payment_sent")
+  //   - la facture n'est pas déjà "paid" en base
+  //
+  // Le B2C est encaissé automatiquement dans paSendInvoice (déjà en place
+  // depuis v8.57) — ce bouton est utile pour le B2B où l'encaissement est
+  // constaté manuellement par le vendeur (chèque en banque, virement, etc.).
+  async function markEncaissee(inv) {
+    const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
+    const dateStr = new Date().toLocaleDateString("fr-FR");
+    const client = inv.client_snapshot?.legal_name
+                 || inv.client_snapshot?.last_name
+                 || "l'acheteur";
+    if (!window.confirm(
+      "Marquer cette facture comme encaissée le " + dateStr + " ?\n\n"
+      + "Montant : " + fmtEUR(totalTtc) + "\n"
+      + "Client  : " + client + "\n\n"
+      + "IOBILL enverra fr:212 (Encaissée) à votre PDP. Le PPF et l'acheteur "
+      + "seront informés que le paiement est bien reçu. Cette action est "
+      + "irréversible dans le cycle de vie AFNOR."
+    )) return;
+
+    setActionLoading(`encaisser-${inv.id}`);
+    try {
+      // 1. Passe le status local à "paid" avec le montant total (paiement soldé)
+      const nowIso = new Date().toISOString();
+      const todayDate = nowIso.slice(0, 10);
+      await sb.update(token, "invoices", "id=eq." + inv.id, {
+        status: "paid",
+        paid_cents: totalTtc,
+        paid_at: todayDate,
+        updated_at: nowIso
+      });
+
+      // 2. Envoie fr:212 à SUPER PDP (fire-and-forget mais on attend le retour
+      // pour afficher un toast de confirmation exact)
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          action: "pa_invoice_encaisser",
+          payload: { invoice_id: inv.id }
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+
+      // 3. Patch en place le state local : status paid + facturx_status paid
+      setInvoices((prev) => prev.map((x) =>
+        x.id === inv.id
+          ? { ...x, status: "paid", paid_cents: totalTtc, paid_at: todayDate,
+              facturx_status: "paid" }
+          : x
+      ));
+
+      // Sync TVA en arrière-plan
+      syncVatCurrentPeriod(token, company);
+      capture("invoice_encaissee", { invoice_id: inv.id });
+
+      if (r.ok && j.ok !== false) {
+        if (j.skipped) {
+          showToast("Facture marquée encaissée (fr:212 déjà envoyé)");
+        } else {
+          showToast("Facture marquée encaissée · fr:212 transmis au PPF ✓");
+        }
+      } else {
+        // Le status local est passé à paid quand même, mais fr:212 a échoué
+        showToast(
+          "Facture marquée encaissée localement — l'envoi fr:212 à votre PDP a "
+          + "échoué. Vous pouvez retenter avec le bouton 🔄.",
+          "error"
+        );
+      }
+    } catch (e) {
+      showToast(e.message || "Erreur lors du marquage", "error");
+    }
+    setActionLoading(null);
+  }
+
   async function sendInvoice(inv) {
     setActionLoading(`send-${inv.id}`);
     try {
@@ -732,6 +818,30 @@ export function InvoicesListPage({ token, company }) {
               🔗 Copier le lien public
             </MenuItemInv>
           )}
+          {/* v8.57.9 — Marquer encaissée (B2B).
+              Visible uniquement si :
+                - facture transmise (pdp_transmission_id NOT NULL)
+                - acheteur a approuvé ou signalé un paiement
+                - facture pas déjà payée */}
+          {(() => {
+            const inv = openMenu.invoice;
+            const canEncaisser =
+              !!inv.pdp_transmission_id
+              && inv.status !== "paid"
+              && (inv.facturx_status === "accepted" || inv.facturx_status === "payment_sent");
+            if (!canEncaisser) return null;
+            return (
+              <>
+                <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+                <MenuItemInv
+                  onClick={() => { markEncaissee(inv); setOpenMenu(null); }}
+                  style={{ color: "#2ecc71" }}
+                >
+                  💰 Marquer encaissée (fr:212)
+                </MenuItemInv>
+              </>
+            );
+          })()}
           {openMenu.canDelete && (
             <>
               <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
