@@ -229,6 +229,24 @@ export async function paSendInvoice(company, payload) {
       event_type: "invoice.submitted", status: "deposee",
       message: "Facture " + (inv.number || "")
     });
+
+    // v8.57 — Auto-trigger fr:212 (encaissée) si la facture est déjà payée
+    // au moment de la transmission. Couvre le cas IOCAR B2C où la facture
+    // arrive dans IOBILL déjà soldée (paiement au comptoir + génération
+    // facture à la cession). SUPER PDP a besoin du fr:212 pour l'e-reporting
+    // paiement B2C et pour le cycle de vie B2B.
+    //
+    // Fire-and-forget : si le fr:212 échoue on ne bloque pas la transmission
+    // (elle a réussi). L'action pa_invoice_encaisser reste appelable
+    // manuellement par la suite pour rattraper.
+    if (inv.status === "paid" || inv.status === "encaissee") {
+      // Recharge la version fraîche avec le pdp_transmission_id posé
+      const invFresh = { ...inv, pdp_transmission_id: out.pa_document_id };
+      // Appelle la fonction sans await pour ne pas ralentir la réponse
+      paInvoiceEncaisser(company, { invoice_id: invFresh.id })
+        .catch((e) => console.warn("[PA] auto-fr:212 après transmission échoué :", e.message));
+    }
+
     return { ok: true, pa_document_id: out.pa_document_id };
   } catch (e) {
     await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: "rejected" });
@@ -385,7 +403,11 @@ export async function paInboxAck(company, payload) {
 
   const map = {
     approved: LIFECYCLE.approuvee,
-    paid: LIFECYCLE.encaissee,
+    paid: LIFECYCLE.paiement_tx,  // v8.57 — fr:211 : nous ACHETEUR, on transmet
+                                  // le paiement au fournisseur. Avant v8.57 :
+                                  // fr:212 (encaissée) qui est réservé au VENDEUR.
+                                  // Cf. AFNOR CDAR : fr:211 = Payment sent (acheteur),
+                                  // fr:212 = Payment received (vendeur).
     refused: LIFECYCLE.refusee    // v8.56 — était bloqué en 503 avant
   };
   const code = map[payload.status];
@@ -677,9 +699,104 @@ export async function paWebhook(companyId, rawBody, headers) {
   return { status: 200, body: { ok: true } };
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// v8.57 — fr:212 Encaissée (VENDEUR déclare avoir reçu le paiement)
+// ═══════════════════════════════════════════════════════════════════
+// Envoyé pour une facture ÉMISE passée à `paid`. Utilisé pour :
+//   1. Cycle de vie AFNOR B2B (le vendeur confirme au PPF et au client
+//      qu'il a reçu le paiement — signal fiscal important).
+//   2. E-reporting des factures B2C (SUPER PDP extrait automatiquement
+//      les données de paiement à partir de ce message).
+//
+// Idempotent : si `pa_ack_status = "paid"` sur la ligne pa_events la plus
+// récente pour cette facture → on skippe. Best-effort : erreurs loguées
+// mais l'API répond quand même OK pour le caller.
+//
+// Payload attendu : { invoice_id: <uuid> }
+export async function paInvoiceEncaisser(company, payload) {
+  const invoiceId = payload.invoice_id;
+  if (!invoiceId) throw fail(400, "invoice_id manquant");
+
+  const inv = await sbAdmin.selectOne("invoices", "id=eq." + invoiceId);
+  if (!inv) throw fail(404, "Facture introuvable");
+  if (inv.company_id !== company.id) throw fail(403, "Facture hors périmètre");
+
+  // Skip silencieux si la facture n'est pas transmise à un PDP.
+  // Ex : facture manuellement marquée payée avant même d'être transmise.
+  if (!inv.pdp_transmission_id) {
+    return { ok: true, skipped: "not_transmitted" };
+  }
+
+  // Idempotence : cherche un event.paid déjà émis pour cette facture.
+  const existingEvents = await sbAdmin.select("pa_events", {
+    filter: "invoice_id=eq." + inv.id + "&event_type=eq.invoice.paid",
+    limit: 1
+  });
+  if (Array.isArray(existingEvents) && existingEvents.length > 0) {
+    return { ok: true, skipped: "already_sent" };
+  }
+
+  // Date d'encaissement = MAX(payments.paid_at). Si aucun paiement enregistré
+  // (cas où la facture est marquée payée sans détail), fallback = aujourd'hui.
+  let paymentDate = new Date().toISOString().slice(0, 10);
+  const payments = await sbAdmin.select("payments", {
+    filter: "invoice_id=eq." + inv.id,
+    order: "paid_at.desc",
+    limit: 1
+  });
+  if (Array.isArray(payments) && payments.length > 0 && payments[0].paid_at) {
+    paymentDate = String(payments[0].paid_at).slice(0, 10);
+  }
+
+  // Montant encaissé = grand_total_cents si dispo (inclut débours),
+  // sinon total_ttc_cents. Divisé par 100 pour le format decimal string.
+  const totalCents = Number(inv.grand_total_cents || inv.total_ttc_cents || 0);
+  const amount = (totalCents / 100).toFixed(2);
+  const currency = inv.currency || "EUR";
+
+  // Structure reported_data selon OpenAPI SUPER PDP :
+  //   type_code = "MEN" (Montant encaissé net, MDT-207)
+  //   date      = MDT-219 date d'encaissement
+  const detail = {
+    reported_data: [{
+      type_code: "MEN",
+      amount,
+      currency_code: currency,
+      date: paymentDate
+    }]
+  };
+
+  const creds = await loadCreds(company.id);
+  const { impl, cfg } = getProvider(creds);
+  try {
+    // sendEvent accepte un objet { code, label } pour le motif mais ici on
+    // veut passer reported_data — on injecte via un helper direct côté adapter.
+    // v8.57 : sendEvent(cfg, id, status, details) où details peut être null.
+    // On passe le detail complet en objet spécial reconnu par l'adapter v8.57.
+    await impl.sendEvent(cfg, inv.pdp_transmission_id, LIFECYCLE.encaissee, detail);
+    await logEvent({
+      company_id: company.id, direction: "outbound", provider: creds.provider,
+      pa_document_id: inv.pdp_transmission_id, invoice_id: inv.id,
+      event_type: "invoice.paid", status: "paid",
+      message: "fr:212 encaissée · " + amount + " " + currency + " · " + paymentDate
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn("[PA] fr:212 échoué :", e.message);
+    // Best-effort : erreur loguée, l'appelant n'est pas bloqué.
+    return { ok: false, message: e.message };
+  }
+}
+
 export async function paPurchasePaid(company, payload) {
-  // v8.48.10 — Quand un achat provenant de la PA passe à "payé",
-  // on remonte l'événement fr:212 (Encaissée) au fournisseur.
+  // au fournisseur fr:211 (Paiement transmis). Avant v8.57 on envoyait à
+  // tort fr:212 (Encaissée) qui est réservé au VENDEUR. Cf. AFNOR CDAR :
+  //   fr:211 = Payment sent — l'ACHETEUR déclare "j'ai payé"
+  //   fr:212 = Payment received — le VENDEUR déclare "j'ai encaissé"
+  //
+  // Note : cette fonction est appelée en fire-and-forget depuis PurchasesPage
+  // et depuis la conversion. Elle est idempotente : si l'ack a déjà été
+  // envoyé, on skippe silencieusement.
   const purchaseId = payload.purchase_id;
   if (!purchaseId) throw fail(400, "purchase_id manquant");
 
@@ -698,18 +815,18 @@ export async function paPurchasePaid(company, payload) {
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
   try {
-    await impl.sendEvent(cfg, row.pa_document_id, LIFECYCLE.encaissee);
+    await impl.sendEvent(cfg, row.pa_document_id, LIFECYCLE.paiement_tx);
     await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
       pa_ack_status: "paid", pa_ack_sent_at: new Date().toISOString()
     });
     await logEvent({
       company_id: company.id, direction: "inbound", provider: creds.provider,
       pa_document_id: row.pa_document_id, inbound_id: row.id,
-      event_type: "invoice.paid", status: "paid"
+      event_type: "invoice.payment_sent", status: "paid"
     });
     return { ok: true };
   } catch (e) {
-    console.warn("[PA] fr:212 échoué :", e.message);
+    console.warn("[PA] fr:211 échoué :", e.message);
     return { ok: false, message: e.message };
   }
 }
@@ -720,7 +837,8 @@ export const PA_SUBSCRIBER_ACTIONS = new Set([
   "pa_config", "pa_config_save", "pa_request_change",
   "pa_validate", "pa_send", "pa_status",
   "pa_inbox_sync", "pa_inbox_ack", "pa_inbox_convert", "pa_inbox_file",
-  "pa_purchase_paid"
+  "pa_purchase_paid",
+  "pa_invoice_encaisser"   // v8.57 — fr:212 côté vendeur
 ]);
 
 export const PA_ADMIN_ACTIONS = new Set([
@@ -741,6 +859,7 @@ export async function handlePaAction({ action, payload, user, company, isAdmin }
     case "pa_inbox_convert":   return paInboxConvert(company, payload || {});
     case "pa_inbox_file":      return paInboxFile(company, payload || {});
     case "pa_purchase_paid":   return paPurchasePaid(company, payload || {});
+    case "pa_invoice_encaisser": return paInvoiceEncaisser(company, payload || {});
   }
   if (!isAdmin) throw fail(403, "Accès refusé (admin uniquement)");
   switch (action) {

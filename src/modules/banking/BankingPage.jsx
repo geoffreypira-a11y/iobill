@@ -163,6 +163,24 @@ export function BankingPage({ token, company }) {
           paid_cents: newPaid,
           status: newStatus
         });
+
+        // v8.57 — Cycle de vie AFNOR : si la facture est désormais soldée et
+        // qu'elle a été transmise à un PDP (pdp_transmission_id posé),
+        // on remonte fr:212 (Encaissée) au client et au PPF. Utilisé pour :
+        //   - B2B : signal fiscal au destinataire (fin du cycle de vie)
+        //   - B2C : e-reporting paiement automatique côté SUPER PDP
+        // Fire-and-forget : silencieux si la facture n'a pas encore été
+        // transmise (le serveur skippe avec { skipped: "not_transmitted" }).
+        if (newStatus === "paid") {
+          fetch("/api/admin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              action: "pa_invoice_encaisser",
+              payload: { invoice_id: invoiceId }
+            })
+          }).catch((e) => console.warn("[PA] fr:212 fire-and-forget échoué :", e?.message));
+        }
       }
       setTransactions(transactions.map((t) => (t.id === txId ? updated[0] : t)));
     }

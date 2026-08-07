@@ -135,6 +135,22 @@ export function PurchasesPage({ token, company }) {
       capture("purchase_status_changed", { from: p.status, to: newStatus });
       // Sync TVA en arrière-plan
       syncVatCurrentPeriod(token, company);
+
+      // v8.57 — Cycle de vie AFNOR : si l'achat provient d'une facture reçue
+      // via PA, on signale au fournisseur "fr:211 Paiement transmis". Cette
+      // route est appelée UNIQUEMENT si l'achat a un pa_document_id lié (le
+      // serveur skippe silencieusement pour les autres). Fire-and-forget :
+      // l'échec côté SUPER PDP ne bloque pas la mise à jour locale.
+      if (newStatus === "paid") {
+        fetch("/api/admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            action: "pa_purchase_paid",
+            payload: { purchase_id: p.id }
+          })
+        }).catch((e) => console.warn("[PA] fr:211 fire-and-forget échoué :", e?.message));
+      }
     } else {
       showToast("Erreur mise à jour", "error");
     }
@@ -674,6 +690,21 @@ function PartialPaymentModal({ token, company, purchase, onClose, onSaved }) {
       capture("purchase_partial_payment", { amount: amountCents, fully_paid: willBeFullyPaid });
       // Sync TVA en arrière-plan
       syncVatCurrentPeriod(token, company);
+
+      // v8.57 — Si le solde vient d'être payé intégralement, on remonte
+      // fr:211 (Paiement transmis) au fournisseur via SUPER PDP.
+      // Fire-and-forget : silencieux si l'achat n'est pas issu de la PA.
+      if (willBeFullyPaid) {
+        fetch("/api/admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            action: "pa_purchase_paid",
+            payload: { purchase_id: purchase.id }
+          })
+        }).catch((e) => console.warn("[PA] fr:211 fire-and-forget échoué :", e?.message));
+      }
+
       onSaved();
     } else {
       setErr("Erreur d'enregistrement");

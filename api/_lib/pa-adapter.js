@@ -238,20 +238,30 @@ const superpdp = {
       status_code: statusCode
     };
 
-    // Extrait un code MDT-113 + libellé libre depuis l'argument details.
+    // Extrait un code MDT-113 + libellé libre OU un reported_data
+    // depuis l'argument details.
+    // Formes acceptées :
+    //   - string : label libre → note.contents seul
+    //   - { code, label } : refus fr:210 avec code MDT-113
+    //   - { reported_data: [...] } : v8.57 — encaissement fr:212 (dates, amounts)
     if (details) {
-      let code = null, label = null;
-      if (typeof details === "string") {
-        label = details.slice(0, 500);
-      } else if (typeof details === "object") {
-        code = details.code ? String(details.code).trim() : null;
-        label = details.label ? String(details.label).slice(0, 500) : null;
-      }
-      if (code || label) {
-        const detail = {};
-        if (code) detail.reason = code;
-        if (label) detail.notes = [{ contents: [{ content: label }] }];
-        body.details = [detail];
+      // v8.57 — Cas reported_data (fr:212 encaissée typiquement)
+      if (typeof details === "object" && Array.isArray(details.reported_data)) {
+        body.details = [{ reported_data: details.reported_data }];
+      } else {
+        let code = null, label = null;
+        if (typeof details === "string") {
+          label = details.slice(0, 500);
+        } else if (typeof details === "object") {
+          code = details.code ? String(details.code).trim() : null;
+          label = details.label ? String(details.label).slice(0, 500) : null;
+        }
+        if (code || label) {
+          const detail = {};
+          if (code) detail.reason = code;
+          if (label) detail.notes = [{ contents: [{ content: label }] }];
+          body.details = [detail];
+        }
       }
     }
 
