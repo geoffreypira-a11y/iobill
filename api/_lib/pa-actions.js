@@ -371,30 +371,51 @@ export async function paInboxSync(company) {
 }
 
 export async function paInboxAck(company, payload) {
-  // v8.48.13 — Le refus AFNOR (fr:210) exige un MDT-113 dont on n'a
-  // pas encore le format exact JSON attendu par SUPER PDP. Le support
-  // a été contacté. En attendant, on bloque l'action côté API en plus
-  // de l'UI, avec un message clair.
-  if (payload.status === "refused") {
-    throw fail(503,
-      "Le refus AFNOR est temporairement indisponible. Le support SUPER PDP a été contacté pour préciser la structure du MDT-113 (code motif de refus). La comptabilisation reste disponible."
-    );
-  }
+  // v8.56 — Structure MDT-113 officielle documentée par SUPER PDP :
+  //   POST /v1.beta/invoice_events
+  //   {
+  //     "invoice_id": <int>,
+  //     "status_code": "fr:210",           // Refus
+  //     "details": [{
+  //       "reason": "IC001",                // code MDT-113 (AFNOR XP Z12-012)
+  //       "notes": [{"contents": [{"content": "libellé libre"}]}]
+  //     }]
+  //   }
+  // Le champ `reason` est une STRING SIMPLE, pas un objet {code,label}.
 
-  const map = { approved: LIFECYCLE.approuvee, paid: LIFECYCLE.encaissee };
+  const map = {
+    approved: LIFECYCLE.approuvee,
+    paid: LIFECYCLE.encaissee,
+    refused: LIFECYCLE.refusee    // v8.56 — était bloqué en 503 avant
+  };
   const code = map[payload.status];
-  if (!code) throw fail(400, "status doit être approved | paid");
+  if (!code) throw fail(400, "status doit être approved | paid | refused");
+
+  // v8.56 — Le refus AFNOR (fr:210) impose un code motif MDT-113
+  // (règle BR-FR-CDV-15). Sans motif, SUPER PDP rejette la requête.
+  if (payload.status === "refused") {
+    const reason = payload.reason;
+    const hasCode = reason && (typeof reason === "string"
+      ? reason.trim().length > 0
+      : reason.code && String(reason.code).trim().length > 0);
+    if (!hasCode) {
+      throw fail(400, "Le refus nécessite un code motif MDT-113 (AFNOR XP Z12-012)");
+    }
+  }
 
   const row = await sbAdmin.selectOne("pa_inbound_invoices", "id=eq." + payload.inbound_id);
   if (!row || row.company_id !== company.id) throw fail(404, "Facture entrante introuvable");
 
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
-  await impl.sendEvent(cfg, row.pa_document_id, code);
+  await impl.sendEvent(cfg, row.pa_document_id, code, payload.reason);
 
+  // v8.56 — Statut local reflète l'action réelle (refused ≠ approved).
+  const localStatus = payload.status === "refused" ? "refused" : "approved";
   await sbAdmin.update("pa_inbound_invoices", "id=eq." + row.id, {
-    status: "approved",
-    pa_ack_status: payload.status, pa_ack_sent_at: new Date().toISOString()
+    status: localStatus,
+    pa_ack_status: payload.status,
+    pa_ack_sent_at: new Date().toISOString()
   });
   await logEvent({
     company_id: company.id, direction: "inbound", provider: creds.provider,

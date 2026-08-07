@@ -211,70 +211,57 @@ const superpdp = {
   },
 
   /** Remonte un statut de cycle de vie au fournisseur.
-   * details peut être :
-   *   - une string : label libre
-   *   - un objet { code, label } : pour les refus (fr:210), code obligatoire.
-   *     Codes AFNOR : IC001 (facture erronée), IC003 (destinataire incorrect),
-   *     IC005 (montant erroné), IC006 (TVA erronée), IC008 (autre motif).
    *
-   * v8.48.9 — SUPER PDP renvoie une erreur schéma AFNOR (MDT-113
-   * ProcessConditionCode) quand le motif n'est pas au bon endroit. Comme
-   * leur doc n'est pas publique, on envoie plusieurs variantes de champs
-   * en même temps ; SUPER PDP prendra celui qu'il connaît.
+   * v8.56 — Structure OFFICIELLE documentée dans l'OpenAPI SUPER PDP :
+   *   POST /v1.beta/invoice_events
+   *   {
+   *     "invoice_id": <int>,
+   *     "status_code": "fr:210",
+   *     "details": [{
+   *       "reason": "<code MDT-113>",       // string simple, PAS un objet
+   *       "notes": [{                       // optionnel
+   *         "contents": [{"content": "libellé libre"}]
+   *       }]
+   *     }]
+   *   }
+   *
+   * `details` est obligatoire pour les statuts avec motif AFNOR :
+   *   fr:206 (approuvée partiellement), fr:208 (en litige),
+   *   fr:210 (refusée), fr:209 (suspendue), fr:213 (rejetée).
+   * Cf. AFNOR XP Z12-012 annexe A pour la liste des codes MDT-113.
+   *
+   * @param details string simple | { code, label } | null.
    */
   async sendEvent(cfg, paDocId, statusCode, details) {
-    let code = null, label = null;
-    if (details) {
-      if (typeof details === "object" && details.code) {
-        code = details.code;
-        label = String(details.label || "").slice(0, 500);
-      } else {
-        code = "IC008"; // motif générique si simple string
-        label = String(details).slice(0, 500);
-      }
-    }
-
     const body = {
       invoice_id: Number(paDocId),
       status_code: statusCode
     };
 
-    if (code) {
-      // v8.48.11 — L'erreur SUPER PDP mentionne le chemin XPath AFNOR :
-      //   ReferenceReferencedDocument/ProcessConditionCode
-      // On tente à la fois les variantes plates ET les variantes imbriquées.
-      body.details = [{ code, label }];
-      body.reason = { code, label };
-      body.reason_code = code;
-      body.reason_label = label;
-      body.motif = { code, label };
-      body.motif_code = code;
-      body.motif_label = label;
-      body.process_condition_code = code;
-      body.processConditionCode = code;
-      // Structure imbriquée qui suit le XPath AFNOR
-      body.reference_referenced_document = {
-        process_condition_code: code,
-        processConditionCode: code
-      };
-      body.referenceReferencedDocument = {
-        processConditionCode: code
-      };
-      body.acknowledgement_document = {
-        reference_referenced_document: {
-          process_condition_code: code
-        }
-      };
+    // Extrait un code MDT-113 + libellé libre depuis l'argument details.
+    if (details) {
+      let code = null, label = null;
+      if (typeof details === "string") {
+        label = details.slice(0, 500);
+      } else if (typeof details === "object") {
+        code = details.code ? String(details.code).trim() : null;
+        label = details.label ? String(details.label).slice(0, 500) : null;
+      }
+      if (code || label) {
+        const detail = {};
+        if (code) detail.reason = code;
+        if (label) detail.notes = [{ contents: [{ content: label }] }];
+        body.details = [detail];
+      }
     }
 
-    // v8.48.10 — Log complet pour debug le format attendu par SUPER PDP.
-    const bodyStr = JSON.stringify(body);
-    console.log("[PA] sendEvent POST " + statusCode + " body=" + bodyStr);
+    // Log réduit — plus de bruteforce de 10 variantes, on suit l'OpenAPI.
+    console.log("[PA] sendEvent POST " + statusCode + " body=" + JSON.stringify(body));
 
     const r = await fetch(cfg.base_url + "/v1.beta/invoice_events", {
       method: "POST",
       headers: await this._h(cfg, { "Content-Type": "application/json" }),
-      body: bodyStr
+      body: JSON.stringify(body)
     });
     const respTxt = await r.text();
     console.log("[PA] sendEvent RESP " + r.status + " " + respTxt.slice(0, 800));

@@ -25,6 +25,7 @@ export function PaInboxSection({ token, company, onConverted }) {
   const [busyId, setBusyId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [preview, setPreview] = useState(null); // v8.48.3 : modale PDF
+  const [refuseModal, setRefuseModal] = useState(null); // v8.56 : modale refus
 
   const load = useCallback(async () => {
     try {
@@ -97,37 +98,20 @@ export function PaInboxSection({ token, company, onConverted }) {
     finally { setBusyId(null); }
   }
 
+  // v8.56 — UX refus refondue : plutôt qu'un window.prompt cheap qui
+  // rendait la saisie du motif MDT-113 douloureuse (et casse l'affichage
+  // sur mobile), on ouvre un modal propre avec dropdown des codes et
+  // champ commentaire libre. Le prompt reste utilisé pour l'approbation
+  // et l'encaissement qui n'exigent pas de motif.
   async function ack(row, status) {
-    let reason = null;
     if (status === "refused") {
-      // v8.48.8 — SUPER PDP exige un code de motif AFNOR pour tout refus.
-      // Codes autorisés :
-      //   IC001 = Facture erronée
-      //   IC003 = Destinataire incorrect
-      //   IC005 = Montant erroné
-      //   IC006 = TVA erronée
-      //   IC008 = Autre motif
-      const CODES = [
-        ["IC001", "Facture erronée"],
-        ["IC003", "Destinataire incorrect"],
-        ["IC005", "Montant erroné"],
-        ["IC006", "TVA erronée"],
-        ["IC008", "Autre motif"]
-      ];
-      const menu = CODES.map((c, i) => (i + 1) + ". " + c[1]).join("\n");
-      const pick = window.prompt("Motif du refus (transmis à " + (row.supplier_name || "l'expéditeur") + ") :\n\n" + menu + "\n\nTapez le numéro (1-5) :");
-      if (pick === null) return;
-      const idx = parseInt(pick, 10) - 1;
-      if (isNaN(idx) || !CODES[idx]) {
-        setMsg({ t: "err", m: "Choix invalide" });
-        return;
-      }
-      const code = CODES[idx][0];
-      const defaultLabel = CODES[idx][1];
-      const label = window.prompt("Précision (facultatif) :", defaultLabel);
-      if (label === null) return;
-      reason = { code, label: label.trim() || defaultLabel };
+      setRefuseModal({ row });
+      return;
     }
+    await doAck(row, status, null);
+  }
+
+  async function doAck(row, status, reason) {
     setBusyId(row.id); setMsg(null);
     try {
       await call("pa_inbox_ack", { inbound_id: row.id, status, reason });
@@ -306,6 +290,128 @@ export function PaInboxSection({ token, company, onConverted }) {
           </div>
         </div>
       )}
+
+      {/* v8.56 — Modale refus : dropdown code motif MDT-113 + commentaire */}
+      {refuseModal && (
+        <RefuseModal
+          row={refuseModal.row}
+          onCancel={() => setRefuseModal(null)}
+          onConfirm={async (reason) => {
+            setRefuseModal(null);
+            await doAck(refuseModal.row, "refused", reason);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * v8.56 — Modale de refus AFNOR.
+ * Codes MDT-113 courants (annexe A XP Z12-012). La liste n'est pas
+ * exhaustive : l'utilisateur peut aussi taper un code libre en fallback
+ * pour couvrir les cas edge non prévus.
+ */
+function RefuseModal({ row, onCancel, onConfirm }) {
+  const CODES = [
+    ["IC001", "Facture erronée"],
+    ["IC003", "Destinataire incorrect"],
+    ["IC005", "Montant erroné"],
+    ["IC006", "TVA erronée"],
+    ["IC007", "Marchandise/prestation non conforme"],
+    ["IC008", "Autre motif"]
+  ];
+  const [code, setCode] = React.useState(CODES[0][0]);
+  const [label, setLabel] = React.useState("");
+  const [customCode, setCustomCode] = React.useState("");
+  const [useCustom, setUseCustom] = React.useState(false);
+
+  const finalCode = useCustom ? customCode.trim().toUpperCase() : code;
+  const defaultLabelForCode = CODES.find(([c]) => c === code)?.[1] || "";
+  const finalLabel = label.trim() || defaultLabelForCode;
+  const canSubmit = finalCode.length > 0;
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="modal modal-md" style={{ maxWidth: 520 }}>
+        <div className="modal-hd">
+          <div className="modal-title">❌ Refuser la facture</div>
+          <button className="close-btn" onClick={onCancel} aria-label="Fermer">×</button>
+        </div>
+        <div className="modal-body" style={{ padding: 20 }}>
+          <div style={{ fontSize: 13, marginBottom: 4 }}>
+            Destinataire du refus : <strong>{row.supplier_name || "Fournisseur inconnu"}</strong>
+          </div>
+          {row.invoice_number && (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
+              Facture {row.invoice_number} · {fmtEUR(row.total_ttc_cents)} TTC
+            </div>
+          )}
+
+          <div style={{ padding: "10px 12px", background: "rgba(229,73,73,0.08)",
+              border: "1px solid rgba(229,73,73,0.25)", borderRadius: 8,
+              fontSize: 12, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
+            Un motif est obligatoire (code MDT-113, règle AFNOR BR-FR-CDV-15).
+            Le refus est transmis au fournisseur et à l'administration ;
+            la facture ne pourra plus être encaissée.
+          </div>
+
+          {!useCustom ? (
+            <>
+              <label className="form-label">Motif du refus *</label>
+              <select className="form-input" value={code} onChange={(e) => setCode(e.target.value)}
+                style={{ marginBottom: 12 }}>
+                {CODES.map(([c, l]) => <option key={c} value={c}>{c} — {l}</option>)}
+              </select>
+              <div style={{ fontSize: 11, marginBottom: 14 }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); setUseCustom(true); }}
+                  style={{ color: "var(--gold)" }}>
+                  Saisir un autre code MDT-113 →
+                </a>
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="form-label">Code MDT-113 personnalisé *</label>
+              <input className="form-input" value={customCode}
+                onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
+                placeholder="Ex : IC012, IR03, MDT-EX1"
+                style={{ marginBottom: 8 }} />
+              <div style={{ fontSize: 11, marginBottom: 14 }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); setUseCustom(false); }}
+                  style={{ color: "var(--gold)" }}>
+                  ← Revenir à la liste des codes standard
+                </a>
+                {"  ·  "}
+                <span style={{ color: "var(--muted)" }}>
+                  Liste complète : annexe A XP Z12-012 (AFNOR)
+                </span>
+              </div>
+            </>
+          )}
+
+          <label className="form-label">Précision (facultatif)</label>
+          <textarea className="form-input" rows={3} value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={defaultLabelForCode || "Commentaire libre transmis au fournisseur"}
+            maxLength={500}
+            style={{ marginBottom: 4, resize: "vertical" }} />
+          <div style={{ fontSize: 10, color: "var(--muted)", textAlign: "right" }}>
+            {label.length} / 500
+          </div>
+        </div>
+        <div className="modal-foot" style={{ padding: 16, gap: 8 }}>
+          <button className="btn btn-ghost" onClick={onCancel}>Annuler</button>
+          <button className="btn btn-danger"
+            disabled={!canSubmit}
+            onClick={() => onConfirm({ code: finalCode, label: finalLabel })}
+            style={{ background: canSubmit ? "var(--red, #e54949)" : undefined,
+              color: canSubmit ? "#fff" : undefined,
+              opacity: canSubmit ? 1 : 0.5 }}>
+            ❌ Confirmer le refus
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
