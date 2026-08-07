@@ -14,6 +14,9 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
     last_name: client?.last_name || "",
     siret: client?.siret || "",
     vat_number: client?.vat_number || "",
+    // v8.55 — Adresse électronique PPF France (BT-49, scheme 0225).
+    // Facultatif. Format : SIREN, SIREN_SIRET, SIREN_SUFFIXE.
+    peppol_address: client?.peppol_address || "",
     email: client?.email || "",
     phone: client?.phone || "",
     contact_person: client?.contact_person || "",
@@ -44,6 +47,15 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
       setErr("SIRET (14 chiffres) ou SIREN (9 chiffres) attendu");
       return;
     }
+    // v8.55 — Validation adresse Peppol : SIREN (9 chiffres) optionnellement
+    // suivi d'un suffixe (_A-Za-z0-9_ max 100 caractères)
+    if (data.peppol_address) {
+      const ppl = String(data.peppol_address).trim();
+      if (!/^\d{9}(_[A-Za-z0-9_]{1,100})?$/.test(ppl)) {
+        setErr("Adresse Peppol invalide. Format : SIREN ou SIREN_SUFFIXE (ex: 853322915 ou 853322915_ETABLBORDEAUX)");
+        return;
+      }
+    }
 
     setSaving(true);
     const payload = {
@@ -53,6 +65,8 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
       last_name: type === "individual" ? data.last_name.trim() : null,
       siret: data.siret.replace(/\s/g, "") || null,
       vat_number: data.vat_number.trim() || null,
+      // v8.55 — Adresse électronique PPF (BT-49, scheme 0225)
+      peppol_address: data.peppol_address ? data.peppol_address.trim() : null,
       email: data.email.trim() || null,
       phone: data.phone.trim() || null,
       contact_person: data.contact_person.trim() || null,
@@ -125,6 +139,33 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
             <Field label="Email" value={data.email} onChange={(v) => update("email", v)} />
             <Field label="Téléphone" value={data.phone} onChange={(v) => update("phone", v)} />
           </div>
+
+          {/* v8.55 — Adresse électronique PPF (facturation électronique 2026) */}
+          {type === "company" && (
+            <>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "var(--muted)", marginTop: 14, marginBottom: 8 }}>
+                Facturation électronique (PPF)
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 6 }}>
+                <div className="form-row">
+                  <label className="form-label">
+                    Adresse électronique PPF (facultatif)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={data.peppol_address}
+                    onChange={(e) => update("peppol_address", e.target.value.trim())}
+                    placeholder="Laisser vide = SIREN utilisé automatiquement"
+                    style={{ fontFamily: "DM Mono, monospace" }}
+                  />
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, lineHeight: 1.5 }}>
+                    Adresse d'annuaire PPF où la facture sera livrée. Dans 99% des cas, <strong>laisser vide</strong> — IOBILL utilisera le SIREN. À renseigner uniquement si le client vous a communiqué une adresse spécifique par établissement ou service. Format : <code>SIREN</code>, <code>SIREN_SIRET</code>, <code>SIREN_ETABLXXX</code>. Scheme 0225 ajouté automatiquement.
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Adresse */}
           <div style={{ fontFamily: "Syne, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "var(--muted)", marginTop: 14, marginBottom: 8 }}>

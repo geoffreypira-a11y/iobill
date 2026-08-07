@@ -453,13 +453,23 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(co.city)}</ram:CityName>
           <ram:CountryID>${x(co.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.29 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
-             SIREN avec schemeID="0009" (Peppol FR) pour du B2B propre. -->
+        <!-- v8.55 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
+             Scheme officiel FR 2026 = 0225 (AFNOR XP Z12-014). C'est l'adresse
+             d'annuaire PPF où le vendeur reçoit ses statuts de cycle de vie.
+             Priorité : co.peppol_address (rempli manuellement) > SIREN par défaut.
+             Format : SIREN, SIREN_SIRET, SIREN_SUFFIXE. Fallback : email scheme EM.
+             Ancien code v8.48.29 utilisait 0009 (SIRET Peppol historique) : rejeté
+             par la réforme française 2026 et par SUPER PDP. -->
         ${(() => {
           const rawSiret = String(co.siret || "").replace(/\s/g, "");
           const siren = rawSiret.length === 14 ? rawSiret.slice(0, 9) : (rawSiret.length === 9 ? rawSiret : null);
+          // Adresse Peppol manuelle (établissement, sous-adresse, ID sandbox…)
+          const manual = String(co.peppol_address || "").trim();
+          if (manual) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(manual)}</ram:URIID></ram:URIUniversalCommunication>`;
+          }
           if (siren) {
-            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
           return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(co.email || "contact@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
         })()}
@@ -483,10 +493,15 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(cs.city)}</ram:CityName>
           <ram:CountryID>${x(cs.country || "FR")}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.29 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
-             ATTENTION : schemeID="EM" (email) déclenche la classification B2C
-             chez SUPER PDP. Pour du B2B on utilise le SIREN avec schemeID="0009".
-             SUPER PDP règle : "adresse email avec scheme EM ⇒ B2C". -->
+        <!-- v8.55 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
+             Scheme officiel FR 2026 = 0225 (AFNOR XP Z12-014). C'est l'adresse
+             d'annuaire PPF où la facture doit être livrée. Sans elle correctement
+             renseignée, le PPF/PDP ne peut pas router la facture au bon destinataire.
+             Priorité : cs.peppol_address (rempli manuellement dans fiche client) >
+             SIREN par défaut. Format : SIREN, SIREN_SIRET, SIREN_SUFFIXE.
+             B2C (particulier) : email scheme EM comme avant.
+             Ancien code v8.48.29 utilisait 0009 (SIRET Peppol historique) : rejeté
+             par la réforme française 2026 et par SUPER PDP. -->
         ${(() => {
           const isB2C = cs.client_type === "individual";
           const rawSiret = String(cs.siret || "").replace(/\s/g, "");
@@ -495,11 +510,16 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
             const email = cs.email || cs.contact_email || "particulier@iobill.online";
             return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(email)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
-          // B2B : SIREN avec scheme 0009 (identifiant Peppol légal FR)
-          if (siren) {
-            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          // Adresse Peppol manuelle si renseignée (établissement, sous-adresse, ID sandbox…)
+          const manual = String(cs.peppol_address || "").trim();
+          if (manual) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(manual)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
-          // Fallback si aucun SIREN : email formel (peut re-déclencher B2C mais BR-FR-12 exige BT-49)
+          // B2B par défaut : SIREN avec scheme 0225 (annuaire PPF France)
+          if (siren) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          }
+          // Fallback si aucun SIREN et pas d'adresse Peppol : email formel
           return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(cs.email || "client@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
         })()}
         ${cs.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(cs.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}

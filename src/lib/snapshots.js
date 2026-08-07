@@ -20,6 +20,9 @@ export function buildClientSnapshot(client) {
     postal_code: client.postal_code,
     city: client.city,
     country: client.country,
+    // v8.55 — Adresse électronique PPF France (BT-49, scheme 0225).
+    // Facultatif : si vide, IOBILL utilisera le SIREN du client.
+    peppol_address: client.peppol_address || null,
     snapshot_at: new Date().toISOString()
   };
 }
@@ -47,6 +50,9 @@ export function buildCompanySnapshot(company) {
     bic: company.bic || null,
     bank_name: company.bank_name || null,
     vat_regime: company.vat_regime,
+    // v8.55 — Adresse électronique PPF France (BT-34, scheme 0225).
+    // Facultatif : si vide, IOBILL utilisera le SIREN de la société.
+    peppol_address: company.peppol_address || null,
     snapshot_at: new Date().toISOString()
   };
 }

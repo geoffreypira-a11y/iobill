@@ -129,6 +129,14 @@ function ProfileTab({ token, company, setCompany }) {
     if (!data.legal_name?.trim()) { setMsg("Raison sociale requise"); return; }
     if (data.email && !isEmail(data.email)) { setMsg("Email invalide"); return; }
     if (data.siret && !isSiret(data.siret)) { setMsg("SIRET invalide (14 chiffres)"); return; }
+    // v8.55 — Validation adresse Peppol
+    if (data.peppol_address) {
+      const ppl = String(data.peppol_address).trim();
+      if (!/^\d{9}(_[A-Za-z0-9_]{1,100})?$/.test(ppl)) {
+        setMsg("Adresse Peppol invalide (attendu : SIREN ou SIREN_SUFFIXE)");
+        return;
+      }
+    }
     setSaving(true);
     const { id, user_id, created_at, updated_at, source_app, external_ref,
             external_managed_fields, ...payload } = data;
@@ -192,6 +200,26 @@ function ProfileTab({ token, company, setCompany }) {
         <Field label={fieldLabel("SIRET", "siret", managedFields, sourceLabel)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
         <Field label="N° RCS" value={data.rcs} onChange={(v) => update("rcs", v)} />
         <Field label={fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceLabel)} value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
+      </div>
+
+      {/* v8.55 — Adresse électronique PPF (BT-34) */}
+      <SectionTitle style={{ marginTop: 24 }}>Facturation électronique (PPF)</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 6 }}>
+        <div className="form-row">
+          <label className="form-label">Adresse électronique PPF (facultatif)</label>
+          <input
+            type="text"
+            className="form-input"
+            value={data.peppol_address || ""}
+            onChange={(e) => update("peppol_address", e.target.value.trim())}
+            placeholder="Laisser vide = SIREN utilisé automatiquement"
+            style={{ fontFamily: "DM Mono, monospace" }}
+          />
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, lineHeight: 1.5 }}>
+            Votre adresse d'annuaire PPF où vous recevez les statuts de cycle de vie
+            (accusé de dépôt, refus, encaissement) de vos factures émises. Dans 99% des cas, <strong>laisser vide</strong> — IOBILL utilisera votre SIREN. À renseigner uniquement si vous avez plusieurs établissements ou si votre PA vous a communiqué un identifiant technique spécifique. Format : <code>SIREN</code>, <code>SIREN_SIRET</code>, <code>SIREN_SUFFIXE</code>. Scheme 0225 ajouté automatiquement.
+          </div>
+        </div>
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Adresse</SectionTitle>
