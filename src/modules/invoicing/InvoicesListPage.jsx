@@ -118,56 +118,20 @@ export function InvoicesListPage({ token, company }) {
     };
   }, [token, company.id]);
 
-  // v8.57.2 — Polling automatique du statut PDP toutes les 5 s.
+  // v8.57.6 — Polling automatique DÉSACTIVÉ temporairement.
   //
-  // Cible : factures transmises RÉCEMMENT (moins de 15 min) et dont le statut
-  // de cycle de vie n'est pas encore terminal ("accepted" / "rejected"). Ça
-  // couvre les tests sandbox où l'utilisateur transmet une facture et attend
-  // le retour du destinataire. Au-delà de 15 min, on considère que le suivi
-  // en temps réel n'est plus critique — le bouton 🔄 manuel reste dispo.
+  // Le polling déclenchait des UPDATE sur invoices via paInvoiceStatus,
+  // ce qui réveillait le Realtime Supabase qui refetchait toute la liste,
+  // ce qui écrasait le state actionLoading côté client — résultat : le
+  // bouton "Transmettre" restait figé et la transmission ne partait pas.
   //
-  // Limite dure : max 5 factures pollées par tick (protection anti-rate-limit).
-  // Rien envoyé si aucune facture ne matche → aucune charge quand tout est
-  // stabilisé.
+  // Le bouton manuel 🔄 sur chaque facture reste fonctionnel. En attendant
+  // v8.58 avec webhook SUPER PDP push (au lieu du polling), utiliser le
+  // bouton manuel pour rafraîchir le statut d'une facture précise.
   //
-  // La liste `invoices` est lue via une ref pour garder le timer stable
-  // (sinon setInterval serait recréé à chaque refresh, brisant le polling).
+  // Ref garde de l'ancien code, on garde le hook vide pour ne rien casser.
   const invoicesRef = useRef(invoices);
   useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
-
-  useEffect(() => {
-    let alive = true;
-    let running = false;
-    const RECENT_MS = 15 * 60 * 1000; // 15 min
-    const BATCH_MAX = 5;
-
-    async function tick() {
-      if (!alive || running) return;
-      if (document.visibilityState !== "visible") return; // pause si onglet caché
-      const now = Date.now();
-      const toRefresh = (invoicesRef.current || [])
-        .filter((inv) => {
-          if (!inv.pdp_transmission_id) return false;
-          const fx = inv.facturx_status || "transmitted";
-          if (fx === "accepted" || fx === "rejected") return false;
-          const t = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).getTime() : 0;
-          return t > 0 && (now - t) < RECENT_MS;
-        })
-        .slice(0, BATCH_MAX);
-      if (toRefresh.length === 0) return;
-      running = true;
-      try {
-        for (const inv of toRefresh) {
-          if (!alive) return;
-          await refreshInvoiceStatus(inv, { silent: true });
-        }
-      } finally { running = false; }
-    }
-
-    const pollTimer = setInterval(tick, 5000);
-    return () => { alive = false; clearInterval(pollTimer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, company.id]);
 
   function effectiveStatus(inv) {
     if (isInvoiceOverdue(inv)) return "overdue";
