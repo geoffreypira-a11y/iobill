@@ -296,10 +296,14 @@ export function InvoicesListPage({ token, company }) {
 
   // v8.57.2 — Rafraîchit le statut d'une facture depuis SUPER PDP.
   // Utilisé par le bouton 🔄 manuel ET par le polling auto (toutes les 5s).
-  // Le paramètre `silent` désactive les toasts (utile pour le polling qui
-  // ne doit pas spammer l'utilisateur). Le paramètre `force` bypasse le
-  // guard de non-changement (le bouton force le refresh même si le statut
-  // n'a pas bougé).
+  //
+  // v8.57.3 — Ne recharge PLUS toute la liste des factures pour éviter le
+  // sautillement visuel. À la place, on patche uniquement le champ
+  // `facturx_status` de la ligne concernée dans le state local. Le Realtime
+  // Supabase confirmera de son côté sans casser la position visuelle.
+  //
+  // - `silent` : désactive les toasts (utile pour le polling)
+  // - `force`  : bypasse le guard de non-changement (le bouton force le refresh)
   async function refreshInvoiceStatus(inv, { silent = false, force = false } = {}) {
     if (!inv?.pdp_transmission_id) return null;
     if (!silent) setActionLoading(`refresh-${inv.id}`);
@@ -316,8 +320,14 @@ export function InvoicesListPage({ token, company }) {
       }
       const oldFx = inv.facturx_status;
       const newFx = j.facturx_status;
-      // Recharge la liste pour refléter le nouveau statut visuellement
-      await refreshInvoices();
+
+      // v8.57.3 — Patch en place uniquement si changement. Zéro sautillement.
+      if (newFx && newFx !== oldFx) {
+        setInvoices((prev) => prev.map((x) =>
+          x.id === inv.id ? { ...x, facturx_status: newFx } : x
+        ));
+      }
+
       if (!silent) {
         const labelMap = {
           transmitted: "Transmise",

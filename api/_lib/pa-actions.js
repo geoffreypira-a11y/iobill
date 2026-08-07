@@ -266,14 +266,49 @@ export async function paInvoiceStatus(company, payload) {
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
   const j = await impl.getInvoice(cfg, inv.pdp_transmission_id);
-  const code = j.status_code || j.latest_status_code || null;
 
-  const fx = code === LIFECYCLE.refusee || code === LIFECYCLE.rejetee ? "rejected"
-           : code === LIFECYCLE.approuvee || code === LIFECYCLE.encaissee ? "accepted"
+  // v8.57.3 — SUPER PDP renvoie un tableau `events[]` où chaque event a un
+  // `status_code` et un `created_at`. Il N'Y A PAS de champ `status_code`
+  // au niveau racine. Avant v8.57.3 on lisait `j.status_code` qui était
+  // toujours undefined → le fx restait "transmitted" éternellement.
+  //
+  // Nouvelle logique : parcourir tous les events dans l'ordre chronologique
+  // et retenir le statut le plus "avancé" du cycle de vie :
+  //   fr:210 (refus) > fr:213 (rejet) > fr:212 (encaissée) >
+  //   fr:205 (approuvée) > tout le reste = "transmitted"
+  const events = Array.isArray(j.events) ? j.events : [];
+  let code = null;
+  let latestFinalCode = null;
+
+  // Priorité aux statuts terminaux (refus, rejet). Sinon on prend le plus récent.
+  const TERMINAL_REFUSE = new Set([LIFECYCLE.refusee, LIFECYCLE.rejetee]);
+  const TERMINAL_ACCEPT = new Set([LIFECYCLE.approuvee, LIFECYCLE.encaissee]);
+
+  for (const e of events) {
+    const c = e?.status_code;
+    if (!c) continue;
+    if (TERMINAL_REFUSE.has(c)) { latestFinalCode = c; break; } // stop dès qu'on voit un refus
+    if (TERMINAL_ACCEPT.has(c)) { latestFinalCode = c; }        // on garde le dernier accept
+  }
+  // Fallback : dernier event en date pour affichage/debug
+  if (!latestFinalCode && events.length > 0) {
+    const sorted = [...events].sort((a, b) =>
+      String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    code = sorted[0]?.status_code || null;
+  } else {
+    code = latestFinalCode;
+  }
+
+  const fx = TERMINAL_REFUSE.has(code) ? "rejected"
+           : TERMINAL_ACCEPT.has(code) ? "accepted"
            : "transmitted";
-  await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: fx });
 
-  return { ok: true, status_code: code, facturx_status: fx, raw: j };
+  // Ne met à jour que si le statut a changé (économise Realtime/UI churn)
+  if (fx !== inv.facturx_status) {
+    await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: fx });
+  }
+
+  return { ok: true, status_code: code, facturx_status: fx, events_count: events.length };
 }
 
 /* ─── Réception ─────────────────────────────────────────────────── */
