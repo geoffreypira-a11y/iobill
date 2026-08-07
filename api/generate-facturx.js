@@ -331,6 +331,28 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
 
   const supplierName = x(co.legal_name);
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
+
+  // v8.55 — Helper adresse PPF France (BT-34 / BT-49, scheme 0225).
+  // Selon spec AFNOR XP Z12-014 et doc SUPER PDP :
+  //   - Format canonique : "SIREN" (99 % des cas)
+  //   - Format étendu    : "SIREN_SIRET" | "SIREN_SUFFIXE" | "SIREN_SIRET_ROUTAGE"
+  //   - Contraintes suffixe : ≤100 caractères, [A-Za-z0-9_] uniquement
+  //
+  // Priorité :
+  //   1. Si peppol_address est saisi manuellement (cas etabl./sandbox) → on l'utilise tel quel
+  //   2. Sinon si SIREN extractible du SIRET → "SIREN" seul
+  //   3. Sinon retourne null (le code appelant retombe sur EM = email B2C)
+  //
+  // NB : on nettoie mais on ne rejette PAS un peppol_address non conforme —
+  //      certains cas sandbox (SUPER PDP préfixe 315143296_39762_) sortent
+  //      des règles mais doivent passer. La validation forte est côté UI.
+  const ppfAddress = (party) => {
+    const custom = String(party.peppol_address || "").trim();
+    if (custom) return custom;
+    const raw = String(party.siret || "").replace(/\s/g, "");
+    const siren = raw.length === 14 ? raw.slice(0, 9) : (raw.length === 9 ? raw : null);
+    return siren || null;
+  };
   // v8.48.21 — Fix BR-CO-14 : reconstruit vat_breakdown depuis les lignes
   // si vide, sinon Σ(TVA par catégorie) ≠ TVA totale et la validation échoue.
   // v8.48.23 — Fix BR-CO-17 : les vraies colonnes de document_lines sont
@@ -491,13 +513,16 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(co.city)}</ram:CityName>
           <ram:CountryID>${x(normalizeCountry(co.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.29 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
-             SIREN avec schemeID="0009" (Peppol FR) pour du B2B propre. -->
+        <!-- v8.55 — BR-FR-13 / BT-34 : URIUniversalCommunication vendeur.
+             Schéma OFFICIEL "0225" (adresse électronique PPF France),
+             obligatoire pour la réforme septembre 2026. Cf. spec AFNOR
+             XP Z12-014 et doc SUPER PDP. Format = SIREN par défaut,
+             sinon peppol_address custom (ex: SIREN_ETABL, SIREN_SIRET).
+             Fallback EM = email si aucune identification légale. -->
         ${(() => {
-          const rawSiret = String(co.siret || "").replace(/\s/g, "");
-          const siren = rawSiret.length === 14 ? rawSiret.slice(0, 9) : (rawSiret.length === 9 ? rawSiret : null);
-          if (siren) {
-            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          const ppf = ppfAddress(co);
+          if (ppf) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(ppf)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
           return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(co.email || "contact@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
         })()}
@@ -521,23 +546,26 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:CityName>${x(cs.city)}</ram:CityName>
           <ram:CountryID>${x(normalizeCountry(cs.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
-        <!-- v8.48.29 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
-             ATTENTION : schemeID="EM" (email) déclenche la classification B2C
-             chez SUPER PDP. Pour du B2B on utilise le SIREN avec schemeID="0009".
-             SUPER PDP règle : "adresse email avec scheme EM ⇒ B2C". -->
+        <!-- v8.55 — BR-FR-12 / BT-49 : URIUniversalCommunication acheteur.
+             B2B → schemeID="0225" (adresse électronique PPF France),
+             obligatoire pour la réforme septembre 2026. Cf. AFNOR
+             XP Z12-014 et doc SUPER PDP. Format = SIREN par défaut,
+             sinon peppol_address custom.
+             B2C (particulier) → schemeID="EM" (email) — SUPER PDP règle :
+             "adresse email avec scheme EM ⇒ B2C". Pas de routage PDP
+             pour un particulier, c'est le circuit e-reporting. -->
         ${(() => {
           const isB2C = cs.client_type === "individual";
-          const rawSiret = String(cs.siret || "").replace(/\s/g, "");
-          const siren = rawSiret.length === 14 ? rawSiret.slice(0, 9) : (rawSiret.length === 9 ? rawSiret : null);
           if (isB2C) {
             const email = cs.email || cs.contact_email || "particulier@iobill.online";
             return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(email)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
-          // B2B : SIREN avec scheme 0009 (identifiant Peppol légal FR)
-          if (siren) {
-            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0009">${x(siren)}</ram:URIID></ram:URIUniversalCommunication>`;
+          const ppf = ppfAddress(cs);
+          if (ppf) {
+            return `<ram:URIUniversalCommunication><ram:URIID schemeID="0225">${x(ppf)}</ram:URIID></ram:URIUniversalCommunication>`;
           }
-          // Fallback si aucun SIREN : email formel (peut re-déclencher B2C mais BR-FR-12 exige BT-49)
+          // Fallback si B2B mais SIREN absent : email en scheme EM (le PDP
+          // pourra soit rejeter, soit basculer en circuit e-reporting).
           return `<ram:URIUniversalCommunication><ram:URIID schemeID="EM">${x(cs.email || "client@iobill.online")}</ram:URIID></ram:URIUniversalCommunication>`;
         })()}
         ${cs.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(cs.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}

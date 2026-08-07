@@ -1771,6 +1771,9 @@ function buildCompanySnapshot(company) {
     trade_name: company.trade_name,
     siret: company.siret,
     vat_number: company.vat_number,
+    // v8.55 — Adresse électronique PPF France du vendeur (BT-34, scheme 0225).
+    // Fige l'adresse au moment de l'émission.
+    peppol_address: company.peppol_address,
     address_line1: company.address_line1,
     address_line2: company.address_line2,
     postal_code: company.postal_code,
@@ -1793,6 +1796,10 @@ async function buildClientSnapshot(clientId, fallback) {
     first_name: src.first_name || null,
     last_name: src.last_name || null,
     siret: src.siret || null,
+    // v8.55 — Adresse électronique PPF France (BT-49, scheme 0225).
+    // Snapshot au moment de l'émission pour figer l'adresse de routage
+    // sur la facture (comme le SIRET) même si le client la modifie plus tard.
+    peppol_address: src.peppol_address || null,
     email: src.email || null,
     phone: src.phone || null,
     address_line1: src.address_line1 || null,
