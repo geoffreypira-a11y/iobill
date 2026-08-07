@@ -403,15 +403,20 @@ export async function paInboxSync(company) {
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
 
+  // v8.57.5 — Force `direction=in` côté SUPER PDP pour ne récupérer QUE
+  // les factures entrantes (achat). Sans ce filtre, l'API renvoie aussi
+  // nos propres émissions (out), qui étaient certes skippées côté client
+  // mais faisaient AVANCER le cursor → les factures entrantes suivantes
+  // arrivées avec un id inférieur au dernier out vu étaient sautées et
+  // perdues à jamais. C'était le bug "je ne reçois plus rien depuis N".
   const { items, cursor } = await impl.listInvoices(cfg, {
-    cursor: creds.cursor_id || null, order: "asc", limit: 50
+    cursor: creds.cursor_id || null, order: "asc", limit: 50, direction: "in"
   });
 
   let created = 0;
   for (const it of items) {
-    // On ne garde que les factures d'ACHAT (reçues), pas nos propres ventes.
-    // v8.48.2 — SUPER PDP utilise direction = "in" (entrant) ou "out" (sortant).
-    // On ne persiste QUE les entrantes ; les sortantes sont nos propres émissions.
+    // Défense en profondeur : SUPER PDP applique déjà direction=in, mais on
+    // re-vérifie au cas où (rétrocompat + éviter les régressions futures).
     const dir = String(it.direction || it.type || it.kind || "").toLowerCase();
     if (dir === "out" || /sale|vente|outbound|sent/.test(dir)) continue;
     const r = await persistInbound(company.id, creds, impl, cfg, it);

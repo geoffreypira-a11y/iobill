@@ -198,10 +198,18 @@ const superpdp = {
     });
   },
 
-  /** Pagination par curseur bigint (starting_after_id), pas par date. */
-  async listInvoices(cfg, { cursor = null, order = "asc", limit = 50 } = {}) {
+  /** Pagination par curseur bigint (starting_after_id), pas par date.
+   *
+   * v8.57.5 — Nouveau paramètre `direction` :
+   *   - "in"  : ne récupère QUE les factures entrantes (achat)
+   *   - "out" : ne récupère QUE les factures sortantes (vente)
+   *   - null  : les 2 (comportement historique, dangereux pour l'inbox
+   *             car le cursor grimpe sur tout et fait sauter les entrantes)
+   */
+  async listInvoices(cfg, { cursor = null, order = "asc", limit = 50, direction = null } = {}) {
     const p = new URLSearchParams({ order, limit: String(limit) });
     if (cursor) p.set("starting_after_id", String(cursor));
+    if (direction) p.set("direction", direction);
     const j = await req(cfg.base_url + "/v1.beta/invoices?" + p.toString(), {
       headers: await this._h(cfg)
     });
