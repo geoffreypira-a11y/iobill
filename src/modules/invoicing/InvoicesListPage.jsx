@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { subscribe } from "../../lib/realtime.js";
@@ -78,6 +78,7 @@ export function InvoicesListPage({ token, company }) {
           if (prev[i]?.paid_cents !== newList[i].paid_cents) return newList;
           if (prev[i]?.pdp_transmitted_at !== newList[i].pdp_transmitted_at) return newList;
           if (prev[i]?.sent_at !== newList[i].sent_at) return newList;
+          if (prev[i]?.facturx_status !== newList[i].facturx_status) return newList;
         }
         return prev;
       });
@@ -115,6 +116,57 @@ export function InvoicesListPage({ token, company }) {
       unsubscribe();
       document.removeEventListener("visibilitychange", onVisibility);
     };
+  }, [token, company.id]);
+
+  // v8.57.2 — Polling automatique du statut PDP toutes les 5 s.
+  //
+  // Cible : factures transmises RÉCEMMENT (moins de 15 min) et dont le statut
+  // de cycle de vie n'est pas encore terminal ("accepted" / "rejected"). Ça
+  // couvre les tests sandbox où l'utilisateur transmet une facture et attend
+  // le retour du destinataire. Au-delà de 15 min, on considère que le suivi
+  // en temps réel n'est plus critique — le bouton 🔄 manuel reste dispo.
+  //
+  // Limite dure : max 5 factures pollées par tick (protection anti-rate-limit).
+  // Rien envoyé si aucune facture ne matche → aucune charge quand tout est
+  // stabilisé.
+  //
+  // La liste `invoices` est lue via une ref pour garder le timer stable
+  // (sinon setInterval serait recréé à chaque refresh, brisant le polling).
+  const invoicesRef = useRef(invoices);
+  useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
+
+  useEffect(() => {
+    let alive = true;
+    let running = false;
+    const RECENT_MS = 15 * 60 * 1000; // 15 min
+    const BATCH_MAX = 5;
+
+    async function tick() {
+      if (!alive || running) return;
+      if (document.visibilityState !== "visible") return; // pause si onglet caché
+      const now = Date.now();
+      const toRefresh = (invoicesRef.current || [])
+        .filter((inv) => {
+          if (!inv.pdp_transmission_id) return false;
+          const fx = inv.facturx_status || "transmitted";
+          if (fx === "accepted" || fx === "rejected") return false;
+          const t = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).getTime() : 0;
+          return t > 0 && (now - t) < RECENT_MS;
+        })
+        .slice(0, BATCH_MAX);
+      if (toRefresh.length === 0) return;
+      running = true;
+      try {
+        for (const inv of toRefresh) {
+          if (!alive) return;
+          await refreshInvoiceStatus(inv, { silent: true });
+        }
+      } finally { running = false; }
+    }
+
+    const pollTimer = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(pollTimer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, company.id]);
 
   function effectiveStatus(inv) {
@@ -240,6 +292,54 @@ export function InvoicesListPage({ token, company }) {
       showToast(e.message || "Erreur transmission PA", "error");
     }
     setActionLoading(null);
+  }
+
+  // v8.57.2 — Rafraîchit le statut d'une facture depuis SUPER PDP.
+  // Utilisé par le bouton 🔄 manuel ET par le polling auto (toutes les 5s).
+  // Le paramètre `silent` désactive les toasts (utile pour le polling qui
+  // ne doit pas spammer l'utilisateur). Le paramètre `force` bypasse le
+  // guard de non-changement (le bouton force le refresh même si le statut
+  // n'a pas bougé).
+  async function refreshInvoiceStatus(inv, { silent = false, force = false } = {}) {
+    if (!inv?.pdp_transmission_id) return null;
+    if (!silent) setActionLoading(`refresh-${inv.id}`);
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_status", payload: { invoice_id: inv.id } })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (!silent) showToast(j.error || `Erreur ${r.status}`, "error");
+        return null;
+      }
+      const oldFx = inv.facturx_status;
+      const newFx = j.facturx_status;
+      // Recharge la liste pour refléter le nouveau statut visuellement
+      await refreshInvoices();
+      if (!silent) {
+        const labelMap = {
+          transmitted: "Transmise",
+          accepted:    "Approuvée par l'acheteur",
+          rejected:    "Refusée par l'acheteur"
+        };
+        const label = labelMap[newFx] || newFx || "statut inchangé";
+        if (force && newFx === oldFx) {
+          showToast(`Statut confirmé : ${label}`);
+        } else if (newFx !== oldFx) {
+          showToast(`Statut mis à jour : ${label}`);
+        } else {
+          showToast("Statut inchangé");
+        }
+      }
+      return { oldFx, newFx };
+    } catch (e) {
+      if (!silent) showToast(e.message || "Erreur rafraîchissement", "error");
+      return null;
+    } finally {
+      if (!silent) setActionLoading(null);
+    }
   }
 
   async function sendInvoice(inv) {
@@ -508,16 +608,35 @@ export function InvoicesListPage({ token, company }) {
                           }[fx] || { icon: "📤", label: fx, color: "#8a8a96" };
                           const when = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR") : "";
                           return (
-                            <span
-                              style={{
-                                padding: "5px 10px", fontSize: 10, color: meta.color,
-                                border: "1px solid " + meta.color + "55",
-                                background: meta.color + "18",
-                                borderRadius: 6, whiteSpace: "nowrap"
-                              }}
-                              title={"Transmise via " + (inv.pdp_provider || "PA") + (when ? " le " + when : "") + " · ID " + (inv.pdp_transmission_id || "?")}
-                            >
-                              {meta.icon} {meta.label}
+                            <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                              <span
+                                style={{
+                                  padding: "5px 10px", fontSize: 10, color: meta.color,
+                                  border: "1px solid " + meta.color + "55",
+                                  background: meta.color + "18",
+                                  borderRadius: 6, whiteSpace: "nowrap"
+                                }}
+                                title={"Transmise via " + (inv.pdp_provider || "PA") + (when ? " le " + when : "") + " · ID " + (inv.pdp_transmission_id || "?")}
+                              >
+                                {meta.icon} {meta.label}
+                              </span>
+                              {/* v8.57.2 — Bouton "Rafraîchir statut" : va lire côté SUPER PDP
+                                  le dernier événement de cycle de vie (fr:205, fr:210, fr:212...)
+                                  et met à jour facturx_status en base. Utile en attendant le
+                                  webhook automatique (v8.58). */}
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => refreshInvoiceStatus(inv, { force: true })}
+                                disabled={actionLoading === `refresh-${inv.id}`}
+                                style={{
+                                  padding: "2px 6px", fontSize: 10,
+                                  color: "var(--muted)", borderColor: "rgba(255,255,255,0.08)",
+                                  minWidth: 24, height: 24, lineHeight: 1
+                                }}
+                                title="Rafraîchir le statut PDP (accepté / refusé / encaissé)"
+                              >
+                                {actionLoading === `refresh-${inv.id}` ? "⏳" : "🔄"}
+                              </button>
                             </span>
                           );
                         })()}

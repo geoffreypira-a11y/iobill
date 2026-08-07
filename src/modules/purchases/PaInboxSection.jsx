@@ -308,18 +308,27 @@ export function PaInboxSection({ token, company, onConverted }) {
 
 /**
  * v8.56 — Modale de refus AFNOR.
- * Codes MDT-113 courants (annexe A XP Z12-012). La liste n'est pas
- * exhaustive : l'utilisateur peut aussi taper un code libre en fallback
- * pour couvrir les cas edge non prévus.
+ * v8.57.2 — Vraie liste des codes MDT-113 acceptés par SUPER PDP,
+ * découverte via l'erreur BR-FR-CDV-CL-09/MDT-113 :
+ *   RETRAIT_MAN_SERV, ST_CT_NON_DECLAR, SUPPR_COMP_AVOIR,
+ *   TRANSF_PMNT_REGIE, CONTACT_ACHTR, NON_TRANSMISE, JUSTIF_ABS,
+ *   ROUTAGE_ERR, AUTRE, COORD_BANC_ERR, TX_TVA_ERR, MONTANTTOTAL_ERR
+ * Les anciens codes IC00x (v8.56 initial) sont refusés par SUPER PDP.
  */
 function RefuseModal({ row, onCancel, onConfirm }) {
   const CODES = [
-    ["IC001", "Facture erronée"],
-    ["IC003", "Destinataire incorrect"],
-    ["IC005", "Montant erroné"],
-    ["IC006", "TVA erronée"],
-    ["IC007", "Marchandise/prestation non conforme"],
-    ["IC008", "Autre motif"]
+    ["MONTANTTOTAL_ERR",  "Montant total erroné"],
+    ["TX_TVA_ERR",        "Taux de TVA erroné"],
+    ["COORD_BANC_ERR",    "Coordonnées bancaires erronées"],
+    ["ROUTAGE_ERR",       "Erreur de routage"],
+    ["JUSTIF_ABS",        "Justificatif absent"],
+    ["CONTACT_ACHTR",     "Contacter l'acheteur"],
+    ["NON_TRANSMISE",     "Facture non transmise"],
+    ["SUPPR_COMP_AVOIR",  "Suppression compte avoir"],
+    ["TRANSF_PMNT_REGIE", "Transfert paiement régie"],
+    ["RETRAIT_MAN_SERV",  "Retrait manuel de service"],
+    ["ST_CT_NON_DECLAR",  "Statut contact non déclaré"],
+    ["AUTRE",             "Autre motif"]
   ];
   const [code, setCode] = React.useState(CODES[0][0]);
   const [label, setLabel] = React.useState("");
@@ -375,7 +384,7 @@ function RefuseModal({ row, onCancel, onConfirm }) {
               <label className="form-label">Code MDT-113 personnalisé *</label>
               <input className="form-input" value={customCode}
                 onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
-                placeholder="Ex : IC012, IR03, MDT-EX1"
+                placeholder="Ex : AUTRE, MONTANTTOTAL_ERR, TX_TVA_ERR"
                 style={{ marginBottom: 8 }} />
               <div style={{ fontSize: 11, marginBottom: 14 }}>
                 <a href="#" onClick={(e) => { e.preventDefault(); setUseCustom(false); }}
@@ -384,7 +393,7 @@ function RefuseModal({ row, onCancel, onConfirm }) {
                 </a>
                 {"  ·  "}
                 <span style={{ color: "var(--muted)" }}>
-                  Liste complète : annexe A XP Z12-012 (AFNOR)
+                  Codes acceptés par SUPER PDP uniquement
                 </span>
               </div>
             </>
