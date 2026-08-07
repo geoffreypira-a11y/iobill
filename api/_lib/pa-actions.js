@@ -812,21 +812,43 @@ export async function paInvoiceEncaisser(company, payload) {
 
   const currency = inv.currency || "EUR";
 
-  // v8.57.10 — SUPER PDP exige (règle BR-FR-CDV-14/MDT-207) :
-  //   "Si status_code = fr:212, ALORS ≥ 1 bloc MDG-43 avec type_code='MEN'
-  //    et chaque bloc MEN doit contenir MDT-215 (amount) ET MDT-224 (VAT %)."
+  // v8.57.11 — Reconstruction du breakdown TVA.
   //
-  // Le champ MDT-224 (value_percent dans l'OpenAPI SUPER PDP) manquait
-  // dans le payload v8.57 initial → 400. Fix : lire vat_breakdown de la
-  // facture et générer un bloc MEN par taux de TVA distinct.
+  // Problème observé : `invoices.vat_breakdown` est un array vide `[]` sur les
+  // factures existantes, ce qui déclenchait un fallback foireux calculant un
+  // taux "moyen" (vat_total / subtotal_ht × 100 = 12.52%) — non conforme
+  // fiscalement en France où les taux sont 0/2.1/5.5/10/20.
   //
-  // Multi-TVA : si la facture a des lignes à 20% et 10%, on envoie 2 blocs :
-  //   { type_code: "MEN", amount: base+vat 20%, value_percent: "20.00" }
-  //   { type_code: "MEN", amount: base+vat 10%, value_percent: "10.00" }
+  // Fix : si `vat_breakdown` est vide/absent, on RECONSTRUIT le breakdown
+  // à partir des lignes de la facture (`document_lines`). Chaque ligne a
+  // `vat_rate`, `line_ht_cents`, `line_vat_cents` — on agrège par taux.
   //
-  // Mono-TVA / pas de breakdown : fallback à un seul bloc avec le taux
-  // calculé depuis vat_total / subtotal_ht (ou 0 si franchise TVA).
-  const breakdown = Array.isArray(inv.vat_breakdown) ? inv.vat_breakdown : [];
+  // Cas gérés :
+  //   - vat_breakdown array non vide → utilisé tel quel
+  //   - vat_breakdown array vide OU null → reconstruction depuis lignes
+  //   - Pas de lignes en base (edge case) → fallback global
+  let breakdown = Array.isArray(inv.vat_breakdown) ? inv.vat_breakdown : [];
+
+  if (breakdown.length === 0) {
+    const docLines = await sbAdmin.select("document_lines", {
+      filter: "document_type=eq.invoice&document_id=eq." + inv.id,
+      order: "sort_order.asc"
+    });
+    if (Array.isArray(docLines) && docLines.length > 0) {
+      const byRate = {};
+      for (const l of docLines) {
+        const rate = Number(l.vat_rate || 0);
+        const key = rate.toFixed(2);
+        if (!byRate[key]) byRate[key] = { rate, base_cents: 0, vat_cents: 0 };
+        byRate[key].base_cents += Number(l.line_ht_cents || 0);
+        byRate[key].vat_cents  += Number(l.line_vat_cents || 0);
+      }
+      breakdown = Object.values(byRate);
+      console.log("[PA] fr:212 breakdown reconstruit depuis " + docLines.length
+        + " lignes → " + breakdown.length + " taux distinct(s)");
+    }
+  }
+
   const reportedData = [];
 
   if (breakdown.length > 0) {
@@ -846,7 +868,8 @@ export async function paInvoiceEncaisser(company, payload) {
     }
   }
 
-  // Fallback : pas de breakdown → un seul bloc MEN au taux global.
+  // Fallback ultime : pas de breakdown et pas de lignes → un seul bloc MEN
+  // au taux global calculé (rare, uniquement si la facture n'a plus de lignes).
   if (reportedData.length === 0) {
     const totalCents  = Number(inv.grand_total_cents || inv.total_ttc_cents || 0);
     const subHtCents  = Number(inv.subtotal_ht_cents || 0);
@@ -859,6 +882,8 @@ export async function paInvoiceEncaisser(company, payload) {
       date: paymentDate,
       value_percent: globalRate.toFixed(2)
     });
+    console.warn("[PA] fr:212 fallback global taux=" + globalRate.toFixed(2)
+      + "% — vérifier vat_breakdown facture " + inv.id);
   }
 
   const detail = { reported_data: reportedData };
@@ -867,6 +892,16 @@ export async function paInvoiceEncaisser(company, payload) {
   const { impl, cfg } = getProvider(creds);
   try {
     await impl.sendEvent(cfg, inv.pdp_transmission_id, LIFECYCLE.encaissee, detail);
+
+    // v8.57.11 — Update `facturx_status = "paid"` en base IMMÉDIATEMENT
+    // après le succès SUPER PDP. Évite la fenêtre de race où :
+    //   1. sendEvent réussit (fr:212 accepté par SUPER PDP)
+    //   2. le frontend perd le retour (401 refresh token, timeout, onglet fermé...)
+    //   3. la base reste avec facturx_status = payment_sent
+    //   4. l'utilisateur voit un badge incohérent avec la réalité SUPER PDP
+    // Le patch en place côté frontend devient purement cosmétique.
+    await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: "paid" });
+
     const summary = reportedData
       .map((r) => r.amount + " @ " + r.value_percent + "%")
       .join(" + ");
