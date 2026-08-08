@@ -1623,15 +1623,46 @@ async function upsertClient(companyId, cli, opts = {}) {
   const { sourceApp = null } = opts;
   const hasExternal = !!(sourceApp && cli.external_id);
 
-  // 1) Matching par external_id (prioritaire et fiable)
+  // v8.57.12 — Refonte du matching pour éviter la corruption cross-clients.
+  //
+  // ANCIEN BUG : quand un push bridge (avec external_id) ne trouvait rien par
+  // external_id, on faisait fallback SIRET puis EMAIL. Résultat : un client
+  // IOCAR "Geoffrey Pira" (particulier, email X) pouvait matcher un client
+  // IOBILL existant "Tricatel" (société, MÊME email X, saisi à la main),
+  // écrasant les champs first_name/last_name mais gardant legal_name/siret →
+  // client hybride corrompu impossible à réparer sans intervention SQL.
+  //
+  // NOUVELLE RÈGLE : deux mondes bien séparés.
+  //   - Bridge (hasExternal=true) : matching UNIQUEMENT par (external_source,
+  //     external_id). Si absent → CRÉE un nouveau client. Aucun fallback.
+  //   - Direct IOBILL (hasExternal=false) : fallback SIRET/email conservé
+  //     pour l'ergonomie (éviter les doublons quand on tape un email connu).
+  //
+  // Corollaire : un client créé manuellement dans IOBILL (email marc@x.fr)
+  // et un client créé dans IOCAR (email marc@x.fr) restent 2 clients distincts.
+  // Le bridge n'a AUCUN droit d'écraser les clients "direct IOBILL".
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Mode BRIDGE (hasExternal=true) — matching strict par external_id
+  // ═══════════════════════════════════════════════════════════════════
   if (hasExternal) {
     const foundExt = await sbAdmin.selectOne(
       "clients",
       `company_id=eq.${companyId}&external_source=eq.${sourceApp}&external_id=eq.${encodeURIComponent(cli.external_id)}`
     );
     if (foundExt) {
-      // Update non-conservatif : la source écrase systématiquement (IOCAR maître)
+      // Client déjà connu par ce bridge → écrase (source maître).
+      // On reset AUSSI legal_name/siret à null si le push n'en fournit pas
+      // (permet de passer un client company → individual sans état hybride).
       const patch = buildClientPatch(cli, /*overwrite*/ true);
+      // v8.57.12 — Force reset des champs de l'autre type si non fournis
+      if (cli.legal_name == null || cli.legal_name === "") patch.legal_name = null;
+      if (cli.siret == null || cli.siret === "") patch.siret = null;
+      if (cli.first_name == null || cli.first_name === "") patch.first_name = null;
+      if (cli.last_name == null || cli.last_name === "") patch.last_name = null;
+      // Client_type recalculé selon présence de siret/legal_name
+      const isCompanyPush = !!(cli.legal_name || cli.siret);
+      patch.client_type = isCompanyPush ? "company" : "individual";
       patch.external_synced_at = new Date().toISOString();
       patch.external_managed = true;
       patch.external_source = sourceApp;
@@ -1639,9 +1670,39 @@ async function upsertClient(companyId, cli, opts = {}) {
       await sbAdmin.update("clients", `id=eq.${foundExt.id}`, patch);
       return foundExt.id;
     }
+    // Pas trouvé par external_id → CRÉE un nouveau client, PAS de fallback.
+    // Un push bridge crée son propre client, même si un client IOBILL a le
+    // même email/SIRET (deux mondes distincts).
+    const isCompany = !!(cli.legal_name || cli.siret);
+    const payload = {
+      company_id: companyId,
+      client_type: isCompany ? "company" : "individual",
+      legal_name: cli.legal_name || null,
+      first_name: cli.first_name || null,
+      last_name: cli.last_name || null,
+      siret: cli.siret || null,
+      email: cli.email ? String(cli.email).toLowerCase() : null,
+      phone: cli.phone || null,
+      address_line1: cli.address_line1 || null,
+      address_line2: cli.address_line2 || null,
+      postal_code: cli.postal_code || null,
+      city: cli.city || null,
+      country: cli.country || "FR",
+      external_source: sourceApp,
+      external_id: String(cli.external_id),
+      external_synced_at: new Date().toISOString(),
+      external_managed: true
+    };
+    const inserted = await sbAdmin.insert("clients", payload);
+    return inserted && inserted[0] ? inserted[0].id : null;
   }
 
-  // 2) Fallback : matching par SIRET puis email (legacy, pour les anciens flux)
+  // ═══════════════════════════════════════════════════════════════════
+  // Mode DIRECT IOBILL (hasExternal=false) — fallback SIRET/email OK
+  // ═══════════════════════════════════════════════════════════════════
+  // Ergonomie : si l'utilisateur retape un email déjà en base, on lui
+  // évite le doublon. Ce fallback n'existe QUE pour la création directe
+  // dans l'UI IOBILL (jamais pour un push bridge externe).
   let found = null;
   if (cli.siret) {
     found = await sbAdmin.selectOne(
@@ -1657,22 +1718,43 @@ async function upsertClient(companyId, cli, opts = {}) {
   }
 
   if (found) {
-    // Si on est dans le flux external mais qu'on retrouve un client legacy
-    // sans external_id, on l'enrôle (= on lui attribue l'external_id pour le matching futur)
-    const patch = buildClientPatch(cli, /*overwrite*/ hasExternal);
-    if (hasExternal) {
-      patch.external_synced_at = new Date().toISOString();
-      patch.external_managed = true;
-      patch.external_source = sourceApp;
-      patch.external_id = String(cli.external_id);
+    // Sécurité supplémentaire : si le client trouvé est external_managed=true
+    // (créé par un bridge), on NE le touche PAS depuis un flux direct.
+    // Le bridge est maître de ses clients.
+    if (found.external_managed) {
+      console.warn(
+        "[upsertClient] Client " + found.id + " est external_managed par " +
+        (found.external_source || "?") + " — création directe refusée pour éviter écrasement"
+      );
+      // On crée un nouveau client à côté plutôt que d'écraser
+      const isCompany = !!(cli.legal_name || cli.siret);
+      const payload = {
+        company_id: companyId,
+        client_type: isCompany ? "company" : "individual",
+        legal_name: cli.legal_name || null,
+        first_name: cli.first_name || null,
+        last_name: cli.last_name || null,
+        siret: cli.siret || null,
+        email: cli.email ? String(cli.email).toLowerCase() : null,
+        phone: cli.phone || null,
+        address_line1: cli.address_line1 || null,
+        address_line2: cli.address_line2 || null,
+        postal_code: cli.postal_code || null,
+        city: cli.city || null,
+        country: cli.country || "FR"
+      };
+      const inserted = await sbAdmin.insert("clients", payload);
+      return inserted && inserted[0] ? inserted[0].id : null;
     }
+    // Client direct trouvé → merge conservatif (ne remplit que les champs vides)
+    const patch = buildClientPatch(cli, /*overwrite*/ false);
     if (Object.keys(patch).length > 0) {
       await sbAdmin.update("clients", `id=eq.${found.id}`, patch);
     }
     return found.id;
   }
 
-  // 3) Pas trouvé : créer
+  // Pas trouvé : créer en direct IOBILL
   const isCompany = !!(cli.legal_name || cli.siret);
   const payload = {
     company_id: companyId,
@@ -1689,12 +1771,6 @@ async function upsertClient(companyId, cli, opts = {}) {
     city: cli.city || null,
     country: cli.country || "FR"
   };
-  if (hasExternal) {
-    payload.external_source = sourceApp;
-    payload.external_id = String(cli.external_id);
-    payload.external_synced_at = new Date().toISOString();
-    payload.external_managed = true;
-  }
   const inserted = await sbAdmin.insert("clients", payload);
   return inserted && inserted[0] ? inserted[0].id : null;
 }
@@ -1771,9 +1847,6 @@ function buildCompanySnapshot(company) {
     trade_name: company.trade_name,
     siret: company.siret,
     vat_number: company.vat_number,
-    // v8.55 — Adresse électronique PPF France du vendeur (BT-34, scheme 0225).
-    // Fige l'adresse au moment de l'émission.
-    peppol_address: company.peppol_address,
     address_line1: company.address_line1,
     address_line2: company.address_line2,
     postal_code: company.postal_code,
@@ -1796,10 +1869,6 @@ async function buildClientSnapshot(clientId, fallback) {
     first_name: src.first_name || null,
     last_name: src.last_name || null,
     siret: src.siret || null,
-    // v8.55 — Adresse électronique PPF France (BT-49, scheme 0225).
-    // Snapshot au moment de l'émission pour figer l'adresse de routage
-    // sur la facture (comme le SIRET) même si le client la modifie plus tard.
-    peppol_address: src.peppol_address || null,
     email: src.email || null,
     phone: src.phone || null,
     address_line1: src.address_line1 || null,
