@@ -1878,7 +1878,11 @@ function buildCompanySnapshot(company) {
     city: company.city,
     country: company.country,
     email: company.email,
-    phone: company.phone
+    phone: company.phone,
+    // v8.60.4 — Adresse d'annuaire PPF FR (BT-34, scheme 0225).
+    // NULL en prod → fallback SIREN dans generate-facturx.js.
+    // Rempli en sandbox pour override SUPER PDP (préfixe technique).
+    peppol_address: company.peppol_address || null
   };
 }
 
@@ -1900,7 +1904,11 @@ async function buildClientSnapshot(clientId, fallback) {
     address_line2: src.address_line2 || null,
     postal_code: src.postal_code || null,
     city: src.city || null,
-    country: src.country || "FR"
+    country: src.country || "FR",
+    // v8.60.4 — Adresse d'annuaire PPF FR (BT-49, scheme 0225).
+    // NULL en prod → fallback SIREN dans generate-facturx.js.
+    // Rempli en sandbox pour override SUPER PDP (préfixe technique).
+    peppol_address: src.peppol_address || null
   };
 }
 
