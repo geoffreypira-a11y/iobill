@@ -931,12 +931,31 @@ async function handlePushInvoice(body, res) {
     //   on passe le flag à triggerFacturxGeneration. Une fois le PDF/A-3
     //   généré et uploadé dans Storage, generate-facturx.js déclenchera
     //   automatiquement paSendInvoice (transmission SUPER PDP fr:200).
-    //   Ce chainage se fait DANS le worker generate-facturx (autre worker
-    //   serverless), pas ici, pour éviter que le worker push_invoice meure
-    //   avant que le setTimeout tire (pattern Vercel fatal).
+    //
+    // v8.60.3 — SYNCHRONE pour auto_transmit :
+    //   Si auto_transmit=true → on AWAIT la génération pour garantir que
+    //   le PDF est bien prêt avant que le worker ne meure. Sinon (draft ou
+    //   push classique), on garde le fire-and-forget classique.
+    //   Trade-off : push_invoice met 3-5s de plus pour B2B, mais l'user ne
+    //   le voit pas (IOCAR fire-and-forget). Vercel timeout 10s = large.
     if (!isDraftStatus(requestedStatus)) {
       const shouldAutoTransmit = body.auto_transmit === true;
-      triggerFacturxGeneration(invoiceRow.id, "invoice", shouldAutoTransmit);
+      if (shouldAutoTransmit) {
+        // v8.60.3 — Await pour garantir la génération avant réponse.
+        //          Élimine le pattern Vercel fatal fire-and-forget qui meurt
+        //          au res.json() avant que le fetch ne soit envoyé.
+        try {
+          await triggerFacturxGenerationSync(invoiceRow.id, "invoice", true);
+          console.log(`[push_invoice] v8.60.3 auto_transmit chain OK invoice=${invoiceRow.id}`);
+        } catch (e) {
+          console.warn(`[push_invoice] auto_transmit failed invoice=${invoiceRow.id}: ${e.message}`);
+          // On continue et retourne 200 — la facture est bien créée en base,
+          // l'user pourra retenter la transmission manuellement.
+        }
+      } else {
+        // Comportement classique fire-and-forget pour draft/paid sans auto_transmit
+        triggerFacturxGeneration(invoiceRow.id, "invoice", false);
+      }
     }
 
     return json(res, 200, {
@@ -1065,50 +1084,99 @@ function isDraftStatus(s) {
 }
 
 // Déclenchement async (fire-and-forget) de la génération Factur-X.
-// Sur Vercel, Promise.resolve().then() survit le temps que la fn termine.
-// La response a déjà été envoyée → l'user IOCAR ne sent aucune latence.
 // v8.41 — Generalisé pour invoice ou credit_note
 // v8.60.2 — Accepte un flag `autoTransmitAfter` :
 //   - true → une fois le PDF/A-3 généré et uploadé, generate-facturx.js
 //     déclenche paSendInvoice pour transmettre à SUPER PDP (fr:200 dépôt).
-//   - Ce chainage se fait DANS le worker generate-facturx (qui a son propre
-//     timeout), pas dans le worker push_invoice. Ça évite le pattern "Vercel
-//     fatal" fire-and-forget où le worker meurt avant que le setTimeout tire.
+//
+// v8.60.3 — FIX CRITIQUE : Pattern Vercel fatal
+//   Le pattern `Promise.resolve().then(async () => fetch(...))` MET le fetch
+//   dans une microtask différée. Sur Vercel Hobby serverless, dès que
+//   `res.json()` est appelé dans push_invoice, le worker peut être terminé
+//   AVANT que la microtask n'ait eu le temps de s'exécuter → le fetch n'est
+//   JAMAIS envoyé → Factur-X pas généré.
+//
+//   Fix : on appelle fetch() DIRECTEMENT (pas via microtask). Le fetch initie
+//   la requête HTTP réseau immédiatement (au moment de l'appel), Vercel edge
+//   la reçoit et démarre /api/generate-facturx dans son propre worker.
+//   La response de fetch n'est pas awaited — on log juste dans .then/.catch.
 function triggerFacturxGeneration(documentId, documentType = "invoice", autoTransmitAfter = false) {
   const url = process.env.APP_URL || "https://app.iobill.online";
   const internalSecret = process.env.IOBILL_INTERNAL_GEN_SECRET
                        || process.env.IOBILL_EXTERNAL_SECRET;
-  // Fire-and-forget : on n'attend PAS la fin
-  Promise.resolve().then(async () => {
-    try {
-      const r = await fetch(`${url}/api/generate-facturx`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Internal-Secret": internalSecret
-        },
-        body: JSON.stringify({
-          internal: true,
-          document_type: documentType,
-          document_id: documentId,
-          // v8.60.2 — Si true, generate-facturx chainera avec paSendInvoice
-          //          après avoir uploadé le PDF/A-3 en storage.
-          auto_transmit_after_generation: autoTransmitAfter
-        })
-      });
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        console.warn(`[triggerFacturxGen] failed status=${r.status}: ${txt}`);
-      } else {
-        console.log(
-          `[triggerFacturxGen] OK ${documentType}=${documentId}`
-          + (autoTransmitAfter ? ` (with auto_transmit chain)` : "")
-        );
-      }
-    } catch (e) {
-      console.warn("[triggerFacturxGen] error:", e.message);
-    }
+
+  // v8.60.3 — fetch() appelé IMMÉDIATEMENT (pas différé dans microtask).
+  // Le retour est une Promise qu'on n'attend pas, mais l'appel réseau est
+  // initié synchronement au moment de l'invocation → Vercel edge le reçoit
+  // même si push_invoice termine juste après avec res.json().
+  const p = fetch(`${url}/api/generate-facturx`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Secret": internalSecret
+    },
+    body: JSON.stringify({
+      internal: true,
+      document_type: documentType,
+      document_id: documentId,
+      auto_transmit_after_generation: autoTransmitAfter
+    })
   });
+
+  // Log en fire-and-forget (le worker sera peut-être mort avant, tant pis)
+  p.then(async (r) => {
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      console.warn(`[triggerFacturxGen] failed status=${r.status}: ${txt}`);
+    } else {
+      console.log(
+        `[triggerFacturxGen] OK ${documentType}=${documentId}`
+        + (autoTransmitAfter ? ` (with auto_transmit chain)` : "")
+      );
+    }
+  }).catch(e => {
+    console.warn("[triggerFacturxGen] error:", e.message);
+  });
+}
+
+// v8.60.3 — Version SYNCHRONE utilisée quand auto_transmit=true.
+//
+// Contrairement à triggerFacturxGeneration (fire-and-forget), cette version
+// AWAIT la génération Factur-X ET le chaînage auto-transmit. On garantit
+// ainsi que :
+//   - Le PDF/A-3 est bien uploadé en Storage avant que push_invoice retourne
+//   - paSendInvoice a été appelé (dépôt SUPER PDP)
+//   - Tout est fait DANS le worker push_invoice → pas de fire-and-forget mort
+//
+// Trade-off : push_invoice met 3-8s au lieu de 200ms. Mais l'utilisateur
+// (IOCAR) fait un fire-and-forget côté frontend et ne voit pas cette latence.
+// Vercel timeout serverless = 10s, on est largement dans les clous.
+async function triggerFacturxGenerationSync(documentId, documentType, autoTransmitAfter) {
+  const url = process.env.APP_URL || "https://app.iobill.online";
+  const internalSecret = process.env.IOBILL_INTERNAL_GEN_SECRET
+                       || process.env.IOBILL_EXTERNAL_SECRET;
+  const r = await fetch(`${url}/api/generate-facturx`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Secret": internalSecret
+    },
+    body: JSON.stringify({
+      internal: true,
+      document_type: documentType,
+      document_id: documentId,
+      auto_transmit_after_generation: autoTransmitAfter
+    })
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(`generate-facturx status=${r.status}: ${txt.slice(0, 200)}`);
+  }
+  const j = await r.json().catch(() => ({}));
+  console.log(
+    `[triggerFacturxGenSync] OK ${documentType}=${documentId} pdf_size=${j.pdf_size || "?"}`
+  );
+  return j;
 }
 
 // v8.60.2 — SUPPRIMÉ : triggerAutoTransmitToPdp
