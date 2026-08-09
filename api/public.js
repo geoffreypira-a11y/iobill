@@ -1029,7 +1029,20 @@ async function handleUpdateInvoiceStatus(body, res) {
       updated_at: new Date().toISOString()
     };
     if (new_status === "paid") {
-      patch.paid_cents = inv.total_ttc_cents;
+      // v8.60.5 — Fix débours : paid_cents doit inclure les débours (art. 267 II 2° CGI).
+      // Avant : paid_cents = total_ttc_cents (exclut les débours par design de
+      // computeTotalsFromLines). Résultat : côté IOBILL "reste à régler = montant
+      // débours" alors que la facture est soldée côté IOCAR (grand_total payé).
+      // Le fix v8.59.1 côté IOCAR (mapOrderToInvoice.totals.paid_cents = grandTotal)
+      // est court-circuité par ce chemin update_invoice_status qui ne transmet pas
+      // les débours — on les relit depuis inv.debours stocké en JSONB.
+      let debourTotalCents = 0;
+      if (Array.isArray(inv.debours)) {
+        for (const d of inv.debours) {
+          debourTotalCents += Math.abs(Number(d.amount_cents || 0));
+        }
+      }
+      patch.paid_cents = (inv.total_ttc_cents || 0) + debourTotalCents;
       // Si pas encore issued_at, on le met (cas draft → paid direct)
       if (!inv.issued_at) patch.issued_at = new Date().toISOString();
     }
@@ -1058,11 +1071,21 @@ async function handleUpdateInvoiceStatus(body, res) {
       }
     }
 
-    // Si on bascule en non-draft et que le Factur-X n'est pas encore généré,
-    // on lance la génération.
+    // v8.60.5 — Fix pattern Vercel fatal (même que v8.60.3 sur push_invoice) :
+    // triggerFacturxGeneration en fire-and-forget MEURT quand Vercel Hobby termine
+    // le worker au res.json() qui suit. Résultat en B2C : facture passe bien en
+    // paid mais Factur-X pas générée → utilisateur doit cliquer "Voir" pour que
+    // le fallback à la volée dans generate-facturx.js la produise.
+    // On rend l'appel synchrone : autoTransmitAfter=false (B2C ne transmet pas
+    // au PDP, uniquement génération PDF/A-3 + XML embedded).
     const becameNonDraft = isDraftStatus(inv.status) && !isDraftStatus(new_status);
     if (becameNonDraft && (!inv.facturx_status || inv.facturx_status === "pending")) {
-      triggerFacturxGeneration(inv.id);
+      try {
+        await triggerFacturxGenerationSync(inv.id, "invoice", false);
+        console.log(`[update_invoice_status] v8.60.5 facturx sync OK invoice=${inv.id}`);
+      } catch (e) {
+        console.warn(`[update_invoice_status] v8.60.5 facturx gen failed invoice=${inv.id}: ${e.message}`);
+      }
     }
 
     return json(res, 200, {
