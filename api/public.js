@@ -925,21 +925,18 @@ async function handlePushInvoice(body, res) {
     // Pour les factures issued/paid/sent venant d'une app externe, on génère
     // le PDF/A-3 + XML EN16931 immédiatement. Pour les factures draft, on
     // attend que le user passe en non-draft (au Livré côté IOCAR par ex.).
-    if (!isDraftStatus(requestedStatus)) {
-      triggerFacturxGeneration(invoiceRow.id);
-    }
-
-    // 6) v8.60 — Auto-transmission SUPER PDP pour B2B
-    // Si `auto_transmit: true` dans le body ET la facture est issued/paid,
-    // on déclenche la transmission SUPER PDP en fire-and-forget après un
-    // court délai (le temps que le Factur-X soit généré). Le client
-    // Société recevra alors la facture via sa PDP.
     //
-    // Cas d'usage : IOCAR pousse une facture B2B (client Société) en `issued`
-    // via `push_invoice_issued` → déclenche auto le cycle AFNOR complet côté
-    // SUPER PDP (fr:200 dépôt → fr:201 émise au client → attente paiement).
-    if (body.auto_transmit === true && !isDraftStatus(requestedStatus)) {
-      triggerAutoTransmitToPdp(company, invoiceRow.id);
+    // v8.60.2 — Chaînage auto-transmit :
+    //   Si `body.auto_transmit === true` (IOCAR pousse une facture B2B),
+    //   on passe le flag à triggerFacturxGeneration. Une fois le PDF/A-3
+    //   généré et uploadé dans Storage, generate-facturx.js déclenchera
+    //   automatiquement paSendInvoice (transmission SUPER PDP fr:200).
+    //   Ce chainage se fait DANS le worker generate-facturx (autre worker
+    //   serverless), pas ici, pour éviter que le worker push_invoice meure
+    //   avant que le setTimeout tire (pattern Vercel fatal).
+    if (!isDraftStatus(requestedStatus)) {
+      const shouldAutoTransmit = body.auto_transmit === true;
+      triggerFacturxGeneration(invoiceRow.id, "invoice", shouldAutoTransmit);
     }
 
     return json(res, 200, {
@@ -1071,7 +1068,13 @@ function isDraftStatus(s) {
 // Sur Vercel, Promise.resolve().then() survit le temps que la fn termine.
 // La response a déjà été envoyée → l'user IOCAR ne sent aucune latence.
 // v8.41 — Generalisé pour invoice ou credit_note
-function triggerFacturxGeneration(documentId, documentType = "invoice") {
+// v8.60.2 — Accepte un flag `autoTransmitAfter` :
+//   - true → une fois le PDF/A-3 généré et uploadé, generate-facturx.js
+//     déclenche paSendInvoice pour transmettre à SUPER PDP (fr:200 dépôt).
+//   - Ce chainage se fait DANS le worker generate-facturx (qui a son propre
+//     timeout), pas dans le worker push_invoice. Ça évite le pattern "Vercel
+//     fatal" fire-and-forget où le worker meurt avant que le setTimeout tire.
+function triggerFacturxGeneration(documentId, documentType = "invoice", autoTransmitAfter = false) {
   const url = process.env.APP_URL || "https://app.iobill.online";
   const internalSecret = process.env.IOBILL_INTERNAL_GEN_SECRET
                        || process.env.IOBILL_EXTERNAL_SECRET;
@@ -1087,14 +1090,20 @@ function triggerFacturxGeneration(documentId, documentType = "invoice") {
         body: JSON.stringify({
           internal: true,
           document_type: documentType,
-          document_id: documentId
+          document_id: documentId,
+          // v8.60.2 — Si true, generate-facturx chainera avec paSendInvoice
+          //          après avoir uploadé le PDF/A-3 en storage.
+          auto_transmit_after_generation: autoTransmitAfter
         })
       });
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
         console.warn(`[triggerFacturxGen] failed status=${r.status}: ${txt}`);
       } else {
-        console.log(`[triggerFacturxGen] OK ${documentType}=${documentId}`);
+        console.log(
+          `[triggerFacturxGen] OK ${documentType}=${documentId}`
+          + (autoTransmitAfter ? ` (with auto_transmit chain)` : "")
+        );
       }
     } catch (e) {
       console.warn("[triggerFacturxGen] error:", e.message);
@@ -1102,41 +1111,16 @@ function triggerFacturxGeneration(documentId, documentType = "invoice") {
   });
 }
 
-// v8.60 — AUTO-TRANSMISSION SUPER PDP après push_invoice B2B
+// v8.60.2 — SUPPRIMÉ : triggerAutoTransmitToPdp
 //
-// Utilisé quand IOCAR pousse une facture B2B (client Société) avec
-// `auto_transmit: true` dans le payload. Après un délai de 3 secondes
-// (le temps que triggerFacturxGeneration ait généré le PDF Factur-X),
-// on appelle paSendInvoice → dépôt SUPER PDP fr:200 → transmis au client.
+// Ancienne approche : setTimeout(3s) + paSendInvoice dans le worker push_invoice.
+// Problème : Vercel Hobby serverless termine le worker dès que res.json() est
+// appelé → le setTimeout n'a jamais lieu → paSendInvoice n'est jamais appelé
+// → la facture reste bloquée en "issued" côté IOBILL, jamais transmise.
 //
-// Robustesse :
-//   - Si le PDF n'est pas encore prêt, paSendInvoice retourne une erreur
-//     ("PDF Factur-X absent") — dans ce cas on log et l'utilisateur peut
-//     retenter manuellement via le bouton "🏛️ Transmettre" côté IOBILL
-//   - Fire-and-forget : ne bloque JAMAIS la réponse au push_invoice
-//   - Idempotent : si la facture a déjà pdp_transmission_id, paSendInvoice
-//     retourne "Facture déjà transmise" (pas de double dépôt)
-function triggerAutoTransmitToPdp(company, invoiceId) {
-  Promise.resolve().then(async () => {
-    try {
-      // Import dynamique pour éviter les cycles d'import au top-level
-      const { paSendInvoice } = await import("./_lib/pa-actions.js");
-      // Petit délai : laisse le temps au triggerFacturxGeneration de finir.
-      // 3 secondes est un compromis raisonnable (généralement < 2s en pratique).
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const result = await paSendInvoice(company, { invoice_id: invoiceId });
-      console.log(
-        `[triggerAutoTransmit] OK invoice=${invoiceId} pa_document_id=${result.pa_document_id}`
-      );
-    } catch (e) {
-      // Ne pas throw : l'utilisateur pourra toujours cliquer manuellement
-      // "🏛️ Transmettre" depuis l'UI IOBILL si l'auto-transmit échoue.
-      console.warn(
-        `[triggerAutoTransmit] échec invoice=${invoiceId} : ${e.message || e}`
-      );
-    }
-  });
-}
+// Nouvelle approche : le chaînage se fait dans generate-facturx (autre worker
+// serverless avec son propre lifecycle). Fiabilité maximale.
+// Voir generate-facturx.js section "AUTO-TRANSMIT B2B après génération".
 
 // ───────────────────────────────────────────────────────────────────────────
 // v8.41 — PUSH_CREDIT_NOTE — Pousse un avoir externe vers la table credit_notes

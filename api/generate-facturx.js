@@ -271,6 +271,36 @@ async function handleRequest(req, res) {
   };
   await sbAdmin.update(cfg.table, `id=eq.${documentId}`, updatePayload);
 
+  // v8.60.2 — Chaînage AUTO-TRANSMIT B2B après génération du Factur-X
+  //
+  // Quand push_invoice a été appelé avec `auto_transmit: true` (typiquement
+  // IOCAR poussant une facture B2B en "issued"), le trigger a passé le flag
+  // `auto_transmit_after_generation` en body. On l'exécute maintenant, une
+  // fois le PDF/A-3 uploadé dans Storage.
+  //
+  // Fait dans CE worker (pas dans push_invoice) pour éviter le pattern Vercel
+  // fatal où le fire-and-forget meurt au res.json() du worker précédent.
+  //
+  // Erreur non fatale : si paSendInvoice échoue (auth SUPER PDP, doublon,
+  // etc.), on log et retourne quand même 200 pour la génération. L'utilisateur
+  // peut retenter manuellement via "🏛️ Transmettre" côté IOBILL.
+  if (body && body.auto_transmit_after_generation === true && documentType === "invoice") {
+    try {
+      const { paSendInvoice } = await import("./_lib/pa-actions.js");
+      const paResult = await paSendInvoice(company, { invoice_id: documentId });
+      console.log(
+        `[generate-facturx→autoTransmit] OK invoice=${documentId}`
+        + ` pa_document_id=${paResult.pa_document_id}`
+      );
+    } catch (e) {
+      console.warn(
+        `[generate-facturx→autoTransmit] échec invoice=${documentId} : ${e.message || e}`
+      );
+      // On continue et retourne 200 — le PDF est bien généré, l'user pourra
+      // retenter la transmission manuellement.
+    }
+  }
+
   return json(res, 200, {
     ok: true,
     pdf_url: pdfSigned,
