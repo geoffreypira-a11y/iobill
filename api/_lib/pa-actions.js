@@ -207,6 +207,18 @@ export async function paSendInvoice(company, payload) {
   if (inv.status === "draft") throw fail(400, "Émets la facture avant de la transmettre");
   if (inv.pdp_transmission_id) throw fail(409, "Facture déjà transmise (id " + inv.pdp_transmission_id + ")");
 
+  // v8.60.6 — Garde-fou B2C : refuser toute transmission PDP d'une facture
+  // dont le buyer est un particulier. La réforme française 2026 n'oblige à
+  // transmettre au PPF que le e-reporting agrégé pour le B2C, PAS la
+  // facture unitaire (qui reste hors circuit PA). Tenter de déposer une
+  // facture particulier dans SUPER PDP échoue systématiquement : le buyer
+  // n'est pas dans l'annuaire PPF (pas de SIREN ni peppol_address possible
+  // pour un individu) → rejet → facturx_status="rejected" écrit à tort.
+  const clientType = inv.client_snapshot?.client_type;
+  if (clientType === "individual") {
+    throw fail(400, "Transmission PDP interdite pour un particulier (B2C). Le circuit e-reporting n'exige pas le dépôt de la facture unitaire.");
+  }
+
   const bytes = await fetchFacturxPdf(inv);
   if (!bytes) throw fail(400, "PDF Factur-X absent — génère-le d'abord");
 
