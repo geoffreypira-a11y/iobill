@@ -1071,20 +1071,28 @@ async function handleUpdateInvoiceStatus(body, res) {
       }
     }
 
-    // v8.60.5 — Fix pattern Vercel fatal (même que v8.60.3 sur push_invoice) :
-    // triggerFacturxGeneration en fire-and-forget MEURT quand Vercel Hobby termine
-    // le worker au res.json() qui suit. Résultat en B2C : facture passe bien en
-    // paid mais Factur-X pas générée → utilisateur doit cliquer "Voir" pour que
-    // le fallback à la volée dans generate-facturx.js la produise.
-    // On rend l'appel synchrone : autoTransmitAfter=false (B2C ne transmet pas
-    // au PDP, uniquement génération PDF/A-3 + XML embedded).
+    // v8.60.8 — Auto-transmit conditionné B2C uniquement.
+    //
+    // Comportement attendu (défini avec Geoffrey) :
+    //   B2C particulier — clic "🚗 Livré" côté IOCAR déclenche tout en cascade :
+    //                     génération Factur-X + transmission SUPER PDP + fr:212.
+    //                     Cycle rapide 200 → 212, pas d'attente acheteur.
+    //   B2B société    — facture déjà transmise en amont par handlePushInvoiceIssued
+    //                     (statut "issued" avec auto_transmit=true). Ici on veut
+    //                     juste la génération, pas de re-transmission (paSendInvoice
+    //                     refuserait de toute façon avec pdp_transmission_id déjà posé).
+    //
+    // v8.60.5 (précédent) — Fix pattern Vercel fatal (fire-and-forget →
+    // triggerFacturxGenerationSync awaité) préservé pour les deux chemins.
     const becameNonDraft = isDraftStatus(inv.status) && !isDraftStatus(new_status);
     if (becameNonDraft && (!inv.facturx_status || inv.facturx_status === "pending")) {
+      const clientType = inv.client_snapshot?.client_type;
+      const isB2C = clientType === "individual";
       try {
-        await triggerFacturxGenerationSync(inv.id, "invoice", false);
-        console.log(`[update_invoice_status] v8.60.5 facturx sync OK invoice=${inv.id}`);
+        await triggerFacturxGenerationSync(inv.id, "invoice", isB2C);
+        console.log(`[update_invoice_status] v8.60.8 facturx sync OK invoice=${inv.id} isB2C=${isB2C} autoTransmit=${isB2C}`);
       } catch (e) {
-        console.warn(`[update_invoice_status] v8.60.5 facturx gen failed invoice=${inv.id}: ${e.message}`);
+        console.warn(`[update_invoice_status] v8.60.8 facturx gen failed invoice=${inv.id}: ${e.message}`);
       }
     }
 
