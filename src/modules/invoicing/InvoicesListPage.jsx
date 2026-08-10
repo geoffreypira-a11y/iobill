@@ -542,7 +542,11 @@ export function InvoicesListPage({ token, company }) {
                 const canDelete = !isExternal && inv.status === "draft";
                 // Transmettre PDP reste possible pour les factures externes
                 // (utile : la PDP est gérée centralement côté IOBILL)
-                const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
+                // v8.60.6 — Exclut les factures B2C : circuit e-reporting
+                // uniquement, pas de dépôt PA. paSendInvoice refuse aussi en
+                // back mais on cache le bouton côté UI pour éviter la confusion.
+                const isB2CInvoice = inv.client_snapshot?.client_type === "individual";
+                const canTransmit = !isB2CInvoice && ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
                 const alreadyTransmitted = !!inv.pdp_transmitted_at;
 
                 return (
