@@ -249,6 +249,21 @@ export async function paSendInvoice(company, payload) {
 
     return { ok: true, pa_document_id: out.pa_document_id };
   } catch (e) {
+    // v8.60.9-debug — Log complet de la réponse SUPER PDP en cas de rejet.
+    // req() dans pa-adapter.js remonte e.body avec le JSON de la réponse HTTP
+    // mais on n'en garde jusqu'ici que e.message (via body.message). Le reste
+    // (champs errors[], details[], code, hint…) est perdu, ce qui rend les
+    // rejets vagues type "Le régime de TVA est invalide" impossibles à
+    // diagnostiquer. Ce log capture tout dans Vercel logs. À supprimer une
+    // fois la cause identifiée (ou à conserver derrière un flag debug).
+    const debugStatus = e.status || "?";
+    const debugBody = e.body ? JSON.stringify(e.body).slice(0, 2000) : "no body";
+    console.error("[PA] v8.60.9-debug paSendInvoice REJECT invoice=" + inv.id
+      + " number=" + (inv.number || "?")
+      + " status=" + debugStatus
+      + " message=" + e.message
+      + " body=" + debugBody);
+
     await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: "rejected" });
     await logEvent({
       company_id: company.id, direction: "outbound", invoice_id: inv.id,
