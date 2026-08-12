@@ -953,8 +953,31 @@ async function handlePushInvoice(body, res) {
           // l'user pourra retenter la transmission manuellement.
         }
       } else {
-        // Comportement classique fire-and-forget pour draft/paid sans auto_transmit
-        triggerFacturxGeneration(invoiceRow.id, "invoice", false);
+        // v8.60.10.1 — Rendre synchrone même sans auto_transmit pour éviter
+        // le fire-and-forget mortel sur Vercel Hobby.
+        //
+        // Contexte : IOCAR handleMarkInvoicePaid a 2 branches (bridge iobill).
+        //   Cas 1 (order.iobill_invoice_id existe) → update_invoice_status
+        //         → handleUpdateInvoiceStatus fix v8.60.8 (déjà synchrone).
+        //   Cas 2 (fallback quand push_draft avait échoué avant) → push_invoice
+        //         DIRECT en status=paid sans auto_transmit → tombait ici en
+        //         fire-and-forget → PDF jamais généré → user devait cliquer
+        //         "Voir" pour forcer la génération à la volée.
+        //
+        // Fix : await synchrone comme la branche shouldAutoTransmit ci-dessus.
+        // Trade-off : push_invoice prend ~3-5s de plus quand ce chemin est
+        // emprunté, mais IOCAR fait déjà un fire-and-forget côté frontend
+        // (le user ne voit pas la latence). Vercel timeout 10s = large.
+        //
+        // On PRÉSERVE le comportement fire-and-forget pour les status draft
+        // (ce bloc n'est atteint que si !isDraftStatus(requestedStatus) ligne
+        // ci-dessus, donc juste pour paid/issued/sent sans auto_transmit).
+        try {
+          await triggerFacturxGenerationSync(invoiceRow.id, "invoice", false);
+          console.log(`[push_invoice] v8.60.10.1 facturx sync OK (non-auto-transmit) invoice=${invoiceRow.id} status=${requestedStatus}`);
+        } catch (e) {
+          console.warn(`[push_invoice] v8.60.10.1 facturx gen failed invoice=${invoiceRow.id}: ${e.message}`);
+        }
       }
     }
 
