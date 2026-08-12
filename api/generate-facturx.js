@@ -3,7 +3,7 @@
 // v8.14 : support des avoirs (credit_notes) en plus des factures (invoices)
 
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
-import { AFRelationship } from "pdf-lib";
+import { AFRelationship, PDFName, PDFString, PDFHexString, PDFRawStream, decodePDFRawStream } from "pdf-lib";
 import { buildDocumentPdf, uploadToStorage, signedUrl } from "./_lib/pdf-builder.js";
 import { notifyAdmin } from "./_lib/monitor.js";
 
@@ -40,6 +40,117 @@ const DOC_CONFIG = {
     issuedStatuses: ["issued"]
   }
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// v8.61.2 — PDF/A-3 : métadonnées XMP Factur-X
+//
+// Contexte : pdf-lib attache bien le XML (factur-x.xml) mais ne pose AUCUN
+// bloc XMP dans le catalogue. Résultat : le PDF n'est pas un PDF/A-3 déclaré,
+// et certains parseurs stricts (dont potentiellement SUPER PDP) ne savent pas
+// qu'un Factur-X est embarqué → ils affichent le PDF mais n'extraient pas les
+// métadonnées structurées (onglet "Général" vide).
+//
+// Le validateur tiers facturxapi.com signale ce défaut : NO_XMP_METADATA.
+//
+// Ce helper pose le paquet XMP minimal exigé par Factur-X :
+//   - namespace pdfaid (PDF/A part=3, conformance=B)
+//   - namespace fx (urn:factur-x) : DocumentType=INVOICE, DocumentFileName,
+//     Version=1.0, ConformanceLevel (mappé depuis le profil urn:...)
+//   - Dublin Core minimal (title)
+//
+// On mappe le profil interne (urn:factur-x.eu:1p0:basicwl) vers le
+// ConformanceLevel XMP attendu (BASIC WL, BASIC, EN 16931, etc.).
+// ═══════════════════════════════════════════════════════════════════
+function profileToConformanceLevel(profileUrn) {
+  const p = String(profileUrn || "").toLowerCase();
+  if (p.includes("minimum")) return "MINIMUM";
+  if (p.includes("basicwl")) return "BASIC WL";
+  if (p.includes("basic")) return "BASIC";
+  if (p.includes("en16931")) return "EN 16931";
+  if (p.includes("extended")) return "EXTENDED";
+  return "BASIC WL";
+}
+
+function buildFacturxXmp({ documentNumber, conformanceLevel, isCredit }) {
+  // Échappe le strict minimum pour rester bien formé dans le XMP.
+  const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+  const title = esc((isCredit ? "Avoir " : "Facture ") + (documentNumber || ""));
+  const docType = "INVOICE"; // Factur-X : toujours INVOICE, même pour un avoir (TypeCode 381 gère la distinction dans le CII)
+  return `<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+      <pdfaid:part>3</pdfaid:part>
+      <pdfaid:conformance>B</pdfaid:conformance>
+    </rdf:Description>
+    <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <dc:title>
+        <rdf:Alt>
+          <rdf:li xml:lang="x-default">${title}</rdf:li>
+        </rdf:Alt>
+      </dc:title>
+    </rdf:Description>
+    <rdf:Description rdf:about="" xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#">
+      <fx:DocumentType>${docType}</fx:DocumentType>
+      <fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>
+      <fx:Version>1.0</fx:Version>
+      <fx:ConformanceLevel>${esc(conformanceLevel)}</fx:ConformanceLevel>
+    </rdf:Description>
+    <rdf:Description rdf:about="" xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/" xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#" xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">
+      <pdfaExtension:schemas>
+        <rdf:Bag>
+          <rdf:li rdf:parseType="Resource">
+            <pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>
+            <pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>
+            <pdfaSchema:prefix>fx</pdfaSchema:prefix>
+            <pdfaSchema:property>
+              <rdf:Seq>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>DocumentFileName</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>Name of the embedded XML invoice file</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>DocumentType</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>INVOICE</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>Version</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>The actual version of the Factur-X data</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>ConformanceLevel</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>The conformance level of the Factur-X data</pdfaProperty:description>
+                </rdf:li>
+              </rdf:Seq>
+            </pdfaSchema:property>
+          </rdf:li>
+        </rdf:Bag>
+      </pdfaExtension:schemas>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+}
+
+// Pose le flux XMP dans le catalogue du PDF (/Metadata) + AFRelationship.
+async function applyPdfA3Metadata(pdfDoc, xmpString) {
+  const xmpBytes = new TextEncoder().encode(xmpString);
+  const stream = pdfDoc.context.stream(xmpBytes, {
+    Type: "Metadata",
+    Subtype: "XML",
+  });
+  const streamRef = pdfDoc.context.register(stream);
+  pdfDoc.catalog.set(PDFName.of("Metadata"), streamRef);
+}
 
 export default async function handler(req, res) {
   try {
@@ -236,6 +347,23 @@ async function handleRequest(req, res) {
     });
   } catch (e) {
     throw new Error("pdfDoc.attach: " + (e?.message || "?"));
+  }
+
+  // v8.61.2 — Pose les métadonnées XMP Factur-X (PDF/A-3) avant sauvegarde.
+  // Sans ce bloc, le PDF n'est pas un PDF/A-3 déclaré et certains parseurs
+  // n'extraient pas le XML embarqué (validateur tiers : NO_XMP_METADATA).
+  try {
+    const conformanceLevel = profileToConformanceLevel(cfg.profile);
+    const xmp = buildFacturxXmp({
+      documentNumber: doc.number,
+      conformanceLevel,
+      isCredit: documentType === "credit_note"
+    });
+    await applyPdfA3Metadata(pdfDoc, xmp);
+  } catch (e) {
+    // Non bloquant : si le XMP échoue, on garde le PDF sans (comportement
+    // pré-v8.61.2). On log pour diagnostic mais on ne casse pas la génération.
+    console.warn(`[generate-facturx] v8.61.2 XMP non posé invoice=${documentId}: ${e.message}`);
   }
 
   let pdfBytes;
