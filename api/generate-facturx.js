@@ -1,5 +1,7 @@
 // IO BILL - Generation Factur-X (PDF/A-3 + XML CII embarque)
-// Profil cible : BASIC WL — Reference : Factur-X 1.0.07 (FNFE-MPE)
+// Profil cible : EN16931 — Reference : Factur-X 1.0.07 (FNFE-MPE)
+// v8.61.3 : basculé BASIC WL → EN16931 (le XML contenait déjà les lignes,
+//           mais BASIC WL les interdit → XSD invalide. EN16931 les exige.)
 // v8.14 : support des avoirs (credit_notes) en plus des factures (invoices)
 
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
@@ -17,7 +19,7 @@ const DOC_CONFIG = {
     // en sandbox ("aucun validateur trouvé pour ce format de fichier").
     // On garde le bloc IncludedSupplyChainTradeLineItem par ligne, il ne
     // gêne pas BASIC WL mais servira quand SUPER PDP câblera EN16931.
-    profile: "urn:factur-x.eu:1p0:basicwl",
+    profile: "urn:cen.eu:en16931:2017",
     storageBucket: "invoices-pdf",
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
@@ -30,7 +32,7 @@ const DOC_CONFIG = {
     table: "credit_notes",
     lineType: "credit_note",
     typeCode: "381",          // Factur-X : 381 = Credit note
-    profile: "urn:factur-x.eu:1p0:basicwl",
+    profile: "urn:cen.eu:en16931:2017",
     storageBucket: "invoices-pdf", // même bucket — différencié par préfixe nom
     fxStatusColumn: "facturx_status",
     fxPdfColumn: "facturx_pdf_url",
