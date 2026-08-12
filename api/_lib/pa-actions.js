@@ -230,40 +230,39 @@ export async function paSendInvoice(company, payload) {
       message: "Facture " + (inv.number || "")
     });
 
-    // v8.57 — Auto-trigger fr:212 (encaissée) si la facture est déjà payée
-    // au moment de la transmission. Couvre le cas IOCAR B2C où la facture
-    // arrive dans IOBILL déjà soldée (paiement au comptoir + génération
-    // facture à la cession). SUPER PDP a besoin du fr:212 pour l'e-reporting
-    // paiement B2C et pour le cycle de vie B2B.
+    // v8.60.10 — fr:212 auto encaissée en SYNCHRONE (await).
     //
-    // Fire-and-forget : si le fr:212 échoue on ne bloque pas la transmission
-    // (elle a réussi). L'action pa_invoice_encaisser reste appelable
-    // manuellement par la suite pour rattraper.
+    // Contexte : ce mécanisme (v8.57) déclenche automatiquement fr:212 après
+    // la transmission fr:200 lorsque la facture est déjà payée. En B2C c'est
+    // le workflow standard : le clic "🚗 Livré" côté IOCAR passe la facture
+    // en paid, et immédiatement fr:200 (dépôt SUPER PDP) → fr:212 (e-reporting
+    // paiement) doivent s'enchaîner sans intervention utilisateur.
+    //
+    // Bug d'origine : appel en fire-and-forget (Promise sans await + .catch)
+    // → sur Vercel Hobby, le worker termine dès le `return { ok: true }`
+    // suivant, TUANT la promesse avant qu'elle atteigne le POST vers SUPER PDP.
+    // Résultat observable : facturx_status reste à "transmitted" pour toujours,
+    // Burger Queen ne fait jamais son e-reporting paiement B2C → hors conformité.
+    //
+    // Fix : await synchrone. Le catch garde le comportement de logger sans
+    // faire échouer paSendInvoice (la transmission fr:200 elle-même a réussi,
+    // pas de raison de la remonter en erreur si fr:212 rate — la commande
+    // pa_invoice_encaisser reste appelable manuellement pour rattraper).
+    //
+    // Même pattern que v8.60.3 sur push_invoice (triggerFacturxGenerationSync).
     if (inv.status === "paid" || inv.status === "encaissee") {
       // Recharge la version fraîche avec le pdp_transmission_id posé
       const invFresh = { ...inv, pdp_transmission_id: out.pa_document_id };
-      // Appelle la fonction sans await pour ne pas ralentir la réponse
-      paInvoiceEncaisser(company, { invoice_id: invFresh.id })
-        .catch((e) => console.warn("[PA] auto-fr:212 après transmission échoué :", e.message));
+      try {
+        await paInvoiceEncaisser(company, { invoice_id: invFresh.id });
+        console.log("[PA] v8.60.10 auto-fr:212 OK invoice=" + inv.id);
+      } catch (e) {
+        console.warn("[PA] v8.60.10 auto-fr:212 après transmission échoué : " + e.message);
+      }
     }
 
     return { ok: true, pa_document_id: out.pa_document_id };
   } catch (e) {
-    // v8.60.9-debug — Log complet de la réponse SUPER PDP en cas de rejet.
-    // req() dans pa-adapter.js remonte e.body avec le JSON de la réponse HTTP
-    // mais on n'en garde jusqu'ici que e.message (via body.message). Le reste
-    // (champs errors[], details[], code, hint…) est perdu, ce qui rend les
-    // rejets vagues type "Le régime de TVA est invalide" impossibles à
-    // diagnostiquer. Ce log capture tout dans Vercel logs. À supprimer une
-    // fois la cause identifiée (ou à conserver derrière un flag debug).
-    const debugStatus = e.status || "?";
-    const debugBody = e.body ? JSON.stringify(e.body).slice(0, 2000) : "no body";
-    console.error("[PA] v8.60.9-debug paSendInvoice REJECT invoice=" + inv.id
-      + " number=" + (inv.number || "?")
-      + " status=" + debugStatus
-      + " message=" + e.message
-      + " body=" + debugBody);
-
     await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: "rejected" });
     await logEvent({
       company_id: company.id, direction: "outbound", invoice_id: inv.id,
