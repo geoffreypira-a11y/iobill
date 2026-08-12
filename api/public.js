@@ -466,6 +466,10 @@ async function handleExternal(req, res) {
   if (action === "sync_company") return handleSyncCompany(body, res);
   if (action === "push_invoice") return handlePushInvoice(body, res);
   if (action === "update_invoice_status") return handleUpdateInvoiceStatus(body, res);
+  // v8.61 — Endpoint de polling léger pour IOCAR : récupère le statut PDP
+  // d'une liste de factures (max 100) pour rafraîchir l'UI côté IOCAR sans
+  // requêtes 1-par-1. Voir handleGetInvoicesStatus plus bas.
+  if (action === "get_invoices_status") return handleGetInvoicesStatus(body, res);
   // v8.41 — Avoirs IOCAR → table credit_notes IOBILL (avec lien invoice_id parent)
   if (action === "push_credit_note") return handlePushCreditNote(body, res);
   // v8.43 — CRM mono-source : sync proactive depuis l'app source
@@ -1139,6 +1143,104 @@ async function handleUpdateInvoiceStatus(body, res) {
     });
   } catch (err) {
     console.error("[external/update_invoice_status] ERROR:", err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// GET_INVOICES_STATUS (v8.61) — Polling léger pour IOCAR
+//
+// Contexte : après avoir transmis une facture B2B à SUPER PDP, IOCAR doit
+// suivre son cycle de vie (fr:200 → fr:211 → fr:212) sans avoir à recharger
+// la page manuellement. Ce endpoint permet à IOCAR d'interroger IOBILL par
+// batch (une seule requête pour N factures en attente) toutes les 30-60s
+// et de mettre à jour les statuts locaux.
+//
+// Endpoint idempotent, en lecture seule, sécurisé par token IOCAR.
+//
+// Body :
+//   {
+//     token: <iobill_api_token>,
+//     external_ids: [<uuid1>, <uuid2>, ...]   // max 100
+//   }
+//
+// Retour :
+//   {
+//     ok: true,
+//     invoices: [
+//       {
+//         external_id: <uuid>,
+//         number: "VEH-2026-0021",
+//         status: "issued" | "paid" | "sent" | ...,
+//         facturx_status: "pending" | "generated" | "transmitted" | "payment_sent" | "paid" | "rejected",
+//         pdp_transmission_id: <string|null>,
+//         pdp_transmitted_at: <iso|null>,
+//         paid_cents: <int>,
+//         total_ttc_cents: <int>,
+//         updated_at: <iso>
+//       },
+//       ...
+//     ]
+//   }
+//
+// Les factures introuvables (pas dans le périmètre de la company) sont
+// silencieusement omises du tableau retour — pas d'erreur, IOCAR peut
+// simplement les considérer inchangées ou les retirer du polling.
+// ───────────────────────────────────────────────────────────────────────────
+async function handleGetInvoicesStatus(body, res) {
+  const company = await resolveCompanyFromToken(body.token);
+  if (!company) return json(res, 401, { error: "Invalid token" });
+
+  const { external_ids } = body;
+  if (!Array.isArray(external_ids)) {
+    return json(res, 400, { error: "external_ids required (array)" });
+  }
+  if (external_ids.length === 0) {
+    return json(res, 200, { ok: true, invoices: [] });
+  }
+  if (external_ids.length > 100) {
+    return json(res, 400, { error: "external_ids max 100 per call" });
+  }
+
+  // Sanitize : garder uniquement des strings non vides, encoder pour PostgREST
+  const cleanIds = external_ids
+    .filter((x) => typeof x === "string" && x.trim().length > 0)
+    .map((x) => encodeURIComponent(x.trim()));
+  if (cleanIds.length === 0) {
+    return json(res, 200, { ok: true, invoices: [] });
+  }
+
+  try {
+    // Filtre PostgREST : company_id + external_source + external_id IN (...)
+    // La combinaison (company_id, external_source, external_id) est unique
+    // par construction : impossible de récupérer des factures hors périmètre.
+    const inClause = `in.(${cleanIds.join(",")})`;
+    const rows = await sbAdmin.select("invoices", {
+      filter:
+        `company_id=eq.${company.id}` +
+        `&external_source=eq.${company.source_app}` +
+        `&external_id=${inClause}`,
+      select:
+        "external_id,number,status,facturx_status,pdp_transmission_id,pdp_transmitted_at,paid_cents,total_ttc_cents,updated_at",
+      limit: 100
+    });
+
+    return json(res, 200, {
+      ok: true,
+      invoices: (rows || []).map((inv) => ({
+        external_id: inv.external_id,
+        number: inv.number,
+        status: inv.status,
+        facturx_status: inv.facturx_status || "pending",
+        pdp_transmission_id: inv.pdp_transmission_id || null,
+        pdp_transmitted_at: inv.pdp_transmitted_at || null,
+        paid_cents: inv.paid_cents || 0,
+        total_ttc_cents: inv.total_ttc_cents || 0,
+        updated_at: inv.updated_at
+      }))
+    });
+  } catch (err) {
+    console.error("[external/get_invoices_status] ERROR:", err);
     return json(res, 500, { error: String(err.message || err) });
   }
 }
