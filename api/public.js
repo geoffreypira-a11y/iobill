@@ -953,30 +953,40 @@ async function handlePushInvoice(body, res) {
           // l'user pourra retenter la transmission manuellement.
         }
       } else {
-        // v8.60.10.1 — Rendre synchrone même sans auto_transmit pour éviter
-        // le fire-and-forget mortel sur Vercel Hobby.
+        // v8.60.10.2 — Auto-transmit conditionné B2C aussi sur ce chemin.
         //
-        // Contexte : IOCAR handleMarkInvoicePaid a 2 branches (bridge iobill).
-        //   Cas 1 (order.iobill_invoice_id existe) → update_invoice_status
-        //         → handleUpdateInvoiceStatus fix v8.60.8 (déjà synchrone).
-        //   Cas 2 (fallback quand push_draft avait échoué avant) → push_invoice
-        //         DIRECT en status=paid sans auto_transmit → tombait ici en
-        //         fire-and-forget → PDF jamais généré → user devait cliquer
-        //         "Voir" pour forcer la génération à la volée.
+        // Contexte : ce bloc est atteint quand IOCAR handleMarkInvoicePaid
+        // fait un push direct paid (Cas 2 fallback, quand push_draft avait
+        // échoué avant OU quand le worker Vercel avait timeout au push initial
+        // et IOCAR retente en direct paid).
         //
-        // Fix : await synchrone comme la branche shouldAutoTransmit ci-dessus.
+        // v8.60.10.1 (précédent) a rendu la génération synchrone (fix Vercel
+        // Hobby fire-and-forget) mais avec `autoTransmitAfter=false` en dur
+        // → le PDF est bien produit mais aucune transmission SUPER PDP
+        // enchaînée → l'utilisateur B2C devait cliquer "Transmettre" à la main.
+        //
+        // v8.60.10.2 : on lit client_snapshot.client_type comme le fait
+        // handleUpdateInvoiceStatus (v8.60.8), et on active auto-transmit
+        // pour les particuliers B2C.
+        //   B2C particulier → autoTransmit=true → cycle 200→212 automatique
+        //   B2B société    → autoTransmit=false → juste génération (facture
+        //                    déjà transmise en amont par handlePushInvoiceIssued
+        //                    ou transmission manuelle si l'utilisateur veut)
+        //
+        // Symétrie parfaite avec v8.60.8 : les 2 chemins B2C (Cas 1 nominal
+        // via update_invoice_status ET Cas 2 fallback via push_invoice direct
+        // paid) enchaînent maintenant la transmission automatiquement.
+        //
         // Trade-off : push_invoice prend ~3-5s de plus quand ce chemin est
-        // emprunté, mais IOCAR fait déjà un fire-and-forget côté frontend
-        // (le user ne voit pas la latence). Vercel timeout 10s = large.
-        //
-        // On PRÉSERVE le comportement fire-and-forget pour les status draft
-        // (ce bloc n'est atteint que si !isDraftStatus(requestedStatus) ligne
-        // ci-dessus, donc juste pour paid/issued/sent sans auto_transmit).
+        // emprunté avec isB2C, mais IOCAR fait déjà un fire-and-forget côté
+        // frontend (le user ne voit pas la latence). Vercel timeout 10s = large.
+        const clientType = invoiceRow.client_snapshot?.client_type;
+        const isB2C = clientType === "individual";
         try {
-          await triggerFacturxGenerationSync(invoiceRow.id, "invoice", false);
-          console.log(`[push_invoice] v8.60.10.1 facturx sync OK (non-auto-transmit) invoice=${invoiceRow.id} status=${requestedStatus}`);
+          await triggerFacturxGenerationSync(invoiceRow.id, "invoice", isB2C);
+          console.log(`[push_invoice] v8.60.10.2 facturx sync OK invoice=${invoiceRow.id} status=${requestedStatus} isB2C=${isB2C} autoTransmit=${isB2C}`);
         } catch (e) {
-          console.warn(`[push_invoice] v8.60.10.1 facturx gen failed invoice=${invoiceRow.id}: ${e.message}`);
+          console.warn(`[push_invoice] v8.60.10.2 facturx gen failed invoice=${invoiceRow.id}: ${e.message}`);
         }
       }
     }
