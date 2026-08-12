@@ -443,6 +443,54 @@ async function handleRequest(req, res) {
 // XML CII : commun factures/avoirs, différencié par TypeCode
 // (380 = facture, 381 = avoir)
 // ─────────────────────────────────────────────────────────────
+// v8.61.3 — Mappe une unité (saisie libre ou code) vers un code UN/ECE Rec 20
+// valide (exigé par EN16931 pour @unitCode). Retombe sur C62 (unité/pièce)
+// pour toute valeur non reconnue. Les codes déjà valides sont conservés tels quels.
+const UN_ECE_UNIT_MAP = {
+  // Unité / pièce
+  "u": "C62", "unite": "C62", "unité": "C62", "unites": "C62", "unités": "C62",
+  "piece": "H87", "pièce": "H87", "pieces": "H87", "pièces": "H87", "pce": "H87", "pcs": "H87", "pc": "H87",
+  "ea": "C62", "each": "C62",
+  // Temps
+  "h": "HUR", "heure": "HUR", "heures": "HUR", "hr": "HUR", "hrs": "HUR",
+  "j": "DAY", "jour": "DAY", "jours": "DAY", "day": "DAY",
+  "min": "MIN", "minute": "MIN", "minutes": "MIN",
+  "mois": "MON", "month": "MON",
+  "an": "ANN", "ans": "ANN", "annee": "ANN", "année": "ANN", "year": "ANN",
+  "sem": "WEE", "semaine": "WEE", "week": "WEE",
+  // Masse
+  "kg": "KGM", "kilo": "KGM", "kilos": "KGM", "kilogramme": "KGM",
+  "g": "GRM", "gramme": "GRM", "grammes": "GRM",
+  "t": "TNE", "tonne": "TNE", "tonnes": "TNE",
+  // Longueur
+  "m": "MTR", "metre": "MTR", "mètre": "MTR", "metres": "MTR", "mètres": "MTR",
+  "cm": "CMT", "mm": "MMT", "km": "KMT",
+  // Surface / volume
+  "m2": "MTK", "m²": "MTK", "m3": "MTQ", "m³": "MTQ",
+  "l": "LTR", "litre": "LTR", "litres": "LTR",
+  "ml": "MLT",
+  // Forfait / divers → unité
+  "forfait": "C62", "ff": "C62", "lot": "C62", "ens": "C62", "ensemble": "C62",
+  "pourcentage": "P1", "%": "P1",
+  "kwh": "KWH", "kw": "KWT"
+};
+// Set des codes UN/ECE valides déjà (si l'utilisateur a saisi un vrai code).
+// Liste courante suffisante ; tout code inconnu tombe sur C62.
+const UN_ECE_VALID = new Set(["C62","H87","HUR","DAY","MIN","MON","ANN","WEE",
+  "KGM","GRM","TNE","MTR","CMT","MMT","KMT","MTK","MTQ","LTR","MLT","P1","KWH",
+  "KWT","SET","NPR","XPP","XBX","XCT","D64","LS"]);
+function mapUnitCode(raw) {
+  if (!raw) return "C62";
+  const s = String(raw).trim();
+  if (!s) return "C62";
+  // Déjà un code valide (insensible à la casse pour les codes normés en MAJ) ?
+  const up = s.toUpperCase();
+  if (UN_ECE_VALID.has(up)) return up;
+  // Libellé libre → mappe (insensible à la casse)
+  const mapped = UN_ECE_UNIT_MAP[s.toLowerCase()];
+  return mapped || "C62";
+}
+
 function buildFacturxXml({ doc, lines, company, cfg }) {
   const cs = doc.client_snapshot || {};
   const co = doc.company_snapshot || company;
@@ -558,7 +606,14 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       // ligne de facture. BASIC WL ne l'imposait pas ; EN16931 oui.
       return (lines || []).map((l, i) => {
         const qty = Number(l.quantity ?? 1);
-        const unit = l.unit || "C62"; // C62 = unité par défaut UN/ECE
+        // v8.61.3 — Fix règle EN16931 "Value of '@unitCode' is not allowed".
+        // Le unitCode DOIT être un code UN/ECE Rec 20 valide. Les factures
+        // natives IOBILL laissaient passer la saisie libre ("u", "pièce", "h"…)
+        // directement en unitCode → invalide (le Schematron EN16931 vérifie
+        // contre la liste officielle → rejet SUPER PDP B2B).
+        // On mappe les libellés courants FR/libres vers leur code UN/ECE, et
+        // on retombe sur C62 (unité/pièce) si l'unité n'est pas reconnue.
+        const unit = mapUnitCode(l.unit);
         const unitPriceC = Number(l.unit_price_ht_cents ?? 0);
         const lineHtC = Number(l.line_ht_cents ?? Math.round(unitPriceC * qty));
         const rate = Number(l.vat_rate ?? 20);
