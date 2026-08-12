@@ -143,6 +143,28 @@ function buildFacturxXmp({ documentNumber, conformanceLevel, isCredit }) {
 <?xpacket end="w"?>`;
 }
 
+// v8.61.3 — Profil ICC sRGB (IEC61966-2.1) embarqué en base64 pour l'OutputIntent
+// PDF/A-3. Requis : un PDF/A-3 DOIT déclarer un OutputIntent avec profil ICC,
+// sinon l'enveloppe n'est pas un PDF/A-3 valide → SUPER PDP refuse d'extraire
+// le Factur-X embarqué (métadonnées "Général" vides). Généré via sRGB standard.
+const SRGB_ICC_B64 = "AAACTGxjbXMEQAAAbW50clJHQiBYWVogB+oACAAMABYAMwAsYWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1sY21zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALZGVzYwAAAQgAAAA2Y3BydAAAAUAAAABMd3RwdAAAAYwAAAAUY2hhZAAAAaAAAAAsclhZWgAAAcwAAAAUYlhZWgAAAeAAAAAUZ1hZWgAAAfQAAAAUclRSQwAAAggAAAAgZ1RSQwAAAggAAAAgYlRSQwAAAggAAAAgY2hybQAAAigAAAAkbWx1YwAAAAAAAAABAAAADGVuVVMAAAAaAAAAHABzAFIARwBCACAAYgB1AGkAbAB0AC0AaQBuAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAADAAAAAcAE4AbwAgAGMAbwBwAHkAcgBpAGcAaAB0ACwAIAB1AHMAZQAgAGYAcgBlAGUAbAB5WFlaIAAAAAAAAPbWAAEAAAAA0y1zZjMyAAAAAAABDEIAAAXe///zJQAAB5MAAP2Q///7of///aIAAAPcAADAblhZWiAAAAAAAABvoAAAOPUAAAOQWFlaIAAAAAAAACSfAAAPhAAAtsNYWVogAAAAAAAAYpcAALeHAAAY2XBhcmEAAAAAAAMAAAACZmYAAPKnAAANWQAAE9AAAApbY2hybQAAAAAAAwAAAACj1wAAVHsAAEzNAACZmgAAJmYAAA9c";
+
+// Ajoute l'OutputIntent PDF/A-3 (profil colorimétrique sRGB) au catalogue.
+async function applyPdfA3OutputIntent(pdfDoc) {
+  const iccBytes = Uint8Array.from(atob(SRGB_ICC_B64), (c) => c.charCodeAt(0));
+  const iccStream = pdfDoc.context.stream(iccBytes, { N: 3 });
+  const iccRef = pdfDoc.context.register(iccStream);
+  const outputIntent = pdfDoc.context.obj({
+    Type: "OutputIntent",
+    S: "GTS_PDFA1",
+    OutputConditionIdentifier: PDFString.of("sRGB"),
+    Info: PDFString.of("sRGB IEC61966-2.1"),
+    DestOutputProfile: iccRef,
+  });
+  const oiRef = pdfDoc.context.register(outputIntent);
+  pdfDoc.catalog.set(PDFName.of("OutputIntents"), pdfDoc.context.obj([oiRef]));
+}
+
 // Pose le flux XMP dans le catalogue du PDF (/Metadata) + AFRelationship.
 async function applyPdfA3Metadata(pdfDoc, xmpString) {
   const xmpBytes = new TextEncoder().encode(xmpString);
@@ -362,6 +384,7 @@ async function handleRequest(req, res) {
       isCredit: documentType === "credit_note"
     });
     await applyPdfA3Metadata(pdfDoc, xmp);
+    await applyPdfA3OutputIntent(pdfDoc);
   } catch (e) {
     // Non bloquant : si le XMP échoue, on garde le PDF sans (comportement
     // pré-v8.61.2). On log pour diagnostic mais on ne casse pas la génération.
