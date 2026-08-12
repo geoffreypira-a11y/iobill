@@ -685,7 +685,18 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       </ram:BuyerTradeParty>
       ${billingRefBlock}
     </ram:ApplicableHeaderTradeAgreement>
-    <ram:ApplicableHeaderTradeDelivery/>
+    <!-- v8.61.3 — Fix règle PEPPOL-EN16931-R008 : "Document MUST not contain
+         empty elements". L'élément ApplicableHeaderTradeDelivery était auto-fermant
+         (vide), ce qui violait la règle Schematron EN16931 → rejet SUPER PDP côté
+         B2B (le B2C tolérait, pas le B2B). Le XSD EN16931 EXIGE néanmoins la
+         présence de l'élément → on le remplit avec la date de livraison effective
+         (= date de livraison si dispo, sinon date d'émission). Satisfait XSD ET
+         Schematron simultanément (validé contre les schémas officiels FNFE-MPE). -->
+    <ram:ApplicableHeaderTradeDelivery>
+      <ram:ActualDeliverySupplyChainEvent>
+        <ram:OccurrenceDateTime><udt:DateTimeString format="102">${dt(doc.delivery_date || doc.issue_date)}</udt:DateTimeString></ram:OccurrenceDateTime>
+      </ram:ActualDeliverySupplyChainEvent>
+    </ram:ApplicableHeaderTradeDelivery>
     <ram:ApplicableHeaderTradeSettlement>
       <ram:InvoiceCurrencyCode>${cur}</ram:InvoiceCurrencyCode>
       ${vatBlocks}
