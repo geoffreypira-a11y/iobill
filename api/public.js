@@ -1133,13 +1133,49 @@ async function handleUpdateInvoiceStatus(body, res) {
       }
     }
 
+    // v8.61.1 — fr:212 sur transition "payé après coup" d'une facture DÉJÀ transmise.
+    //
+    // Cas B2B nominal (VEH-2026-0027) : la facture a été émise + transmise à
+    // SUPER PDP en amont via handlePushInvoiceIssued (status=issued, PAS encore
+    // payée). paSendInvoice n'a donc PAS pu émettre le fr:212 auto — il ne le
+    // fait que si la facture est déjà "paid"/"encaissee" AU MOMENT de la
+    // transmission. Quand on la marque payée ICI (clic "Livré" B2B, ou bypass
+    // carte bleue une fois codé), il faut émettre le fr:212 nous-mêmes, sinon
+    // facturx_status reste bloqué à "transmitted" → non conforme (encaissement
+    // jamais e-reporté) et le cycle AFNOR ne se ferme jamais.
+    //
+    // Le chemin B2C nominal (Livré = payé + transmis d'un coup) reste géré par
+    // paSendInvoice (fr:212 auto à la transmission car status déjà paid), donc
+    // on ne double-émet pas : paInvoiceEncaisser est idempotent (skip si un
+    // event invoice.paid existe déjà pour cette facture).
+    let finalFacturxStatus = updated[0].facturx_status || "pending";
+    const nowPaid = new_status === "paid" || new_status === "encaissee";
+    const alreadyTransmitted = !!inv.pdp_transmission_id;
+    const fxTerminal = finalFacturxStatus === "paid" || finalFacturxStatus === "rejected";
+    if (nowPaid && alreadyTransmitted && !fxTerminal) {
+      try {
+        const pa = await import("./_lib/pa-actions.js");
+        const r212 = await pa.paInvoiceEncaisser(company, { invoice_id: inv.id });
+        if (r212 && r212.ok && !r212.skipped) {
+          finalFacturxStatus = "paid";
+          console.log(`[update_invoice_status] v8.61.1 fr:212 émis (paiement après transmission) invoice=${inv.id}`);
+        } else {
+          console.log(`[update_invoice_status] v8.61.1 fr:212 no-op invoice=${inv.id} skipped=${r212 && r212.skipped}`);
+        }
+      } catch (e) {
+        // Best-effort : la mise à jour du statut a réussi, on ne remonte pas
+        // en erreur si le fr:212 rate (rattrapable manuellement via pa_status).
+        console.warn(`[update_invoice_status] v8.61.1 fr:212 échec invoice=${inv.id}: ${e.message}`);
+      }
+    }
+
     return json(res, 200, {
       ok: true,
       invoice_id: inv.id,
       invoice_number: inv.number,
       status: new_status,
       pdf_url: updated[0].facturx_pdf_url || updated[0].pdf_url || null,
-      facturx_status: updated[0].facturx_status || "pending"
+      facturx_status: finalFacturxStatus
     });
   } catch (err) {
     console.error("[external/update_invoice_status] ERROR:", err);
@@ -1215,15 +1251,29 @@ async function handleGetInvoicesStatus(body, res) {
     // La combinaison (company_id, external_source, external_id) est unique
     // par construction : impossible de récupérer des factures hors périmètre.
     const inClause = `in.(${cleanIds.join(",")})`;
+    const filterStr =
+      `company_id=eq.${company.id}` +
+      `&external_source=eq.${company.source_app}` +
+      `&external_id=${inClause}`;
+    // v8.61.6 — DEBUG polling : trace précise si polled>0 mais updated=0
+    console.log(`[get_invoices_status] company_id=${company.id} source_app=${company.source_app} cleanIds.length=${cleanIds.length} filter=${filterStr.slice(0, 300)}`);
     const rows = await sbAdmin.select("invoices", {
-      filter:
-        `company_id=eq.${company.id}` +
-        `&external_source=eq.${company.source_app}` +
-        `&external_id=${inClause}`,
+      filter: filterStr,
       select:
         "external_id,number,status,facturx_status,pdp_transmission_id,pdp_transmitted_at,paid_cents,total_ttc_cents,updated_at",
       limit: 100
     });
+    console.log(`[get_invoices_status] rows returned=${(rows || []).length}`);
+    if ((rows || []).length === 0 && cleanIds.length > 0) {
+      // Fallback : refaire la requête SANS le filtre external_source, pour
+      // vérifier si c'est ce filtre qui casse le match
+      const fallbackRows = await sbAdmin.select("invoices", {
+        filter: `company_id=eq.${company.id}&external_id=${inClause}`,
+        select: "external_id,external_source,number,facturx_status",
+        limit: 100
+      });
+      console.log(`[get_invoices_status] fallback (no external_source filter) rows=${(fallbackRows || []).length} sample=${JSON.stringify((fallbackRows || []).slice(0, 2))}`);
+    }
 
     return json(res, 200, {
       ok: true,
