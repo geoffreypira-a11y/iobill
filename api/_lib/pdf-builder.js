@@ -398,7 +398,16 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   }
 
   // v8.39 — Détermine le régime TVA pour adapter l'affichage
-  const isMargeTva = doc.vat_regime === "margin_297a" || company.vat_regime === "margin_297a";
+  // v8.63 — On distingue DEUX notions :
+  //   • isMargin      = la facture relève du régime marge (pilote la MENTION 297 A)
+  //   • isMargeTva    = on bascule le tableau en TTC SANS colonne TVA — UNIQUEMENT
+  //                     si TOUTES les lignes sont en marge. Dès qu'une ligne est
+  //                     taxable (frais de mise à disposition à 20 %), on garde le
+  //                     tableau HT + TVA + Total pour que la TVA des frais reste
+  //                     VISIBLE (obligation légale + cohérence avec l'aperçu IOCAR).
+  const isMargin = doc.vat_regime === "margin_297a" || company.vat_regime === "margin_297a";
+  const hasTaxableLine = (lines || []).some((l) => Number(l.vat_rate) > 0);
+  const isMargeTva = isMargin && !hasTaxableLine;
 
   // ─── Tableau des lignes — v8.40.2 : alignement propre dans cellules ─
   //
@@ -516,7 +525,9 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     drawInCell(unit, 2, baselineY, 9, font, COLORS.dark);
     drawInCell(pu + " €", 3, baselineY, 9, font, COLORS.dark);
     if (!isMargeTva) {
-      drawInCell(Number(l.vat_rate).toFixed(0) + "%", 4, baselineY, 9, font, COLORS.dark);
+      // v8.63 — "—" sur les lignes en marge (taux 0), "20%" sur les lignes taxables.
+      const vatCell = Number(l.vat_rate) > 0 ? Number(l.vat_rate).toFixed(0) + "%" : "—";
+      drawInCell(vatCell, 4, baselineY, 9, font, COLORS.dark);
       drawInCell(ht + " €", 5, baselineY, 9, font, COLORS.dark);
     } else {
       drawInCell(ht + " €", 4, baselineY, 9, font, COLORS.dark);
@@ -574,7 +585,9 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     drawRight(page, formatEUR(doc.subtotal_ht_cents), width - 40, y, 9, font, COLORS.dark);
     y -= 14;
 
-    for (const v of (doc.vat_breakdown || [])) {
+    // v8.63 — On n'affiche que les taux > 0 (pas de ligne "TVA 0%" pour la part
+    // marge, dont la TVA n'est pas mentionnée — art. 297 E).
+    for (const v of (doc.vat_breakdown || []).filter((v) => Number(v.rate) > 0)) {
       page.drawText(`TVA ${Number(v.rate).toFixed(0)}%`, { x: totalsX, y, size: 9, font, color: COLORS.grey });
       drawRight(page, formatEUR(v.vat_cents), width - 40, y, 9, font, COLORS.dark);
       y -= 14;
@@ -806,9 +819,11 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // Puis doc.vat_regime (par-facture, plus précis que la company)
   // Sinon fallback selon company.vat_regime
   // v8.39 — On utilise la variable isMargeTva calculée plus haut pour cohérence
+  // v8.63 — Mention basée sur isMargin (le régime) et non sur le layout : elle
+  // doit rester présente même sur une facture mixte (véhicule marge + frais 20 %).
   if (doc.vat_legal_mention) {
     foot = drawWrapped(page, doc.vat_legal_mention, 40, foot, width - 80, font, 8, COLORS.grey, 11) - 6;
-  } else if (isMargeTva) {
+  } else if (isMargin) {
     // Mention TVA marge (régime spécifique aux véhicules d'occasion, brocanteurs, etc.)
     foot = drawWrapped(
       page,
