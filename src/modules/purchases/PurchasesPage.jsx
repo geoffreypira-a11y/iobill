@@ -64,6 +64,7 @@ export function PurchasesPage({ token, company }) {
           if (prev[i]?.id !== newList[i].id) return newList;
           if (prev[i]?.status !== newList[i].status) return newList;
           if (prev[i]?.paid_cents !== newList[i].paid_cents) return newList;
+          if (prev[i]?.vat_deductible_cents !== newList[i].vat_deductible_cents) return newList;
         }
         return prev;
       });
@@ -354,13 +355,23 @@ export function PurchasesPage({ token, company }) {
                         const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
                         const isFull = dedC >= vatC, isNone = dedC <= 0;
                         const lbl = isNone ? "Non récup." : isFull ? "Récup. totale" : `Récup. ${Math.round((dedC / vatC) * 100)}%`;
-                        const col = isNone ? "var(--red)" : isFull ? "var(--green)" : "var(--gold)";
+                        const tint = isNone
+                          ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
+                          : isFull
+                            ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
+                            : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
                         return (
-                          <div
-                            onClick={() => setDeductibleFor(p)}
-                            title="Modifier la TVA récupérable"
-                            style={{ fontSize: 9, marginTop: 2, color: col, cursor: "pointer", textDecoration: "underline dotted", fontWeight: 600 }}
-                          >{lbl}</div>
+                          <div style={{ marginTop: 4 }}>
+                            <span
+                              onClick={() => setDeductibleFor(p)}
+                              title="Modifier la TVA récupérable"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                                cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
+                              }}
+                            >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
+                          </div>
                         );
                       })()}
                     </td>
@@ -512,16 +523,17 @@ export function PurchasesPage({ token, company }) {
         />
       )}
 
-      {/* ─── v8.63 — Mini-éditeur TVA récupérable (accès rapide depuis la liste) ─── */}
+      {/* ─── v8.64 — Mini-éditeur TVA récupérable (accès rapide depuis la liste) ─── */}
       {deductibleFor && (
         <DeductibleQuickModal
           token={token}
           company={company}
           purchase={deductibleFor}
           onClose={() => setDeductibleFor(null)}
-          onSaved={() => {
+          onSaved={(newDedCents) => {
+            // Mise à jour optimiste : le badge se met à jour immédiatement.
+            setPurchases((prev) => prev.map((x) => x.id === deductibleFor.id ? { ...x, vat_deductible_cents: newDedCents } : x));
             setDeductibleFor(null);
-            refreshPurchases(true);
             showToast("TVA récupérable mise à jour ✓");
           }}
         />
@@ -692,7 +704,7 @@ function DeductibleQuickModal({ token, company, purchase, onClose, onSaved }) {
     await sb.update(token, "purchases", `id=eq.${purchase.id}`, { vat_deductible_cents: dedC });
     syncVatCurrentPeriod(token, company);
     setSaving(false);
-    onSaved && onSaved();
+    onSaved && onSaved(dedC);
   }
 
   return (
@@ -1212,18 +1224,19 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
             <Field label="Total TTC" value={data.total_ttc} onChange={(v) => update("total_ttc", v)} type="number" step="0.01" />
           </div>
 
-          {/* v8.63 (P2b-1) — TVA récupérable. Affiché uniquement si l'achat a de la
-              TVA. Pré-rempli Totale. Alimente le bloc 3 de la déclaration TVA. */}
+          {/* v8.64 (P2b-1) — TVA récupérable, style natif du formulaire (pas de
+              boîte rapportée). Affiché uniquement si l'achat a de la TVA. */}
           {parseFloat(data.vat_total) > 0 && (() => {
             const vatC = toCents(data.vat_total);
             const dedC = dedMode === "full" ? vatC : dedMode === "none" ? 0 : Math.min(vatC, Math.max(0, toCents(dedPartial)));
             const dedPct = vatC > 0 ? Math.round((dedC / vatC) * 100) : 0;
+            const dedCol = dedMode === "none" ? "var(--red)" : dedMode === "full" ? "var(--green)" : "var(--gold)";
             const modes = [["full", "Totale"], ["partial", "Partielle"], ["none", "Non récupérable"]];
             return (
-              <div style={{ marginTop: 4, padding: "10px 12px", background: "var(--card2, rgba(255,255,255,0.03))", borderRadius: 8, border: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
-                <div style={{ fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--muted)", marginBottom: 8, fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
+              <div style={{ marginTop: 8, paddingTop: 12, borderTop: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--muted)", marginBottom: 8, fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span>TVA récupérable</span>
-                  <span style={{ color: "var(--green)", fontWeight: 700 }}>{fmtEUR(dedC)}</span>
+                  <span style={{ color: dedCol, fontWeight: 700, fontSize: 14 }}>{fmtEUR(dedC)}</span>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   {modes.map(([m, lbl]) => (
