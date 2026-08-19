@@ -846,6 +846,14 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
   const [err, setErr] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
 
+  // v8.63 (P2b-1) — TVA récupérable. Défaut = Totale (100 % déductible). Un achat
+  // existant sans valeur (NULL) est traité comme Totale. Le montant réellement
+  // déductible est borné à [0, TVA totale]. Sert au bloc 3 de la déclaration.
+  const _initVatC = purchase?.vat_total_cents || 0;
+  const _initDedC = purchase?.vat_deductible_cents != null ? purchase.vat_deductible_cents : _initVatC;
+  const [dedMode, setDedMode] = useState(_initDedC <= 0 ? "none" : (_initDedC >= _initVatC ? "full" : "partial"));
+  const [dedPartial, setDedPartial] = useState(fromCents(_initDedC).toFixed(2));
+
   function onCameraCapture(blob, dataUrl) {
     // On reconstruit un File avec un nom plausible pour l'OCR
     const fileName = `scan-${Date.now()}.jpg`;
@@ -947,6 +955,13 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
       }
     }
 
+    // v8.63 (P2b-1) — TVA déductible réelle, bornée à [0, TVA totale].
+    const _vatTotalC = toCents(data.vat_total);
+    const vat_deductible_cents =
+      dedMode === "full" ? _vatTotalC :
+      dedMode === "none" ? 0 :
+      Math.min(_vatTotalC, Math.max(0, toCents(dedPartial)));
+
     const payload = {
       vendor_name: data.vendor_name.trim(),
       vendor_siret: data.vendor_siret.trim() || null,
@@ -956,6 +971,7 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
       due_date: data.due_date || null,
       subtotal_ht_cents: toCents(data.subtotal_ht),
       vat_total_cents: toCents(data.vat_total),
+      vat_deductible_cents,
       total_ttc_cents: toCents(data.total_ttc),
       category: data.category || null,
       accounting_code: data.accounting_code || null,
@@ -1094,6 +1110,50 @@ function PurchaseModal({ token, company, purchase, onSave, onDelete, onClose }) 
             <Field label="TVA" value={data.vat_total} onChange={(v) => update("vat_total", v)} type="number" step="0.01" />
             <Field label="Total TTC" value={data.total_ttc} onChange={(v) => update("total_ttc", v)} type="number" step="0.01" />
           </div>
+
+          {/* v8.63 (P2b-1) — TVA récupérable. Affiché uniquement si l'achat a de la
+              TVA. Pré-rempli Totale. Alimente le bloc 3 de la déclaration TVA. */}
+          {parseFloat(data.vat_total) > 0 && (() => {
+            const vatC = toCents(data.vat_total);
+            const dedC = dedMode === "full" ? vatC : dedMode === "none" ? 0 : Math.min(vatC, Math.max(0, toCents(dedPartial)));
+            const dedPct = vatC > 0 ? Math.round((dedC / vatC) * 100) : 0;
+            const modes = [["full", "Totale"], ["partial", "Partielle"], ["none", "Non récupérable"]];
+            return (
+              <div style={{ marginTop: 4, padding: "10px 12px", background: "var(--card2, rgba(255,255,255,0.03))", borderRadius: 8, border: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "var(--muted)", marginBottom: 8, fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
+                  <span>TVA récupérable</span>
+                  <span style={{ color: "var(--green)", fontWeight: 700 }}>{fmtEUR(dedC)}</span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {modes.map(([m, lbl]) => (
+                    <button key={m} type="button"
+                      className={"btn btn-sm " + (dedMode === m ? "btn-primary" : "btn-ghost")}
+                      onClick={() => {
+                        setDedMode(m);
+                        if (m === "partial" && (toCents(dedPartial) <= 0 || toCents(dedPartial) >= vatC)) {
+                          setDedPartial(fromCents(Math.round(vatC / 2)).toFixed(2));
+                        }
+                      }}
+                      style={{ flex: 1 }}>{lbl}</button>
+                  ))}
+                </div>
+                {dedMode === "partial" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+                    <Field label="Montant récupérable (€)" type="number" step="0.01" value={dedPartial}
+                      onChange={(v) => setDedPartial(v)} />
+                    <Field label="Pourcentage (%)" type="number" step="1" value={String(dedPct)}
+                      onChange={(v) => {
+                        const pct = Math.max(0, Math.min(100, parseFloat(v) || 0));
+                        setDedPartial(fromCents(Math.round((vatC * pct) / 100)).toFixed(2));
+                      }} />
+                  </div>
+                )}
+                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 8 }}>
+                  Par défaut, TVA totale récupérable. Ajustez pour un achat partiellement déductible (gasoil, véhicule de tourisme…) ou non récupérable. Modifiable ensuite par votre comptable.
+                </div>
+              </div>
+            );
+          })()}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <SelectField
