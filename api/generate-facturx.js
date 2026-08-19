@@ -559,14 +559,31 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       breakdown[breakdown.length - 1].vat_cents += (totalC - sumC);
     }
   }
-  const vatBlocks = breakdown.map((v) => `
+  // v8.62 — Régime marge (art. 297 A CGI) : les lignes exonérées sortent en
+  // catégorie TVA "E". EN16931 BR-E-10 impose alors un motif d'exonération
+  // (BT-120 texte ET/OU BT-121 code). Sans lui → rejet SUPER PDP 213.
+  // Code AFNOR cas d'usage n°33 pour l'occasion : VATEX-FR-F.
+  // ⚠ Si SUPER PDP rejetait spécifiquement le code FR (liste VATEX restreinte),
+  //    le motif texte seul suffit à BR-E-10 : il suffirait de retirer la ligne
+  //    ExemptionReasonCode ci-dessous (le texte reste).
+  const MARGIN_EXEMPTION_TEXT = "Régime particulier - Biens d'occasion (art. 297 A du CGI)";
+  const MARGIN_EXEMPTION_CODE = "VATEX-FR-F";
+  const vatBlocks = breakdown.map((v) => {
+    const isExempt = !(Number(v.rate) > 0);
+    // Ordre des éléments imposé par le XSD CII (TradeTaxType) :
+    // CalculatedAmount, TypeCode, ExemptionReason, BasisAmount, CategoryCode,
+    // ExemptionReasonCode, RateApplicablePercent.
+    return `
     <ram:ApplicableTradeTax>
       <ram:CalculatedAmount>${(v.vat_cents / 100).toFixed(2)}</ram:CalculatedAmount>
-      <ram:TypeCode>VAT</ram:TypeCode>
+      <ram:TypeCode>VAT</ram:TypeCode>${isExempt ? `
+      <ram:ExemptionReason>${x(MARGIN_EXEMPTION_TEXT)}</ram:ExemptionReason>` : ""}
       <ram:BasisAmount>${(v.base_cents / 100).toFixed(2)}</ram:BasisAmount>
-      <ram:CategoryCode>${Number(v.rate) > 0 ? "S" : "E"}</ram:CategoryCode>
+      <ram:CategoryCode>${isExempt ? "E" : "S"}</ram:CategoryCode>${isExempt ? `
+      <ram:ExemptionReasonCode>${MARGIN_EXEMPTION_CODE}</ram:ExemptionReasonCode>` : ""}
       <ram:RateApplicablePercent>${Number(v.rate).toFixed(2)}</ram:RateApplicablePercent>
-    </ram:ApplicableTradeTax>`).join("");
+    </ram:ApplicableTradeTax>`;
+  }).join("");
 
   // Pour un avoir : référence à la facture d'origine via BillingReferencedDocument
   let billingRefBlock = "";
@@ -659,8 +676,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       </ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>
         <ram:ApplicableTradeTax>
-          <ram:TypeCode>VAT</ram:TypeCode>
-          <ram:CategoryCode>${rate > 0 ? "S" : "E"}</ram:CategoryCode>
+          <ram:TypeCode>VAT</ram:TypeCode>${rate > 0 ? "" : `
+          <ram:ExemptionReason>${x(MARGIN_EXEMPTION_TEXT)}</ram:ExemptionReason>`}
+          <ram:CategoryCode>${rate > 0 ? "S" : "E"}</ram:CategoryCode>${rate > 0 ? "" : `
+          <ram:ExemptionReasonCode>${MARGIN_EXEMPTION_CODE}</ram:ExemptionReasonCode>`}
           <ram:RateApplicablePercent>${rate.toFixed(2)}</ram:RateApplicablePercent>
         </ram:ApplicableTradeTax>
         <ram:SpecifiedTradeSettlementLineMonetarySummation>
