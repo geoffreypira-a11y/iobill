@@ -559,15 +559,14 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       breakdown[breakdown.length - 1].vat_cents += (totalC - sumC);
     }
   }
-  // v8.62 — Régime marge (art. 297 A CGI) : les lignes exonérées sortent en
-  // catégorie TVA "E". EN16931 BR-E-10 impose alors un motif d'exonération
-  // (BT-120 texte ET/OU BT-121 code). Sans lui → rejet SUPER PDP 213.
-  // Code AFNOR cas d'usage n°33 pour l'occasion : VATEX-FR-F.
-  // ⚠ Si SUPER PDP rejetait spécifiquement le code FR (liste VATEX restreinte),
-  //    le motif texte seul suffit à BR-E-10 : il suffirait de retirer la ligne
-  //    ExemptionReasonCode ci-dessous (le texte reste).
+  // v8.62 — Régime marge (art. 297 A CGI = art. 313 directive 2006/112) : les
+  // lignes exonérées sortent en catégorie TVA "E". EN16931 BR-E-10 impose un
+  // motif d'exonération (BT-120 texte + BT-121 code) et BR-CL-22 impose que le
+  // code appartienne à la LISTE CEF VATEX. Or "VATEX-FR-F" (cas AFNOR n°33)
+  // N'EST PAS dans la liste CEF → rejet 213 (BR-CL-22). Le code CEF correct
+  // pour le régime de marge « biens d'occasion » est VATEX-EU-F.
   const MARGIN_EXEMPTION_TEXT = "Régime particulier - Biens d'occasion (art. 297 A du CGI)";
-  const MARGIN_EXEMPTION_CODE = "VATEX-FR-F";
+  const MARGIN_EXEMPTION_CODE = "VATEX-EU-F";
   const vatBlocks = breakdown.map((v) => {
     const isExempt = !(Number(v.rate) > 0);
     // Ordre des éléments imposé par le XSD CII (TradeTaxType) :
@@ -797,9 +796,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     <ram:ApplicableHeaderTradeSettlement>
       <ram:InvoiceCurrencyCode>${cur}</ram:InvoiceCurrencyCode>
       ${vatBlocks}
-      ${doc.due_date ? `<ram:SpecifiedTradePaymentTerms>
-        <ram:DueDateDateTime><udt:DateTimeString format="102">${dt(doc.due_date)}</udt:DateTimeString></ram:DueDateDateTime>
-      </ram:SpecifiedTradePaymentTerms>` : ""}
+      <ram:SpecifiedTradePaymentTerms>
+        <ram:Description>${x(doc.payment_terms || "Paiement à réception de la facture")}</ram:Description>${doc.due_date ? `
+        <ram:DueDateDateTime><udt:DateTimeString format="102">${dt(doc.due_date)}</udt:DateTimeString></ram:DueDateDateTime>` : ""}
+      </ram:SpecifiedTradePaymentTerms>
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
         <ram:LineTotalAmount>${(doc.subtotal_ht_cents / 100).toFixed(2)}</ram:LineTotalAmount>
         <ram:TaxBasisTotalAmount>${(doc.subtotal_ht_cents / 100).toFixed(2)}</ram:TaxBasisTotalAmount>
