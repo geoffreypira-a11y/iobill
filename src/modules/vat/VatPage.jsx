@@ -62,42 +62,92 @@ export function VatPage({ token, company }) {
       const dt = new Date(d);
       return dt >= start && dt <= end;
     };
-    const collectedVAT = invoices
-      .filter((i) => filterDate(i.issue_date))
-      .reduce((s, i) => s + (i.vat_total_cents || 0), 0);
-    const collectedHT = invoices
-      .filter((i) => filterDate(i.issue_date))
-      .reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
-    // TVA déductible : règle CGI art. 271
-    // → on ne déduit que la TVA des achats PAYÉS (ou la part payée pour les partiels)
-    const deductibleVAT = purchases
-      .filter((p) => filterDate(p.issue_date))
-      .reduce((s, p) => {
-        if (p.status === "paid") {
-          return s + (p.vat_total_cents || 0);
-        }
-        if (p.status === "partial" && p.total_ttc_cents > 0) {
-          const ratio = (p.paid_cents || 0) / p.total_ttc_cents;
-          return s + Math.round((p.vat_total_cents || 0) * ratio);
-        }
-        return s; // pending, validated, archived → pas deductible tant que pas paye
-      }, 0);
-    const breakdown = {};
-    invoices
-      .filter((i) => filterDate(i.issue_date))
-      .forEach((i) => {
-        (i.vat_breakdown || []).forEach((br) => {
-          const k = `${br.rate}`;
-          if (!breakdown[k]) breakdown[k] = { rate: br.rate, base_cents: 0, vat_cents: 0 };
-          breakdown[k].base_cents += br.base_cents || 0;
-          breakdown[k].vat_cents += br.vat_cents || 0;
-        });
+    const invInPeriod = invoices.filter((i) => filterDate(i.issue_date));
+    const purInPeriod = purchases.filter((p) => filterDate(p.issue_date));
+
+    // ── BLOC 1 — TVA transmise via PDP (TVA visible des factures) ──
+    // Déjà remontée au pré-rempli DGFiP → à NE PAS re-déclarer.
+    const block1Rows = invInPeriod
+      .filter((i) => (i.vat_total_cents || 0) > 0)
+      .map((i) => ({
+        id: i.id,
+        number: i.number,
+        client: i.client_snapshot?.legal_name || i.client_snapshot?.name || "—",
+        ttc_cents: i.total_ttc_cents || 0,
+        vat_cents: i.vat_total_cents || 0
+      }));
+    const collectedPdpVAT = block1Rows.reduce((s, r) => s + r.vat_cents, 0);
+    const collectedHT = invInPeriod.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
+
+    // ── BLOC 2 — TVA à déclarer sur marge (art. 297 A) ──
+    // Invisible sur la facture (297 E), NON transmise via PDP → À AJOUTER au
+    // pré-rempli. marge = tva_marge × 120/20 ; vente = achat + marge.
+    const block2Rows = invInPeriod
+      .filter((i) => (i.tva_marge_cents || 0) > 0)
+      .map((i) => {
+        const tvaMarge = i.tva_marge_cents || 0;
+        const marge = Math.round(tvaMarge * 6);
+        const achat = i.purchase_price_cents || 0;
+        return {
+          id: i.id,
+          number: i.number,
+          achat_cents: achat,
+          marge_cents: marge,
+          vente_ttc_cents: achat + marge,
+          tva_marge_cents: tvaMarge
+        };
       });
+    const marginVAT = block2Rows.reduce((s, r) => s + r.tva_marge_cents, 0);
+
+    // ── BLOC 3 — TVA déductible sur achats (art. 271) ──
+    // Jamais pré-remplie → toujours à porter. Déductible uniquement sur la part
+    // PAYÉE (exigibilité), et bornée à la part RÉCUPÉRABLE (vat_deductible_cents).
+    const block3Rows = purInPeriod
+      .map((p) => {
+        const recup = p.vat_deductible_cents != null ? p.vat_deductible_cents : (p.vat_total_cents || 0);
+        let ded = 0;
+        if (p.status === "paid") ded = recup;
+        else if (p.status === "partial" && p.total_ttc_cents > 0) {
+          ded = Math.round(recup * ((p.paid_cents || 0) / p.total_ttc_cents));
+        }
+        return {
+          id: p.id,
+          number: p.number,
+          vendor: p.vendor_name,
+          ttc_cents: p.total_ttc_cents || 0,
+          vat_deductible_cents: ded,
+          status: p.status
+        };
+      })
+      .filter((r) => r.vat_deductible_cents > 0);
+    const deductibleVAT = block3Rows.reduce((s, r) => s + r.vat_deductible_cents, 0);
+
+    // ── Récap TVA collectée par taux (conservé pour l'historique/generateReturn) ──
+    const breakdown = {};
+    invInPeriod.forEach((i) => {
+      (i.vat_breakdown || []).forEach((br) => {
+        const k = `${br.rate}`;
+        if (!breakdown[k]) breakdown[k] = { rate: br.rate, base_cents: 0, vat_cents: 0 };
+        breakdown[k].base_cents += br.base_cents || 0;
+        breakdown[k].vat_cents += br.vat_cents || 0;
+      });
+    });
+
+    // Collectée TOTALE = bloc 1 (PDP) + bloc 2 (marge). Les deux sont DISJOINTS
+    // (la marge n'est jamais dans vat_total_cents) → zéro double-compte.
+    const collectedVAT = collectedPdpVAT + marginVAT;
+
     return {
+      collectedPdpVAT,
+      marginVAT,
       collectedVAT,
       collectedHT,
       deductibleVAT,
-      netVAT: collectedVAT - deductibleVAT,
+      netVAT: collectedVAT - deductibleVAT,      // Total TVA réel (1 + 2 − 3)
+      toDeclareVAT: marginVAT - deductibleVAT,    // Aide : à ajuster au pré-rempli (2 − 3)
+      block1Rows,
+      block2Rows,
+      block3Rows,
       breakdown: Object.values(breakdown).sort((a, b) => a.rate - b.rate)
     };
   }, [invoices, purchases, currentPeriod]);
@@ -370,6 +420,130 @@ export function VatPage({ token, company }) {
                         Crédit de TVA : {fmtEUR(creditOut)} (à reporter sur la prochaine déclaration)
                       </span>
                     )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ─── v8.64 (P2b-2) — Déclaration en 3 blocs ─── */}
+      {stats && (
+        <div style={{ marginBottom: 16 }}>
+          {/* BLOC 1 — TVA transmise via PDP */}
+          <div className="card card-pad" style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                ① TVA transmise via PDP
+                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>déjà au pré-rempli — ne pas re-déclarer</span>
+              </div>
+              <div style={{ color: "var(--green)", fontWeight: 700, whiteSpace: "nowrap" }}>+ {fmtEUR(stats.collectedPdpVAT)}</div>
+            </div>
+            {stats.block1Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune facture avec TVA sur la période.</div>
+            ) : (
+              <table>
+                <thead><tr><th>N°</th><th>Client</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA reversée PDP</th></tr></thead>
+                <tbody>
+                  {stats.block1Rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono">{r.number}</td>
+                      <td>{r.client}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_cents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* BLOC 2 — TVA à déclarer sur marge */}
+          <div className="card card-pad" style={{ marginBottom: 12, borderLeft: "3px solid var(--gold)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                ② TVA à déclarer sur marge
+                <span style={{ fontSize: 11, color: "var(--gold)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>invisible sur la facture — À AJOUTER au pré-rempli</span>
+              </div>
+              <div style={{ color: "var(--gold)", fontWeight: 700, whiteSpace: "nowrap" }}>+ {fmtEUR(stats.marginVAT)}</div>
+            </div>
+            {stats.block2Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune vente en régime marge (art. 297 A) sur la période.</div>
+            ) : (
+              <table>
+                <thead><tr><th>N°</th><th style={{ textAlign: "right" }}>Achat</th><th style={{ textAlign: "right" }}>Vente TTC</th><th style={{ textAlign: "right" }}>Marge</th><th style={{ textAlign: "right" }}>TVA marge</th></tr></thead>
+                <tbody>
+                  {stats.block2Rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono">{r.number}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.achat_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vente_ttc_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.marge_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right", color: "var(--gold)", fontWeight: 600 }}>{fmtEUR(r.tva_marge_cents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* BLOC 3 — TVA déductible sur achats */}
+          <div className="card card-pad" style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+              <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                ③ TVA déductible sur achats
+                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>jamais pré-remplie — toujours à porter</span>
+              </div>
+              <div style={{ color: "var(--muted)", fontWeight: 700, whiteSpace: "nowrap" }}>− {fmtEUR(stats.deductibleVAT)}</div>
+            </div>
+            {stats.block3Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune TVA déductible sur la période (achats payés & récupérables).</div>
+            ) : (
+              <table>
+                <thead><tr><th>N°</th><th>Fournisseur</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA déductible</th></tr></thead>
+                <tbody>
+                  {stats.block3Rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono">{r.number || "—"}</td>
+                      <td>{r.vendor}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_deductible_cents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* SYNTHÈSE */}
+          <div className="card card-pad" style={{ background: "rgba(212,168,67,0.06)", border: "1px solid rgba(212,168,67,0.25)" }}>
+            {(() => {
+              const row = (label, value, opts = {}) => (
+                <div style={{ display: "flex", justifyContent: "space-between", padding: opts.big ? "8px 0" : "4px 0", fontSize: opts.big ? 15 : 13, fontWeight: opts.bold ? 700 : 400, color: opts.color || "var(--text)" }}>
+                  <span>{label}</span>
+                  <span className="mono" style={{ fontWeight: 700 }}>{value}</span>
+                </div>
+              );
+              const line = () => <div style={{ borderTop: "1px solid var(--border, rgba(255,255,255,0.12))", margin: "6px 0" }} />;
+              const toDecl = stats.toDeclareVAT;
+              return (
+                <>
+                  {row("TVA collectée via PDP (①)", "+ " + fmtEUR(stats.collectedPdpVAT), { color: "var(--green)" })}
+                  {row("TVA sur marge (②)", "+ " + fmtEUR(stats.marginVAT), { color: "var(--gold)" })}
+                  {line()}
+                  {row("TVA collectée totale", fmtEUR(stats.collectedVAT), { bold: true })}
+                  {row("− TVA déductible (③)", "− " + fmtEUR(stats.deductibleVAT), { color: "var(--muted)" })}
+                  {line()}
+                  {row("Total TVA (net réel dû)", fmtEUR(stats.netVAT), { big: true, bold: true, color: stats.netVAT > 0 ? "var(--orange)" : "var(--green)" })}
+                  <div style={{ marginTop: 10, padding: "10px 12px", background: "rgba(212,168,67,0.12)", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>Total à déclarer manuellement (② − ③)</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>À ajuster au pré-rempli DGFiP (le ① y est déjà)</div>
+                    </div>
+                    <div className="mono" style={{ fontWeight: 700, fontSize: 16, color: toDecl >= 0 ? "var(--gold)" : "var(--green)", whiteSpace: "nowrap" }}>
+                      {(toDecl >= 0 ? "+ " : "− ") + fmtEUR(Math.abs(toDecl))}
+                    </div>
                   </div>
                 </>
               );
