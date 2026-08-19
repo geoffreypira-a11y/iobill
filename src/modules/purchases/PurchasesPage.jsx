@@ -40,6 +40,7 @@ export function PurchasesPage({ token, company }) {
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);   // PDF viewer modal
   const [partialFor, setPartialFor] = useState(null); // Modal paiement partiel
+  const [deductibleFor, setDeductibleFor] = useState(null); // v8.63 — mini-éditeur TVA récupérable (accès rapide liste)
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active"); // "active" | "all" | <status>
@@ -344,7 +345,25 @@ export function PurchasesPage({ token, company }) {
                       {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>{p.category}</span>}
                     </td>
                     <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.subtotal_ht_cents)}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.vat_total_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>
+                      {fmtEUR(p.vat_total_cents)}
+                      {/* v8.63 — Accès rapide TVA récupérable (abonné + cabinet).
+                          Badge cliquable → mini-éditeur, sans ouvrir toute la fiche. */}
+                      {(p.vat_total_cents || 0) > 0 && (() => {
+                        const vatC = p.vat_total_cents || 0;
+                        const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
+                        const isFull = dedC >= vatC, isNone = dedC <= 0;
+                        const lbl = isNone ? "Non récup." : isFull ? "Récup. totale" : `Récup. ${Math.round((dedC / vatC) * 100)}%`;
+                        const col = isNone ? "var(--red)" : isFull ? "var(--green)" : "var(--gold)";
+                        return (
+                          <div
+                            onClick={() => setDeductibleFor(p)}
+                            title="Modifier la TVA récupérable"
+                            style={{ fontSize: 9, marginTop: 2, color: col, cursor: "pointer", textDecoration: "underline dotted", fontWeight: 600 }}
+                          >{lbl}</div>
+                        );
+                      })()}
+                    </td>
                     <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>
                       {fmtEUR(p.total_ttc_cents)}
                       {isPartial && (
@@ -489,6 +508,21 @@ export function PurchasesPage({ token, company }) {
           onSaved={() => {
             setPartialFor(null);
             showToast("Paiement enregistré ✓");
+          }}
+        />
+      )}
+
+      {/* ─── v8.63 — Mini-éditeur TVA récupérable (accès rapide depuis la liste) ─── */}
+      {deductibleFor && (
+        <DeductibleQuickModal
+          token={token}
+          company={company}
+          purchase={deductibleFor}
+          onClose={() => setDeductibleFor(null)}
+          onSaved={() => {
+            setDeductibleFor(null);
+            refreshPurchases(true);
+            showToast("TVA récupérable mise à jour ✓");
           }}
         />
       )}
@@ -641,6 +675,73 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
 }
 
 /* ─── Modale paiement partiel ─── */
+// v8.63 (P2b-1) — Mini-éditeur "TVA récupérable" ouvert depuis la liste des
+// achats (accès rapide, abonné + cabinet), sans ouvrir toute la fiche.
+function DeductibleQuickModal({ token, company, purchase, onClose, onSaved }) {
+  const vatC = purchase.vat_total_cents || 0;
+  const initDedC = purchase.vat_deductible_cents != null ? purchase.vat_deductible_cents : vatC;
+  const [mode, setMode] = useState(initDedC <= 0 ? "none" : (initDedC >= vatC ? "full" : "partial"));
+  const [partial, setPartial] = useState(fromCents(initDedC).toFixed(2));
+  const [saving, setSaving] = useState(false);
+  const dedC = mode === "full" ? vatC : mode === "none" ? 0 : Math.min(vatC, Math.max(0, toCents(partial)));
+  const pct = vatC > 0 ? Math.round((dedC / vatC) * 100) : 0;
+  const modes = [["full", "Totale"], ["partial", "Partielle"], ["none", "Non récupérable"]];
+
+  async function save() {
+    setSaving(true);
+    await sb.update(token, "purchases", `id=eq.${purchase.id}`, { vat_deductible_cents: dedC });
+    syncVatCurrentPeriod(token, company);
+    setSaving(false);
+    onSaved && onSaved();
+  }
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-hd">
+          <span className="modal-title">TVA récupérable</span>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+            {purchase.vendor_name} · TVA {fmtEUR(vatC)}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {modes.map(([m, lbl]) => (
+              <button key={m} type="button"
+                className={"btn btn-sm " + (mode === m ? "btn-primary" : "btn-ghost")}
+                onClick={() => {
+                  setMode(m);
+                  if (m === "partial" && (toCents(partial) <= 0 || toCents(partial) >= vatC)) {
+                    setPartial(fromCents(Math.round(vatC / 2)).toFixed(2));
+                  }
+                }}
+                style={{ flex: 1 }}>{lbl}</button>
+            ))}
+          </div>
+          {mode === "partial" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+              <Field label="Montant (€)" type="number" step="0.01" value={partial} onChange={setPartial} />
+              <Field label="Pourcentage (%)" type="number" step="1" value={String(pct)}
+                onChange={(v) => {
+                  const pp = Math.max(0, Math.min(100, parseFloat(v) || 0));
+                  setPartial(fromCents(Math.round((vatC * pp) / 100)).toFixed(2));
+                }} />
+            </div>
+          )}
+          <div style={{ marginTop: 14, textAlign: "right", fontWeight: 700, color: "var(--green)" }}>
+            Récupérable : {fmtEUR(dedC)}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Annuler</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "…" : "Enregistrer"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PartialPaymentModal({ token, company, purchase, onClose, onSaved }) {
   const totalTtc = purchase.total_ttc_cents || 0;
   const alreadyPaid = purchase.paid_cents || 0;
