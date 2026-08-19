@@ -820,6 +820,12 @@ async function handlePushInvoice(body, res) {
       debours: invoice.debours || null,
       // v8.39 — Régime TVA spécifique à cette facture (par véhicule)
       vat_regime: invoice.vat_regime || null,
+      // v8.63 (P2a) — TVA sur marge : stockée À PART, JAMAIS additionnée à
+      // vat_total_cents (anti-double-compte). Alimente le registre marge et le
+      // bloc "reste à déclarer" de la déclaration TVA (art. 297 E : invisible
+      // sur la facture, non transmise via PDP, à déclarer manuellement).
+      purchase_price_cents: Number(invoice.purchase_price_cents) || 0,
+      tva_marge_cents: Number(invoice.tva_marge_cents) || 0,
       // issued_at = maintenant car la facture est figée à la création depuis l'externe
       issued_at: new Date().toISOString()
     };
