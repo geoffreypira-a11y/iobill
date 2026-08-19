@@ -86,7 +86,9 @@ export function VatPage({ token, company }) {
       .filter((i) => (i.tva_marge_cents || 0) > 0)
       .map((i) => {
         const tvaMarge = i.tva_marge_cents || 0;
-        const marge = Math.round(tvaMarge * 6);
+        // v8.65 — marge EXACTE stockée (marge_cents) ; fallback dérivé (× 6) pour
+        // les factures créées avant ce champ (à ~2 cts près).
+        const marge = i.marge_cents != null && i.marge_cents !== 0 ? i.marge_cents : Math.round(tvaMarge * 6);
         const achat = i.purchase_price_cents || 0;
         return {
           id: i.id,
