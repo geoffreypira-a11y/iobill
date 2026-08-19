@@ -354,7 +354,7 @@ export function PurchasesPage({ token, company }) {
                         const vatC = p.vat_total_cents || 0;
                         const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
                         const isFull = dedC >= vatC, isNone = dedC <= 0;
-                        const lbl = isNone ? "Non récup." : isFull ? "Récup. totale" : `Récup. ${Math.round((dedC / vatC) * 100)}%`;
+                        const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
                         const tint = isNone
                           ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
                           : isFull
