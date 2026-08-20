@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
@@ -14,6 +14,7 @@ import { capture } from "../../lib/telemetry.js";
 
 export function QuotesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -458,6 +459,18 @@ export function QuotesListPage({ token, company }) {
                 title="Convertir ce devis en facture"
               >
                 🧾 Facturer
+              </button>
+            )}
+
+            {/* v8.75 — Devis converti : lien direct vers la facture générée */}
+            {q.status === "converted" && q.converted_invoice_id && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => navigate(`/invoices?open=${q.converted_invoice_id}`)}
+                style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                title="Ouvrir la facture générée à partir de ce devis"
+              >
+                🧾 Voir la facture
               </button>
             )}
 

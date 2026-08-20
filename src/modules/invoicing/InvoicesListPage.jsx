@@ -61,6 +61,18 @@ export function InvoicesListPage({ token, company }) {
     }
   }, [searchParams, setSearchParams]);
 
+  // v8.75 — Ouverture directe de l'aperçu d'une facture via ?open=<id>
+  // (lien "Voir la facture" depuis un devis converti). Attend le chargement.
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (!openId || invoices.length === 0) return;
+    const inv = invoices.find((x) => x.id === openId);
+    if (inv) setPreviewInvoice(inv);
+    const next = new URLSearchParams(searchParams);
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, invoices, setSearchParams]);
+
   async function refreshInvoices(silent = false) {
     if (!silent) setLoading(true);
     const list = await sb.select(token, "invoices", {
