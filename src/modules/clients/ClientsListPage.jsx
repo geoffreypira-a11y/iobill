@@ -117,8 +117,10 @@ export function ClientsListPage({ token, company, setCompany }) {
         </button>
       </div>
 
-      {/* v8.43 — Bannière informative si CRM géré par app source */}
-      {company?.source_app && (
+      {/* v8.71 — Bannière uniquement si la company vient d'une VRAIE app source
+          externe (IOCAR…). Un abonné natif IOBILL a source_app='iobill' : pas de
+          bannière (IOBILL n'est pas une "source externe" pour lui-même). */}
+      {company?.source_app && company.source_app !== "iobill" && (
         <div style={{
           padding: "10px 14px",
           marginBottom: 16,
