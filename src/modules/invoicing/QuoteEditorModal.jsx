@@ -134,7 +134,14 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
   }
 
   // ─── Calculs ─────
-  const totals = useMemo(() => calcDocumentTotals(lines), [lines]);
+  // v8.74 — En franchise en base (art. 293 B), la TVA est NULLE. On force le taux
+  // à 0 sur toutes les lignes pour le calcul ET l'enregistrement (le HT n'est pas
+  // touché). Sinon une ligne à 20 % appliquait quand même 20 % au total et au PDF.
+  const effectiveLines = useMemo(
+    () => (vatExempt ? lines.map((l) => ({ ...l, vat_rate: 0 })) : lines),
+    [lines, vatExempt]
+  );
+  const totals = useMemo(() => calcDocumentTotals(effectiveLines), [effectiveLines]);
   const expiresAt = useMemo(() => {
     if (!issueDate || !validityDays) return null;
     const d = new Date(issueDate);
@@ -193,7 +200,7 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
 
       // Réécriture des lignes : delete + insert
       await sb.delete(token, "document_lines", `document_type=eq.quote&document_id=eq.${saved.id}`);
-      const linesPayload = lines
+      const linesPayload = effectiveLines
         .filter((l) => l.description?.trim())
         .map((l, idx) => {
           const c = calcLine(l);

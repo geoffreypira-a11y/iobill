@@ -196,7 +196,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
             {!readonly && (
               <select
                 className="form-input"
-                value={l.vat_rate ?? 20}
+                value={vatExempt ? 0 : (l.vat_rate ?? 20)}
                 onChange={(e) => update(i, { vat_rate: Number(e.target.value) })}
                 disabled={readonly || vatExempt}
                 style={{ fontSize: 11.5 }}

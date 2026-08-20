@@ -127,7 +127,12 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
   }
 
   // ─── Calculs ─────
-  const totals = useMemo(() => calcDocumentTotals(lines), [lines]);
+  // v8.74 — Franchise en base : TVA nulle, on force le taux 0 sur toutes les lignes.
+  const effectiveLines = useMemo(
+    () => (vatExempt ? lines.map((l) => ({ ...l, vat_rate: 0 })) : lines),
+    [lines, vatExempt]
+  );
+  const totals = useMemo(() => calcDocumentTotals(effectiveLines), [effectiveLines]);
 
   // Auto-calcul due_date depuis paymentTermsDays
   useEffect(() => {
@@ -191,7 +196,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
 
       // Lignes
       await sb.delete(token, "document_lines", `document_type=eq.invoice&document_id=eq.${saved.id}`);
-      const linesPayload = lines
+      const linesPayload = effectiveLines
         .filter((l) => l.description?.trim())
         .map((l, idx) => {
           const c = calcLine(l);
