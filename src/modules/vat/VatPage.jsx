@@ -138,9 +138,21 @@ export function VatPage({ token, company }) {
       });
     });
 
+    // v8.68 — La collectée inclut la marge (② ci-dessus) ; on réconcilie la
+    // ventilation par taux avec ① : si des factures ont une TVA totale sans
+    // vat_breakdown détaillé, on ajoute une ligne "Non ventilé" pour l'écart.
+    const breakdownArr = Object.values(breakdown).sort((a, b) => a.rate - b.rate);
+    const ventileVat = breakdownArr.reduce((s, b) => s + (b.vat_cents || 0), 0);
+    const gap = collectedPdpVAT - ventileVat;
+    if (gap > 1) breakdownArr.push({ rate: -1, base_cents: 0, vat_cents: gap, unventilated: true });
+
     // Collectée TOTALE = bloc 1 (PDP) + bloc 2 (marge). Les deux sont DISJOINTS
     // (la marge n'est jamais dans vat_total_cents) → zéro double-compte.
     const collectedVAT = collectedPdpVAT + marginVAT;
+
+    // v8.68 — Le volet marge ne s'affiche que si l'abonné A de la TVA sur marge
+    // (activité biens d'occasion / IOCAR). Un abonné IOBILL classique ne le voit pas.
+    const hasMarginActivity = invoices.some((i) => (i.tva_marge_cents || 0) > 0);
 
     return {
       collectedPdpVAT,
@@ -148,12 +160,13 @@ export function VatPage({ token, company }) {
       collectedVAT,
       collectedHT,
       deductibleVAT,
+      hasMarginActivity,
       netVAT: collectedVAT - deductibleVAT,      // Total TVA réel (1 + 2 − 3)
       toDeclareVAT: marginVAT - deductibleVAT,    // Aide : à ajuster au pré-rempli (2 − 3)
       block1Rows,
       block2Rows,
       block3Rows,
-      breakdown: Object.values(breakdown).sort((a, b) => a.rate - b.rate)
+      breakdown: breakdownArr
     };
   }, [invoices, purchases, currentPeriod]);
 
@@ -465,7 +478,8 @@ export function VatPage({ token, company }) {
             ))}
           </div>
 
-          {/* BLOC 2 — TVA à déclarer sur marge */}
+          {/* BLOC 2 — TVA à déclarer sur marge (uniquement si activité marge / IOCAR) */}
+          {stats.hasMarginActivity && (
           <div className="card card-pad" style={{ marginBottom: 12, borderLeft: "3px solid var(--gold)" }}>
             <div onClick={() => toggleBlock(2)} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, cursor: "pointer" }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
@@ -494,6 +508,7 @@ export function VatPage({ token, company }) {
               </table>
             ))}
           </div>
+          )}
 
           {/* BLOC 3 — TVA déductible sur achats */}
           <div className="card card-pad" style={{ marginBottom: 12 }}>
@@ -535,10 +550,11 @@ export function VatPage({ token, company }) {
               );
               const line = () => <div style={{ borderTop: "1px solid var(--border, rgba(255,255,255,0.12))", margin: "6px 0" }} />;
               const toDecl = stats.toDeclareVAT;
+              const hasM = stats.hasMarginActivity;
               return (
                 <>
                   {row("TVA collectée via PDP (①)", "+ " + fmtEUR(stats.collectedPdpVAT), { color: "var(--green)" })}
-                  {row("TVA sur marge (②)", "+ " + fmtEUR(stats.marginVAT), { color: "var(--gold)" })}
+                  {hasM && row("TVA sur marge (②)", "+ " + fmtEUR(stats.marginVAT), { color: "var(--gold)" })}
                   {line()}
                   {row("TVA collectée totale", fmtEUR(stats.collectedVAT), { bold: true })}
                   {row("− TVA déductible (③)", "− " + fmtEUR(stats.deductibleVAT), { color: "var(--muted)" })}
@@ -546,8 +562,8 @@ export function VatPage({ token, company }) {
                   {row("Total TVA (net réel dû)", fmtEUR(stats.netVAT), { big: true, bold: true, color: stats.netVAT > 0 ? "var(--orange)" : "var(--green)" })}
                   <div style={{ marginTop: 10, padding: "10px 12px", background: "rgba(212,168,67,0.12)", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>Total à déclarer manuellement (② − ③)</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>À ajuster au pré-rempli DGFiP (le ① y est déjà)</div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{hasM ? "Total à déclarer manuellement (② − ③)" : "À retrancher du pré-rempli (③ déductible)"}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{hasM ? "À ajuster au pré-rempli DGFiP (le ① y est déjà)" : "Le déductible n'est jamais pré-rempli — à porter à votre CA3"}</div>
                     </div>
                     <div className="mono" style={{ fontWeight: 700, fontSize: 16, color: toDecl >= 0 ? "var(--gold)" : "var(--green)", whiteSpace: "nowrap" }}>
                       {(toDecl >= 0 ? "+ " : "− ") + fmtEUR(Math.abs(toDecl))}
@@ -573,8 +589,8 @@ export function VatPage({ token, company }) {
             <tbody>
               {stats.breakdown.map((br) => (
                 <tr key={br.rate}>
-                  <td className="mono">{br.rate}%</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(br.base_cents)}</td>
+                  <td className="mono">{br.unventilated ? "Non ventilé" : `${br.rate}%`}</td>
+                  <td className="mono" style={{ textAlign: "right" }}>{br.unventilated ? "—" : fmtEUR(br.base_cents)}</td>
                   <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(br.vat_cents)}</td>
                 </tr>
               ))}

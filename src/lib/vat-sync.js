@@ -69,16 +69,23 @@ export async function syncVatCurrentPeriod(token, company) {
     // 2) Calculs
     const invs = invoices || [];
     const purs = purchases || [];
-    const collectedVAT = invs.reduce((s, i) => s + (i.vat_total_cents || 0), 0);
+    // v8.68 — La collectée inclut la TVA sur marge (art. 297 A) : invisible sur
+    // la facture mais bien DUE. Disjointe de vat_total_cents (pas de double-compte).
+    const collectedPdpVAT = invs.reduce((s, i) => s + (i.vat_total_cents || 0), 0);
+    const marginVAT = invs.reduce((s, i) => s + (i.tva_marge_cents || 0), 0);
+    const collectedVAT = collectedPdpVAT + marginVAT;
     const collectedHT = invs.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
 
+    // v8.68 — Déductible = part RÉCUPÉRABLE (vat_deductible_cents, fallback total),
+    // pondérée par la part PAYÉE (exigibilité). Aligné sur la page TVA.
     let deductibleVAT = 0;
     purs.forEach((p) => {
+      const recup = p.vat_deductible_cents != null ? p.vat_deductible_cents : (p.vat_total_cents || 0);
       if (p.status === "paid") {
-        deductibleVAT += p.vat_total_cents || 0;
+        deductibleVAT += recup;
       } else if (p.status === "partial" && p.total_ttc_cents > 0) {
-        const ratio = (p.paid_amount_cents || 0) / p.total_ttc_cents;
-        deductibleVAT += Math.round((p.vat_total_cents || 0) * ratio);
+        const ratio = (p.paid_cents || 0) / p.total_ttc_cents;
+        deductibleVAT += Math.round(recup * ratio);
       }
     });
 
