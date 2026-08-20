@@ -560,15 +560,17 @@ export function VatPage({ token, company }) {
                   {row("− TVA déductible (③)", "− " + fmtEUR(stats.deductibleVAT), { color: "var(--muted)" })}
                   {line()}
                   {row("Total TVA (net réel dû)", fmtEUR(stats.netVAT), { big: true, bold: true, color: stats.netVAT > 0 ? "var(--orange)" : "var(--green)" })}
+                  {hasM && (
                   <div style={{ marginTop: 10, padding: "10px 12px", background: "rgba(212,168,67,0.12)", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{hasM ? "Total à déclarer manuellement (② − ③)" : "À retrancher du pré-rempli (③ déductible)"}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{hasM ? "À ajuster au pré-rempli DGFiP (le ① y est déjà)" : "Le déductible n'est jamais pré-rempli — à porter à votre CA3"}</div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>Total à déclarer manuellement (② − ③)</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>La marge (②) n'est pas pré-remplie — à ajouter à votre CA3</div>
                     </div>
                     <div className="mono" style={{ fontWeight: 700, fontSize: 16, color: toDecl >= 0 ? "var(--gold)" : "var(--green)", whiteSpace: "nowrap" }}>
                       {(toDecl >= 0 ? "+ " : "− ") + fmtEUR(Math.abs(toDecl))}
                     </div>
                   </div>
+                  )}
                 </>
               );
             })()}
