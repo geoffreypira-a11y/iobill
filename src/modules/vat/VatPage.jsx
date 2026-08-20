@@ -560,15 +560,12 @@ export function VatPage({ token, company }) {
                   {row("− TVA déductible (③)", "− " + fmtEUR(stats.deductibleVAT), { color: "var(--muted)" })}
                   {line()}
                   {row("Total TVA (net réel dû)", fmtEUR(stats.netVAT), { big: true, bold: true, color: stats.netVAT > 0 ? "var(--orange)" : "var(--green)" })}
+                  <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "right", marginTop: 2 }}>
+                    {stats.netVAT > 0 ? "Montant à porter sur la CA3 et à payer" : "Crédit de TVA (à reporter / demander en remboursement)"}
+                  </div>
                   {hasM && (
-                  <div style={{ marginTop: 10, padding: "10px 12px", background: "rgba(212,168,67,0.12)", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>Total à déclarer manuellement (② − ③)</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>La marge (②) n'est pas pré-remplie — à ajouter à votre CA3</div>
-                    </div>
-                    <div className="mono" style={{ fontWeight: 700, fontSize: 16, color: toDecl >= 0 ? "var(--gold)" : "var(--green)", whiteSpace: "nowrap" }}>
-                      {(toDecl >= 0 ? "+ " : "− ") + fmtEUR(Math.abs(toDecl))}
-                    </div>
+                  <div style={{ marginTop: 12, padding: "10px 12px", background: "rgba(212,168,67,0.10)", border: "1px solid rgba(212,168,67,0.25)", borderRadius: 8, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+                    ⚠️ La <strong style={{ color: "var(--gold)" }}>TVA sur marge (② {fmtEUR(stats.marginVAT)})</strong> n'est pas transmise via PDP : assurez-vous qu'elle est bien <strong>incluse dans votre TVA collectée</strong> sur la CA3 (elle est déjà comptée dans le Total ci-dessus).
                   </div>
                   )}
                 </>
