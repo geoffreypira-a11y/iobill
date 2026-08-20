@@ -375,7 +375,9 @@ export function QuotesListPage({ token, company }) {
     // Conversion possible dès le brouillon (à condition de ne pas déjà être converti ou refusé)
     const canConvert = !["converted", "refused"].includes(q.status) && !q.converted_invoice_id;
     const canDelete = q.status === "draft";
-    const canVersion = !["converted", "refused"].includes(q.status);
+    // v8.72 — V2 possible SAUF si le devis est accepté (signed) ou déjà converti :
+    // un devis REFUSÉ doit pouvoir être révisé (re-proposition), un devis ACCEPTÉ non.
+    const canVersion = !["converted", "signed"].includes(q.status);
     const version = q.version || 1;
 
     return (

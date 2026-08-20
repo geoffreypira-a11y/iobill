@@ -24,9 +24,10 @@ export default async function handler(req, res) {
   );
   if (!source) return json(res, 404, { error: "Quote not found" });
 
-  // Verifier qu'on peut le versionner (pas un devis converti en facture)
-  if (source.status === "converted") {
-    return json(res, 400, { error: "Un devis converti en facture ne peut pas être versionné" });
+  // Verifier qu'on peut le versionner : ni converti en facture, ni accepté (signed).
+  // Un devis REFUSÉ reste versionnable (révision / re-proposition).
+  if (["converted", "signed"].includes(source.status)) {
+    return json(res, 400, { error: "Un devis accepté ou converti en facture ne peut pas être versionné" });
   }
 
   // 2) Determiner le root et la prochaine version
