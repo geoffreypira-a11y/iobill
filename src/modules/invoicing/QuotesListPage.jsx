@@ -73,7 +73,7 @@ export function QuotesListPage({ token, company }) {
     if (!silent) setLoading(true);
     const list = await sb.select(token, "quotes", {
       filter: `company_id=eq.${company.id}`,
-      order: "issue_date.desc",
+      order: "created_at.desc",
       limit: 200
     });
     const newList = list || [];
@@ -173,8 +173,8 @@ export function QuotesListPage({ token, company }) {
         hasMultipleVersions: versions.length > 1
       });
     }
-    // Trier les groupes par date de la derniere version (desc)
-    result.sort((a, b) => new Date(b.latest.issue_date) - new Date(a.latest.issue_date));
+    // v8.78 — Tri par ordre d'édition (created_at desc), comme les factures.
+    result.sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at));
     return result;
   }, [filtered]);
 
