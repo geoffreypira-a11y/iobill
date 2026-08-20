@@ -53,7 +53,12 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
   const [notes, setNotes] = useState(quote?.notes || "");
   const [terms, setTerms] = useState(quote?.terms || "");
   const [currency, setCurrency] = useState(quote?.currency || "EUR");
-  const [vatCategory, setVatCategory] = useState(quote?.vat_category || "standard");
+  // v8.73 — Le régime TVA suit le réglage de l'entreprise (Paramètres), plus de
+  // sélecteur par document (il était redondant et n'affectait pas le calcul,
+  // piloté par company.vat_regime). standard par défaut, franchise si l'entreprise l'est.
+  const [vatCategory, setVatCategory] = useState(
+    quote?.vat_category || (company.vat_regime === "franchise" ? "franchise" : "standard")
+  );
   const [lines, setLines] = useState([newEmptyLine({ vat_rate: company.vat_default_rate || 20 })]);
 
   const [loading, setLoading] = useState(!isNew);
@@ -362,30 +367,8 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* Régime TVA */}
-          <div className="form-row" style={{ marginBottom: 16 }}>
-            <label className="form-label">Régime TVA</label>
-            <select
-              className="form-input"
-              value={vatCategory}
-              onChange={(e) => setVatCategory(e.target.value)}
-              disabled={isReadonly}
-            >
-              {Object.entries(VAT_CATEGORIES).map(([key, cat]) => (
-                <option key={key} value={key}>{cat.label}</option>
-              ))}
-            </select>
-            {VAT_CATEGORIES[vatCategory]?.legal_mention && (
-              <div style={{
-                marginTop: 6,
-                fontSize: 11,
-                color: "var(--muted2)",
-                fontStyle: "italic"
-              }}>
-                Mention : {VAT_CATEGORIES[vatCategory].legal_mention}
-              </div>
-            )}
-          </div>
+          {/* v8.73 — Sélecteur "Régime TVA" retiré : le régime suit le réglage
+              de l'entreprise (Paramètres), il n'était pas appliqué au calcul. */}
 
           {/* Lignes */}
           <div style={{ marginBottom: 16 }}>

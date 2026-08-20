@@ -42,7 +42,10 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
   const [notes, setNotes] = useState(invoice?.notes || "");
   const [terms, setTerms] = useState(invoice?.terms || "");
   const [currency, setCurrency] = useState(invoice?.currency || "EUR");
-  const [vatCategory, setVatCategory] = useState(invoice?.vat_category || "standard");
+  // v8.73 — Le régime TVA suit le réglage de l'entreprise (Paramètres).
+  const [vatCategory, setVatCategory] = useState(
+    invoice?.vat_category || (company.vat_regime === "franchise" ? "franchise" : "standard")
+  );
   // Toggle IBAN : si on édite, on garde la valeur stockée (NULL traité comme TRUE).
   // Si nouvelle facture, on prend le default société (show_payment_iban_default, TRUE par défaut).
   const [showPaymentIban, setShowPaymentIban] = useState(() => {
@@ -366,31 +369,8 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
                 ))}
               </select>
             </div>
-            <div className="form-row">
-              <label className="form-label">Régime TVA</label>
-              <select
-                className="form-input"
-                value={vatCategory}
-                onChange={(e) => setVatCategory(e.target.value)}
-                disabled={isReadonly}
-              >
-                {Object.entries(VAT_CATEGORIES).map(([key, cat]) => (
-                  <option key={key} value={key}>{cat.label}</option>
-                ))}
-              </select>
-            </div>
+            {/* v8.73 — Sélecteur "Régime TVA" retiré : le régime suit les Paramètres. */}
           </div>
-          {VAT_CATEGORIES[vatCategory]?.legal_mention && (
-            <div style={{
-              marginTop: -8,
-              marginBottom: 16,
-              fontSize: 11,
-              color: "var(--muted2)",
-              fontStyle: "italic"
-            }}>
-              Mention : {VAT_CATEGORIES[vatCategory].legal_mention}
-            </div>
-          )}
 
           {/* Lignes */}
           <div style={{ marginBottom: 16 }}>
