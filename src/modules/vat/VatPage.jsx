@@ -19,6 +19,9 @@ export function VatPage({ token, company }) {
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  // v8.67 — Repli des 3 volets de la déclaration (fermés par défaut, trop de lignes sinon).
+  const [openBlocks, setOpenBlocks] = useState({ 1: false, 2: false, 3: false });
+  const toggleBlock = (n) => setOpenBlocks((o) => ({ ...o, [n]: !o[n] }));
 
   useEffect(() => {
     let alive = true;
@@ -435,17 +438,18 @@ export function VatPage({ token, company }) {
         <div style={{ marginBottom: 16 }}>
           {/* BLOC 1 — TVA transmise via PDP */}
           <div className="card card-pad" style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+            <div onClick={() => toggleBlock(1)} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, cursor: "pointer" }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                <span style={{ color: "var(--muted)", marginRight: 6, fontSize: 11 }}>{openBlocks[1] ? "▾" : "▸"}</span>
                 ① TVA transmise via PDP
-                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>déjà au pré-rempli — ne pas re-déclarer</span>
+                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{stats.block1Rows.length} facture{stats.block1Rows.length > 1 ? "s" : ""} · déjà au pré-rempli</span>
               </div>
               <div style={{ color: "var(--green)", fontWeight: 700, whiteSpace: "nowrap" }}>+ {fmtEUR(stats.collectedPdpVAT)}</div>
             </div>
-            {stats.block1Rows.length === 0 ? (
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune facture avec TVA sur la période.</div>
+            {openBlocks[1] && (stats.block1Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune facture avec TVA sur la période.</div>
             ) : (
-              <table>
+              <table style={{ marginTop: 10 }}>
                 <thead><tr><th>N°</th><th>Client</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA reversée PDP</th></tr></thead>
                 <tbody>
                   {stats.block1Rows.map((r) => (
@@ -458,22 +462,23 @@ export function VatPage({ token, company }) {
                   ))}
                 </tbody>
               </table>
-            )}
+            ))}
           </div>
 
           {/* BLOC 2 — TVA à déclarer sur marge */}
           <div className="card card-pad" style={{ marginBottom: 12, borderLeft: "3px solid var(--gold)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+            <div onClick={() => toggleBlock(2)} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, cursor: "pointer" }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                <span style={{ color: "var(--muted)", marginRight: 6, fontSize: 11 }}>{openBlocks[2] ? "▾" : "▸"}</span>
                 ② TVA à déclarer sur marge
-                <span style={{ fontSize: 11, color: "var(--gold)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>invisible sur la facture — À AJOUTER au pré-rempli</span>
+                <span style={{ fontSize: 11, color: "var(--gold)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{stats.block2Rows.length} VO · À AJOUTER au pré-rempli</span>
               </div>
               <div style={{ color: "var(--gold)", fontWeight: 700, whiteSpace: "nowrap" }}>+ {fmtEUR(stats.marginVAT)}</div>
             </div>
-            {stats.block2Rows.length === 0 ? (
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune vente en régime marge (art. 297 A) sur la période.</div>
+            {openBlocks[2] && (stats.block2Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune vente en régime marge (art. 297 A) sur la période.</div>
             ) : (
-              <table>
+              <table style={{ marginTop: 10 }}>
                 <thead><tr><th>N°</th><th style={{ textAlign: "right" }}>Achat</th><th style={{ textAlign: "right" }}>Vente TTC</th><th style={{ textAlign: "right" }}>Marge</th><th style={{ textAlign: "right" }}>TVA marge</th></tr></thead>
                 <tbody>
                   {stats.block2Rows.map((r) => (
@@ -487,22 +492,23 @@ export function VatPage({ token, company }) {
                   ))}
                 </tbody>
               </table>
-            )}
+            ))}
           </div>
 
           {/* BLOC 3 — TVA déductible sur achats */}
           <div className="card card-pad" style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, gap: 10 }}>
+            <div onClick={() => toggleBlock(3)} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, cursor: "pointer" }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                <span style={{ color: "var(--muted)", marginRight: 6, fontSize: 11 }}>{openBlocks[3] ? "▾" : "▸"}</span>
                 ③ TVA déductible sur achats
-                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>jamais pré-remplie — toujours à porter</span>
+                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{stats.block3Rows.length} achat{stats.block3Rows.length > 1 ? "s" : ""} · toujours à porter</span>
               </div>
               <div style={{ color: "var(--muted)", fontWeight: 700, whiteSpace: "nowrap" }}>− {fmtEUR(stats.deductibleVAT)}</div>
             </div>
-            {stats.block3Rows.length === 0 ? (
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Aucune TVA déductible sur la période (achats payés & récupérables).</div>
+            {openBlocks[3] && (stats.block3Rows.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune TVA déductible sur la période (achats payés & récupérables).</div>
             ) : (
-              <table>
+              <table style={{ marginTop: 10 }}>
                 <thead><tr><th>N°</th><th>Fournisseur</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA déductible</th></tr></thead>
                 <tbody>
                   {stats.block3Rows.map((r) => (
@@ -515,7 +521,7 @@ export function VatPage({ token, company }) {
                   ))}
                 </tbody>
               </table>
-            )}
+            ))}
           </div>
 
           {/* SYNTHÈSE */}
