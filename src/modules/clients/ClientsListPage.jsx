@@ -110,12 +110,11 @@ export function ClientsListPage({ token, company, setCompany }) {
             {counts.prospect ? ` · ${counts.prospect} prospect${counts.prospect > 1 ? "s" : ""}` : ""}
           </div>
         </div>
-        {/* v8.43 — Bouton "Nouveau client" caché si l'app source gère le CRM */}
-        {!company?.source_app && (
-          <button className="btn btn-primary" onClick={() => setEditing("add")}>
-            <Icon name="plus" size={14} /> Nouveau client
-          </button>
-        )}
+        {/* v8.71 — "Nouveau client" toujours disponible : crée un client NATIF
+            IOBILL (external_managed=false), non écrasé par le push de l'app source. */}
+        <button className="btn btn-primary" onClick={() => setEditing("add")}>
+          <Icon name="plus" size={14} /> Nouveau client
+        </button>
       </div>
 
       {/* v8.43 — Bannière informative si CRM géré par app source */}
@@ -129,8 +128,7 @@ export function ClientsListPage({ token, company, setCompany }) {
           fontSize: 12,
           color: "var(--gold)"
         }}>
-          {sourceAppEmoji(company.source_app)} Vos clients sont gérés depuis <strong>{sourceAppLabel(company.source_app)}</strong>.
-          Les modifications faites ici seront écrasées au prochain push. Gérez votre CRM depuis l'app source.
+          {sourceAppEmoji(company.source_app)} Les clients importés depuis <strong>{sourceAppLabel(company.source_app)}</strong> y sont gérés (leurs modifications ici seront écrasées au prochain push). Vous pouvez créer des clients propres à IO BILL avec « Nouveau client ».
         </div>
       )}
 
