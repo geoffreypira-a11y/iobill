@@ -732,7 +732,11 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       });
       iy -= lineHeight;
     }
-    // On ne touche pas à `y` (l'encadré est à gauche, les totaux à droite)
+    // v8.77 — Les NOTES/CONDITIONS sont dans la MÊME colonne (gauche, x=40) que
+    // cet encadré IBAN. On descend donc `y` sous l'encadré pour éviter que le
+    // texte se superpose au bloc de paiement. (Les totaux, eux, sont à droite et
+    // ont déjà été dessinés plus haut — non affectés.)
+    y = boxBottom - 16;
   }
 
   // ─── Notes / Conditions ───
