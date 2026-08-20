@@ -240,7 +240,7 @@ export function ClientFichePage({ token, company }) {
           <div className="kpi-label">Devis envoyés</div>
           <div className="kpi-val">{quotes.length}</div>
           <div className="kpi-foot">
-            {quotes.filter((q) => q.status === "signed").length} signé(s)
+            {quotes.filter((q) => q.status === "signed" || q.status === "converted").length} signé(s)
           </div>
         </div>
       </div>
