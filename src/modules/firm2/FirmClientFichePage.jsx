@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { useMyFirm } from "../../components/FirmMode.jsx";
-import { fmtEUR, fmtDate } from "../../lib/helpers.js";
+import { fmtEUR, fmtDate, toCents, fromCents } from "../../lib/helpers.js";
 import { computeCurrentVatPeriod } from "../../lib/vat-sync.js";
 import { SignalButton } from "../../components/SignalButton.jsx";
 
@@ -478,6 +478,7 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
   const [loading, setLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewTitle, setPreviewTitle] = useState("");
+  const [dedFor, setDedFor] = useState(null); // v8.66 — mini-éditeur TVA récupérable (cabinet)
 
   async function load() {
     const rows = await sb.select(token, "purchases", {
@@ -553,7 +554,34 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
                   <td>{fmtDate(p.issue_date)}</td>
                   <td style={{ fontSize: 11, color: "var(--muted2)" }}>{p.category || "—"}</td>
                   <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(p.subtotal_ht_cents || 0)}</td>
-                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(p.vat_total_cents || 0)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                    {fmtEUR(p.vat_total_cents || 0)}
+                    {/* v8.66 — Accès rapide TVA récupérable côté cabinet (option 1) */}
+                    {(p.vat_total_cents || 0) > 0 && (() => {
+                      const vatC = p.vat_total_cents || 0;
+                      const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
+                      const isFull = dedC >= vatC, isNone = dedC <= 0;
+                      const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
+                      const tint = isNone
+                        ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
+                        : isFull
+                          ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
+                          : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
+                      return (
+                        <div style={{ marginTop: 4 }}>
+                          <span
+                            onClick={() => setDedFor(p)}
+                            title="Modifier la TVA récupérable"
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                              cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
+                            }}
+                          >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fmtEUR(p.total_ttc_cents || 0)}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     {p.file_url && (
@@ -588,7 +616,102 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
     {previewUrl && (
       <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
     )}
+    {/* v8.66 — Mini-éditeur TVA récupérable côté cabinet (option 1) */}
+    {dedFor && (
+      <FirmDeductibleModal
+        token={token}
+        firm={firm}
+        purchase={dedFor}
+        onClose={() => setDedFor(null)}
+        onSaved={(newDedCents) => {
+          setPurchases((prev) => prev.map((x) => x.id === dedFor.id ? { ...x, vat_deductible_cents: newDedCents } : x));
+          setDedFor(null);
+        }}
+      />
+    )}
     </>
+  );
+}
+
+// v8.66 (P2b-2b) — Mini-éditeur "TVA récupérable" côté CABINET. Passe par
+// l'action firm-invitation `set_purchase_deductible` (service_role + double
+// contrôle firm_member/lien accepté), car le cabinet n'a pas d'écriture RLS
+// directe sur purchases.
+function FirmDeductibleModal({ token, firm, purchase, onClose, onSaved }) {
+  const vatC = purchase.vat_total_cents || 0;
+  const initDedC = purchase.vat_deductible_cents != null ? purchase.vat_deductible_cents : vatC;
+  const [mode, setMode] = useState(initDedC <= 0 ? "none" : (initDedC >= vatC ? "full" : "partial"));
+  const [partial, setPartial] = useState(fromCents(initDedC).toFixed(2));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const dedC = mode === "full" ? vatC : mode === "none" ? 0 : Math.min(vatC, Math.max(0, toCents(partial)));
+  const pct = vatC > 0 ? Math.round((dedC / vatC) * 100) : 0;
+  const modes = [["full", "Totale"], ["partial", "Partielle"], ["none", "Non récupérable"]];
+
+  async function save() {
+    setSaving(true); setErr("");
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          action: "set_purchase_deductible",
+          payload: { firm_id: firm.id, purchase_id: purchase.id, vat_deductible_cents: dedC }
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(j.error || "Erreur"); setSaving(false); return; }
+      setSaving(false);
+      onSaved && onSaved(typeof j.vat_deductible_cents === "number" ? j.vat_deductible_cents : dedC);
+    } catch (e) {
+      setErr("Erreur réseau"); setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-hd">
+          <span className="modal-title">TVA récupérable</span>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+            {purchase.vendor_name} · TVA {fmtEUR(vatC)}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {modes.map(([m, lbl]) => (
+              <button key={m} type="button"
+                className={"btn btn-sm " + (mode === m ? "btn-primary" : "btn-ghost")}
+                onClick={() => {
+                  setMode(m);
+                  if (m === "partial" && (toCents(partial) <= 0 || toCents(partial) >= vatC)) {
+                    setPartial(fromCents(Math.round(vatC / 2)).toFixed(2));
+                  }
+                }}
+                style={{ flex: 1 }}>{lbl}</button>
+            ))}
+          </div>
+          {mode === "partial" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+              <label className="form-row"><span className="form-label">Montant (€)</span>
+                <input className="form-input" type="number" step="0.01" value={partial} onChange={(e) => setPartial(e.target.value)} /></label>
+              <label className="form-row"><span className="form-label">%</span>
+                <input className="form-input" type="number" step="1" value={String(pct)}
+                  onChange={(e) => { const pp = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)); setPartial(fromCents(Math.round((vatC * pp) / 100)).toFixed(2)); }} /></label>
+            </div>
+          )}
+          <div style={{ marginTop: 14, textAlign: "right", fontWeight: 700, color: "var(--green)" }}>
+            Récupérable : {fmtEUR(dedC)}
+          </div>
+          {err && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Annuler</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "…" : "Enregistrer"}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

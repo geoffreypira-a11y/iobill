@@ -602,6 +602,50 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // SET_PURCHASE_DEDUCTIBLE : le cabinet fixe la TVA récupérable d'un achat
+  // (option 1). Écriture ciblée sur ce SEUL champ, avec double contrôle :
+  // le user est firm_member du cabinet ET le cabinet est lié (accepted) à la
+  // company de l'achat. Montant borné à [0, vat_total_cents].
+  // ─────────────────────────────────────────────────────────────────
+  if (action === "set_purchase_deductible") {
+    const { firm_id, purchase_id, vat_deductible_cents } = p;
+    if (!firm_id || !purchase_id || vat_deductible_cents == null) {
+      return json(res, 400, { error: "firm_id, purchase_id, vat_deductible_cents requis" });
+    }
+    const mem = await sbSelect("firm_members", {
+      firm_id: `eq.${firm_id}`,
+      user_id: `eq.${user.id}`,
+      role: "in.(owner,partner,staff)",
+      select: "role"
+    });
+    if (!mem || mem.length === 0) {
+      return json(res, 403, { error: "Non autorisé (firm_member requis)" });
+    }
+    const purch = await sbSelect("purchases", {
+      id: `eq.${purchase_id}`,
+      select: "id,company_id,vat_total_cents"
+    });
+    if (!purch || purch.length === 0) {
+      return json(res, 404, { error: "Achat introuvable" });
+    }
+    const purchase = purch[0];
+    const links = await sbSelect("firm_client_links", {
+      firm_id: `eq.${firm_id}`,
+      company_id: `eq.${purchase.company_id}`,
+      status: "eq.accepted",
+      select: "id",
+      limit: 1
+    });
+    if (!links || links.length === 0) {
+      return json(res, 403, { error: "Cabinet non lié à cette company (status accepted requis)" });
+    }
+    const vatTotal = purchase.vat_total_cents || 0;
+    const clamped = Math.max(0, Math.min(Math.round(Number(vat_deductible_cents) || 0), vatTotal));
+    await sbUpdate("purchases", `id=eq.${purchase_id}`, { vat_deductible_cents: clamped });
+    return json(res, 200, { ok: true, vat_deductible_cents: clamped });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // SIGNAL_RESOLVE : marquer comme résolu (cabinet ou client)
   // ─────────────────────────────────────────────────────────────────
   if (action === "signal_resolve") {
