@@ -654,7 +654,12 @@ export async function paInboxFile(company, payload) {
    ══════════════════════════════════════════════════════════════════ */
 
 export async function paAdminList() {
-  const companies = await sbAdmin.select("companies", { order: "created_at.desc", limit: 1000, select: "id,name,siret,email,is_active" });
+  // v8.105 — On NE met PAS de `select` explicite : une des colonnes
+  // (email, sur l'owner et pas sur la société) n'existe pas → PostgREST 42703 →
+  // sbAdmin.select renvoyait [] SILENCIEUSEMENT → companies vide → le modal PDP
+  // ne trouvait aucune société → tout retombait sur les valeurs par défaut.
+  // On aligne sur l'action admin `list` (sans select) qui, elle, fonctionne.
+  const companies = await sbAdmin.select("companies", { order: "created_at.desc", limit: 1000 });
   const creds = await strictSelect("pa_credentials", "select=*");
   const reqs = await strictSelect("pa_credential_requests", "status=eq.pending&select=*&order=created_at.desc");
   const byCompany = {};
