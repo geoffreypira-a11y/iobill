@@ -755,15 +755,16 @@ function BrandingTab({ token, company, setCompany }) {
 function BillingTab({ token, company, setCompany }) {
   async function openPortal() {
     try {
-      const r = await fetch("/api/stripe-portal", {
+      const r = await fetch("/api/stripe", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "portal" })
       });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (j?.url) window.location.href = j.url;
-      else alert("API non câblée. À implémenter dans api/stripe-portal.js");
+      else alert(j?.error || "Portail Stripe indisponible pour le moment.");
     } catch {
-      alert("API non câblée.");
+      alert("Erreur réseau — réessayez.");
     }
   }
 

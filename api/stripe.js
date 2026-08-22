@@ -71,6 +71,28 @@ async function handleCheckout(req, res, rawBody) {
     try { body = JSON.parse(rawBody); } catch { body = {}; }
   }
 
+  // ─── v8.112 — PORTAIL DE FACTURATION Stripe ───────────
+  // Permet à l'abonné de gérer / annuler son abonnement, mettre à jour sa CB,
+  // télécharger ses factures Stripe. On crée une session billing_portal et on
+  // renvoie l'URL (le front redirige dessus).
+  if (body?.action === "portal") {
+    const customerId = auth.company.stripe_customer_id;
+    if (!customerId) {
+      return json(res, 400, { error: "Aucun abonnement Stripe actif pour ce compte." });
+    }
+    const originP = req.headers.origin
+      || req.headers.referer?.split("/").slice(0, 3).join("/")
+      || "https://app.iobill.online";
+    const portalRes = await stripeCall("/v1/billing_portal/sessions", "POST", {
+      customer: customerId,
+      return_url: originP + "/settings?tab=billing"
+    });
+    if (!portalRes.ok) {
+      return json(res, 500, { error: "Portail Stripe indisponible : " + (portalRes.data?.error?.message || "erreur") });
+    }
+    return json(res, 200, { url: portalRes.data.url });
+  }
+
   // Note v8.21 : routage firm retiré (cabinet v8.19 abandonné).
   // Sera réintroduit en v8.23 avec un modèle économique inversé
   // (cabinet gratuit, client final payant).
