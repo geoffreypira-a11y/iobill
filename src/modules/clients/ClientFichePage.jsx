@@ -180,6 +180,10 @@ export function ClientFichePage({ token, company }) {
             <button className="btn btn-primary btn-sm" onClick={() => setEditing(true)}>
               <Icon name="edit" size={12} /> Modifier
             </button>
+            {/* v8.111 — Le bouton "Espace client" respecte désormais le module
+                client_portal : visible tant que le module n'est pas explicitement
+                désactivé (null/undefined = actif par défaut). */}
+            {company?.modules?.client_portal !== false && (
             <button className="btn btn-ghost btn-sm" onClick={async () => {
               try {
                 const r = await fetch("/api/public?op=share", {
@@ -197,6 +201,7 @@ export function ClientFichePage({ token, company }) {
             }}>
               🔗 Espace client
             </button>
+            )}
           </div>
         </div>
         {vies.msg && (
