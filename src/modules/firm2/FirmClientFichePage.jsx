@@ -275,6 +275,9 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
   const [loading, setLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewTitle, setPreviewTitle] = useState("");
+  // v8.84 — Sélection multiple + export ZIP des PDF factures (cabinet).
+  const [selected, setSelected] = useState(() => new Set());
+  const [zipping, setZipping] = useState(false);
 
   async function load() {
     const rows = await sb.select(token, "invoices", {
@@ -296,16 +299,106 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     setPreviewTitle(`Facture ${inv.number}`);
   }
 
+  // Factures ayant un PDF téléchargeable (seules sélectionnables).
+  const withPdf = invoices.filter((i) => i.facturx_pdf_url || i.pdf_url);
+
+  function toggleOne(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => {
+      if (prev.size === withPdf.length) return new Set();
+      return new Set(withPdf.map((i) => i.id));
+    });
+  }
+
+  // v8.84 — Télécharge les PDF sélectionnés dans un ZIP (côté client, JSZip).
+  async function downloadZip() {
+    const chosen = withPdf.filter((i) => selected.has(i.id));
+    if (chosen.length === 0) return;
+    setZipping(true);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      let ok = 0;
+      for (const inv of chosen) {
+        const stored = inv.facturx_pdf_url || inv.pdf_url;
+        try {
+          // URL signée via l'action cabinet existante.
+          const r = await fetch("/api/firm-invitation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: stored } })
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.pdf_url) continue;
+          const pdf = await fetch(j.pdf_url);
+          if (!pdf.ok) continue;
+          const blob = await pdf.blob();
+          const safe = String(inv.number || inv.id).replace(/[^\w.-]+/g, "_");
+          zip.file(`${safe}.pdf`, blob);
+          ok++;
+        } catch (_) { /* on saute cette facture, on continue */ }
+      }
+      if (ok === 0) { alert("Aucun PDF n'a pu être récupéré."); setZipping(false); return; }
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      const cname = (company.legal_name || company.trade_name || "client").replace(/[^\w.-]+/g, "_");
+      a.href = url;
+      a.download = `factures_${cname}_${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if (ok < chosen.length) alert(`${ok}/${chosen.length} factures ajoutées au ZIP (les autres n'ont pas pu être récupérées).`);
+    } catch (e) {
+      alert("Erreur lors de la création du ZIP : " + (e.message || e));
+    }
+    setZipping(false);
+  }
+
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;
   if (invoices.length === 0) return <EmptyTab text="Aucune facture sur ce client" />;
 
   return (
     <>
+      {/* v8.84 — Barre d'export ZIP des factures sélectionnées */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+          {selected.size > 0
+            ? `${selected.size} facture${selected.size > 1 ? "s" : ""} sélectionnée${selected.size > 1 ? "s" : ""}`
+            : "Cochez les factures à exporter"}
+        </div>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={downloadZip}
+          disabled={selected.size === 0 || zipping}
+          style={{ whiteSpace: "nowrap" }}
+        >
+          {zipping ? "⏳ Création du ZIP…" : `⬇️ Télécharger ZIP${selected.size > 0 ? ` (${selected.size})` : ""}`}
+        </button>
+      </div>
+
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={tableStyle}>
             <thead>
               <tr>
+                <th style={{ width: 32, textAlign: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={withPdf.length > 0 && selected.size === withPdf.length}
+                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < withPdf.length; }}
+                    onChange={toggleAll}
+                    title="Tout sélectionner"
+                    disabled={withPdf.length === 0}
+                  />
+                </th>
                 <th>N°</th>
                 <th>Date</th>
                 <th>Échéance</th>
@@ -322,6 +415,15 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
                 const hasPdf = inv.facturx_pdf_url || inv.pdf_url;
                 return (
                   <tr key={inv.id}>
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(inv.id)}
+                        onChange={() => toggleOne(inv.id)}
+                        disabled={!hasPdf}
+                        title={hasPdf ? "Sélectionner pour le ZIP" : "Pas de PDF disponible"}
+                      />
+                    </td>
                     <td>
                       <span style={{ fontFamily: "monospace" }}>{inv.number}</span>
                       {invSignals.length > 0 && (
