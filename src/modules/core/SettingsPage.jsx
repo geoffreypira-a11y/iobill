@@ -70,7 +70,7 @@ export function SettingsPage({ token, company, setCompany, user, onSignOut }) {
         <button className={"tab" + (tab === "billing" ? " active" : "")} onClick={() => selectTab("billing")}>Abonnement</button>
         <button className={"tab" + (tab === "inbox" ? " active" : "")} onClick={() => selectTab("inbox")}>📧 Inbox OCR</button>
         <button className={"tab" + (tab === "pdp" ? " active" : "")} onClick={() => selectTab("pdp")}>🏛️ PDP</button>
-        <button className={"tab" + (tab === "sms" ? " active" : "")} onClick={() => selectTab("sms")}>📱 SMS</button>
+        <button className={"tab" + (tab === "sms" ? " active" : "")} onClick={() => selectTab("sms")}>✉️ Relances</button>
         <button className={"tab" + (tab === "security" ? " active" : "")} onClick={() => selectTab("security")}>Sécurité</button>
         <button className={"tab" + (tab === "tickets" ? " active" : "")} onClick={() => selectTab("tickets")}>🎫 Mes tickets</button>
       </div>
@@ -1645,18 +1645,20 @@ function Info({ label, value }) {
 
 /* ─── SMS (V1.1) ──────────────────────────────────────── */
 function SmsTab({ token, company, setCompany }) {
-  const [enabled, setEnabled] = useState(!!company.sms_enabled);
+  // v8.110 — Onglet "Relances email". Toggle reminders_email_enabled.
+  // Défaut ON : null/undefined = activé (ne casse pas les relances existantes).
+  const [enabled, setEnabled] = useState(company.reminders_email_enabled !== false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-  const count = company.sms_count_month || 0;
 
   async function toggle() {
     setSaving(true); setMsg("");
-    const updated = await sb.update(token, "companies", `id=eq.${company.id}`, { sms_enabled: !enabled });
+    const next = !enabled;
+    const updated = await sb.update(token, "companies", `id=eq.${company.id}`, { reminders_email_enabled: next });
     if (updated && updated[0]) {
-      setEnabled(!enabled);
+      setEnabled(next);
       setCompany(updated[0]);
-      setMsg(!enabled ? "SMS activés — les relances tardives (J+30, J+60) seront envoyées par SMS si le client a un numéro" : "SMS désactivés");
+      setMsg(next ? "Relances email activées ✓" : "Relances email désactivées");
     }
     setSaving(false);
   }
@@ -1664,35 +1666,44 @@ function SmsTab({ token, company, setCompany }) {
   return (
     <div className="card card-pad">
       <h3 style={{ margin: "0 0 10px", fontFamily: "Syne, sans-serif", letterSpacing: 1, fontSize: 14 }}>
-        📱 Relances SMS
+        ✉️ Relances email automatiques
       </h3>
       <p style={{ fontSize: 13, color: "var(--muted2)", lineHeight: 1.6, marginBottom: 16 }}>
-        En complément des emails, IO BILL peut envoyer des SMS de relance pour les factures
-        en retard de plus de 30 jours, via OVH SMS. Coût indicatif : 0,06 €/SMS.
+        IO BILL relance automatiquement par email vos clients dont les factures sont en retard,
+        jusqu'au règlement. Souhaitez‑vous activer les relances automatiques ?
       </p>
 
       <div className="kpi-grid" style={{ marginBottom: 18 }}>
         <div className="kpi">
           <div className="kpi-label">Statut</div>
-          <div className={"kpi-val " + (enabled ? "green" : "")}>{enabled ? "Activé" : "Désactivé"}</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">SMS envoyés ce mois</div>
-          <div className="kpi-val gold">{count}</div>
-          <div className="kpi-foot">≈ {(count * 0.06).toFixed(2)} €</div>
+          <div className={"kpi-val " + (enabled ? "green" : "")}>{enabled ? "Activées" : "Désactivées"}</div>
         </div>
       </div>
 
       <button className={enabled ? "btn btn-danger" : "btn btn-primary"} onClick={toggle} disabled={saving}>
-        {saving ? "..." : (enabled ? "Désactiver les SMS" : "Activer les SMS")}
+        {saving ? "..." : (enabled ? "Désactiver les relances email" : "Activer les relances email")}
       </button>
       {msg && <div className="tipline" style={{ marginTop: 12 }}>{msg}</div>}
 
+      {enabled && (
+        <div style={{ marginTop: 20, padding: "14px 16px", borderRadius: 8, background: "var(--card2)", border: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", letterSpacing: 0.5, marginBottom: 10 }}>
+            ⚙️ Conditions d'envoi
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.9 }}>
+            <li><strong>Heure d'envoi :</strong> tous les jours à <strong>9h00</strong> (heure de Paris).</li>
+            <li><strong>Cadence :</strong> J+3 (1ʳᵉ relance), J+10 (relance ferme), J+30 (mention des pénalités), J+60 (dernière avant procédure).</li>
+            <li>Uniquement pour les factures <strong>en retard et non réglées</strong>.</li>
+            <li>Le client doit avoir une <strong>adresse email</strong> enregistrée.</li>
+            <li>Chaque email inclut un bouton <strong>« Régler maintenant »</strong> si un lien de paiement existe.</li>
+            <li>Les relances <strong>s'arrêtent automatiquement</strong> dès que la facture est payée.</li>
+          </ul>
+        </div>
+      )}
+
       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 18, lineHeight: 1.7 }}>
-        <strong>Pré-requis :</strong> les variables OVH_APP_KEY, OVH_APP_SECRET, OVH_CONSUMER_KEY,
-        OVH_SMS_SERVICE_NAME doivent être configurées côté serveur (Vercel).<br />
-        Les SMS sont envoyés uniquement aux relances <em>second</em> (J+30) et <em>final</em> (J+60),
-        et seulement si le client a un numéro de téléphone enregistré.
+        📱 <strong>Relance par SMS</strong> (complément — bientôt disponible) : pour les relances tardives
+        (J+30 / J+60) lorsque le client a un numéro de téléphone. Nécessite une configuration OVH SMS.
       </div>
     </div>
   );

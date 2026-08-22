@@ -143,6 +143,11 @@ export default async function handler(req, res) {
 
     // Envoyer la relance via l'API send-document (en interne)
     try {
+      // v8.110 — Relances activables par société (défaut ON : null/undefined =
+      // activé). Si explicitement désactivé, on n'envoie NI email NI SMS.
+      const company = await sbAdmin.selectOne("companies", `id=eq.${inv.company_id}`);
+      if (company && company.reminders_email_enabled === false) continue;
+
       const message = buildReminderMessage(template, inv);
       const subject = buildReminderSubject(template, inv);
 
@@ -162,7 +167,6 @@ export default async function handler(req, res) {
       // 2) SMS aux relances tardives (J+30, J+60) si SMS active sur la company
       //    On necessite : company.sms_enabled, client phone, et on n'envoie qu'une fois par template
       if (["second", "final"].includes(template)) {
-        const company = await sbAdmin.selectOne("companies", `id=eq.${inv.company_id}`);
         const clientPhone = inv.client_snapshot?.phone;
         if (company?.sms_enabled && clientPhone) {
           const smsOk = await sendReminderSms(inv, company, clientPhone, template);
