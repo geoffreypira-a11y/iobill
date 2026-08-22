@@ -407,6 +407,40 @@ export function InvoicesListPage({ token, company }) {
     setActionLoading(null);
   }
 
+  // v8.79 — Encaissement B2C : marque la facture payée LOCALEMENT (elle entre
+  // dans le CA encaissé), SANS fr:212. En B2C il n'y a pas d'e-facture au sens
+  // PDP : l'encaissement se déclare en e-reporting AGRÉGÉ par jour, pas via un
+  // statut de cycle de vie fr:212 (qui n'existe que pour l'e-invoicing B2B).
+  async function markEncaisseeLocal(inv) {
+    const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
+    const dateStr = new Date().toLocaleDateString("fr-FR");
+    if (!window.confirm(
+      "Marquer cette facture (client particulier / B2C) comme encaissée le " + dateStr + " ?\n\n"
+      + "Montant : " + fmtEUR(totalTtc) + "\n\n"
+      + "Elle entrera dans votre CA encaissé. Aucun fr:212 n'est envoyé : en B2C "
+      + "l'encaissement se déclare en e-reporting agrégé (par jour), pas via le "
+      + "cycle de vie PDP."
+    )) return;
+    setActionLoading(`encaisser-${inv.id}`);
+    try {
+      const nowIso = new Date().toISOString();
+      await sb.update(token, "invoices", "id=eq." + inv.id, {
+        status: "paid",
+        paid_cents: totalTtc,
+        updated_at: nowIso
+      });
+      setInvoices((prev) => prev.map((x) =>
+        x.id === inv.id ? { ...x, status: "paid", paid_cents: totalTtc } : x
+      ));
+      syncVatCurrentPeriod(token, company);
+      capture("invoice_encaissee_b2c", { invoice_id: inv.id });
+      showToast("Facture B2C marquée encaissée ✓");
+    } catch (e) {
+      showToast(e.message || "Erreur lors du marquage", "error");
+    }
+    setActionLoading(null);
+  }
+
   async function sendInvoice(inv) {
     setActionLoading(`send-${inv.id}`);
     try {
@@ -841,6 +875,28 @@ export function InvoicesListPage({ token, company }) {
                   style={{ color: "#2ecc71" }}
                 >
                   💰 Marquer encaissée (fr:212)
+                </MenuItemInv>
+              </>
+            );
+          })()}
+          {/* v8.79 — B2C (client particulier) : encaissement LOCAL sans fr:212.
+              Le B2C ne passe pas par l'e-invoicing PDP → pas de statut fr:212,
+              l'encaissement se déclare en e-reporting agrégé. On permet quand même
+              de marquer la facture encaissée pour qu'elle entre dans le CA encaissé. */}
+          {(() => {
+            const inv = openMenu.invoice;
+            const isB2C = inv.client_snapshot?.client_type === "individual";
+            const canEncaisserLocal = isB2C
+              && !["paid", "canceled", "draft"].includes(inv.status);
+            if (!canEncaisserLocal) return null;
+            return (
+              <>
+                <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
+                <MenuItemInv
+                  onClick={() => { markEncaisseeLocal(inv); setOpenMenu(null); }}
+                  style={{ color: "#2ecc71" }}
+                >
+                  💰 Marquer encaissée (B2C)
                 </MenuItemInv>
               </>
             );
