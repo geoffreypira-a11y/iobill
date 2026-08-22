@@ -768,18 +768,18 @@ function BillingTab({ token, company, setCompany }) {
     }
   }
 
-  async function startCheckout() {
+  async function startCheckout(plan = "pro_monthly") {
     try {
       const r = await fetch("/api/stripe", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ company_id: company.id, plan: "pro_monthly" })
+        body: JSON.stringify({ company_id: company.id, plan })
       });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (j?.url) window.location.href = j.url;
-      else alert("API non câblée. À implémenter dans api/stripe.js");
+      else alert(j?.error || "Abonnement indisponible pour le moment.");
     } catch {
-      alert("API non câblée.");
+      alert("Erreur réseau — réessayez.");
     }
   }
 
@@ -827,9 +827,15 @@ function BillingTab({ token, company, setCompany }) {
             Gérer mon abonnement (Stripe Portal)
           </button>
         ) : (
-          <button className="btn btn-primary" onClick={startCheckout}>
-            S'abonner — 14,90 € HT/mois (17,88 € TTC)
-          </button>
+          <>
+            <button className="btn btn-primary" onClick={() => startCheckout("pro_monthly")}>
+              Mensuel — 14,90 € HT/mois <span style={{ opacity: 0.75, fontWeight: 400 }}>(17,88 € TTC)</span>
+            </button>
+            <button className="btn btn-ghost" onClick={() => startCheckout("pro_yearly")}>
+              Annuel — 149 € HT/an <span style={{ opacity: 0.75, fontWeight: 400 }}>(178,80 € TTC)</span>
+              <span style={{ marginLeft: 8, fontSize: 10, color: "var(--green)", border: "1px solid rgba(62,207,122,0.4)", borderRadius: 6, padding: "1px 6px" }}>≈ 2 mois offerts</span>
+            </button>
+          </>
         )}
       </div>
 
