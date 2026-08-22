@@ -239,9 +239,25 @@ export function PurchasesPage({ token, company }) {
             {purchases.length} facture{purchases.length !== 1 ? "s" : ""} fournisseur · Total HT : <span className="mono" style={{ color: "var(--gold)" }}>{fmtEUR(totalHT)}</span> · TVA déductible : <span className="mono">{fmtEUR(totalVAT)}</span>
           </div>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditing("add")}>
-          <Icon name="plus" size={14} /> Nouvel achat
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          {company?.inbox_enabled && company?.inbox_alias && (
+            <div
+              title="Transférez vos factures fournisseurs à cette adresse — IO BILL crée un brouillon d'achat par OCR"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, fontSize: 11, background: "rgba(212,168,67,0.12)", border: "1px solid rgba(212,168,67,0.3)", color: "var(--gold)", whiteSpace: "nowrap" }}
+            >
+              ✉️ Inbox OCR :{" "}
+              <span className="mono" style={{ fontWeight: 600 }}>{company.inbox_alias}</span>
+              <span
+                onClick={() => { try { navigator.clipboard.writeText(company.inbox_alias); showToast("Adresse inbox copiée ✓"); } catch (_) {} }}
+                title="Copier l'adresse"
+                style={{ cursor: "pointer", opacity: 0.7 }}
+              >📋</span>
+            </div>
+          )}
+          <button className="btn btn-primary" onClick={() => setEditing("add")}>
+            <Icon name="plus" size={14} /> Nouvel achat
+          </button>
+        </div>
       </div>
 
       <PaInboxSection
@@ -336,9 +352,11 @@ export function PurchasesPage({ token, company }) {
                     <td>{fmtDate(p.issue_date)}</td>
                     <td>
                       {p.vendor_name}
-                      {p.ocr_status === "done" && (
+                      {p.source === "inbox" ? (
+                        <span style={{ marginLeft: 6, fontSize: 11 }} title="Reçu via l'inbox email — brouillon créé par OCR">✉️</span>
+                      ) : p.ocr_status === "done" ? (
                         <span style={{ marginLeft: 6, fontSize: 9, color: "var(--green)" }} title="OCR validé">🤖</span>
-                      )}
+                      ) : null}
                     </td>
                     <td className="mono">{p.number || "—"}</td>
                     <td>

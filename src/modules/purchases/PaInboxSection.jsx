@@ -21,7 +21,7 @@ export function PaInboxSection({ token, company, onConverted }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [hideRefused, setHideRefused] = useState(false);
+  const [hideRefused, setHideRefused] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [preview, setPreview] = useState(null); // v8.48.3 : modale PDF
