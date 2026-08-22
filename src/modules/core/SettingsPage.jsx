@@ -799,7 +799,7 @@ function BillingTab({ token, company, setCompany }) {
             const sourceApp = company.source_app;
             const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
             if (sourceLabel) return `Pro · ${sourceLabel}`;
-            if (company.sub_status === "active") return "Pro · 14,90 €/mois";
+            if (company.sub_status === "active") return "Pro · 14,90 € HT/mois";
             if (trial) return "Essai gratuit";
             return "Découverte";
           })()}
@@ -828,7 +828,7 @@ function BillingTab({ token, company, setCompany }) {
           </button>
         ) : (
           <button className="btn btn-primary" onClick={startCheckout}>
-            S'abonner — 14,90 €/mois
+            S'abonner — 14,90 € HT/mois (17,88 € TTC)
           </button>
         )}
       </div>

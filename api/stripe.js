@@ -122,7 +122,7 @@ async function handleCheckout(req, res, rawBody) {
 
   const origin = req.headers.origin
     || req.headers.referer?.split("/").slice(0, 3).join("/")
-    || "https://iobill.fr";
+    || "https://app.iobill.online";
 
   const sessionRes = await stripeCall("/v1/checkout/sessions", "POST", {
     mode: "subscription",
@@ -133,7 +133,16 @@ async function handleCheckout(req, res, rawBody) {
     cancel_url: origin + "/settings?checkout=cancel",
     "subscription_data[metadata][company_id]": auth.company.id,
     locale: "fr",
-    allow_promotion_codes: "true"
+    allow_promotion_codes: "true",
+    // v8.115 — FACTURATION MANUELLE : Stripe encaisse le montant TTC (17,88 €),
+    // c'est OWL'S INDUSTRY qui émet la facture avec TVA à part. On ne laisse donc
+    // PAS Stripe gérer la TVA (pas de automatic_tax, pas de frais Stripe Tax).
+    // On garde la collecte de l'adresse + du n° de TVA du client : ces infos
+    // (stockées sur le customer Stripe) servent à établir ta facture manuelle.
+    "tax_id_collection[enabled]": "true",
+    billing_address_collection: "required",
+    "customer_update[address]": "auto",
+    "customer_update[name]": "auto"
   });
 
   if (!sessionRes.ok) {
