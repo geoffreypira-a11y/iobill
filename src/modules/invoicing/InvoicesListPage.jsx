@@ -330,6 +330,60 @@ export function InvoicesListPage({ token, company }) {
     }
   }
 
+  // ────────────────────────────────────────────────────────────────
+  // v8.95 — Polling automatique du statut PDP (backoff 8 s → 60 s).
+  // • Ne rafraîchit QUE les factures "en circuit" : transmises (pdp_transmission_id)
+  //   et statut NON terminal (ni encaissée, ni refusée, ni annulée).
+  // • Reset à 8 s dès qu'un statut change (ça bouge → on reste réactif),
+  //   sinon on espace ×2 jusqu'à 60 s (rien ne bouge → on se calme).
+  // • Zéro appel réseau quand aucune facture n'est en circuit (le timer tourne
+  //   à vide et reprend tout seul si tu transmets une nouvelle facture).
+  // • Pause quand l'onglet est masqué ; accélère au retour sur l'onglet.
+  // ────────────────────────────────────────────────────────────────
+  const refreshRef = useRef(refreshInvoiceStatus);
+  refreshRef.current = refreshInvoiceStatus;
+
+  useEffect(() => {
+    const MIN = 8000, MAX = 60000;
+    const TERMINAL = ["paid", "rejected", "canceled"];
+    let cancelled = false;
+    let delay = MIN;
+    let timer = null;
+
+    const pollables = () =>
+      (invoicesRef.current || []).filter(
+        (i) => i.pdp_transmission_id && !TERMINAL.includes(i.facturx_status)
+      );
+
+    async function tick() {
+      if (cancelled) return;
+      if (document.hidden) { timer = setTimeout(tick, delay); return; } // pause onglet masqué
+      const list = pollables();
+      if (list.length === 0) { timer = setTimeout(tick, MAX); return; } // rien en circuit → tourne à vide
+      let changed = false;
+      for (const inv of list) {
+        if (cancelled) return;
+        const res = await refreshRef.current(inv, { silent: true });
+        if (res && res.newFx && res.newFx !== res.oldFx) changed = true;
+      }
+      if (cancelled) return;
+      delay = changed ? MIN : Math.min(delay * 2, MAX); // backoff / reset
+      timer = setTimeout(tick, delay);
+    }
+
+    function onVisible() {
+      if (!document.hidden) { delay = MIN; clearTimeout(timer); timer = setTimeout(tick, 400); }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    timer = setTimeout(tick, MIN);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   // v8.57.9 — Marquer une facture émise comme "Encaissée" côté vendeur.
   //
   // Sémantique AFNOR : envoie fr:212 (Payment received) qui informe le PPF et
