@@ -95,7 +95,7 @@ export function FirmOnboardingPage({ token, user, onCreated }) {
         ✓ Gestion illimitée de sociétés clientes<br />
         ✓ Membres du cabinet illimités<br />
         ✓ Aucune carte bancaire requise<br />
-        ✓ Vos clients payent leur propre abonnement (9,90 €/mois)
+        ✓ Vos clients payent leur propre abonnement (14,90 €/mois)
       </div>
 
       <form onSubmit={handleSubmit}>

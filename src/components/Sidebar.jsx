@@ -335,7 +335,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 <div className="userbox-plan">
                   {/* v8.49.8 — Si le compte est lié à une app métier (IOCAR, IOBTP…),
                       on affiche "Pro · IO CAR" au lieu du prix, car ces users ne payent
-                      pas 9,90 € : leur accès IOBILL est inclus dans leur abonnement à
+                      pas 14,90 € : leur accès IOBILL est inclus dans leur abonnement à
                       l'app source (IOCAR, IOBTP...). Extensible : suffit d'ajouter des
                       entrées au mapping SOURCE_LABELS pour de futures apps. */}
                   {(() => {
@@ -347,7 +347,7 @@ export function Sidebar({ token, company, user, onSignOut }) {
                     const sourceApp = company?.source_app;
                     const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
                     if (sourceLabel) return `Pro · ${sourceLabel}`;
-                    if (company?.sub_status === "active") return "Pro · 9,90€";
+                    if (company?.sub_status === "active") return "Pro · 14,90€";
                     if (company?.sub_status === "trialing") return "Essai gratuit";
                     return "Découverte";
                   })()}

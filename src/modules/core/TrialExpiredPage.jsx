@@ -103,14 +103,14 @@ export function TrialExpiredPage({ token, company, onSignOut }) {
         <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
           <PlanCard
             label="Pro mensuel"
-            price="9,90 €"
+            price="14,90 €"
             unit="HT/mois"
             selected={selectedPlan === "pro_monthly"}
             onClick={() => setSelectedPlan("pro_monthly")}
           />
           <PlanCard
             label="Pro annuel"
-            price="89 €"
+            price="149 €"
             unit="HT/an"
             badge="−25%"
             selected={selectedPlan === "pro_yearly"}

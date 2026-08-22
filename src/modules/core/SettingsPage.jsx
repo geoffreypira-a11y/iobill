@@ -793,13 +793,13 @@ function BillingTab({ token, company, setCompany }) {
         <div style={{ fontFamily: "Syne, sans-serif", fontSize: 22, fontWeight: 700, color: "var(--gold)", marginBottom: 4 }}>
           {/* v8.49.8 — Plan actuel : si le compte est lié à une app métier
               (IOCAR, IOBTP...), on affiche "Pro · IO CAR" au lieu de
-              "Pro · 9,90 €/mois", car ces users ne payent pas Stripe directement. */}
+              "Pro · 14,90 €/mois", car ces users ne payent pas Stripe directement. */}
           {(() => {
             const SOURCE_LABELS = { iocar: "IO CAR", iobtp: "IO BTP", ioinstitute: "IO INSTITUTE" };
             const sourceApp = company.source_app;
             const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
             if (sourceLabel) return `Pro · ${sourceLabel}`;
-            if (company.sub_status === "active") return "Pro · 9,90 €/mois";
+            if (company.sub_status === "active") return "Pro · 14,90 €/mois";
             if (trial) return "Essai gratuit";
             return "Découverte";
           })()}
@@ -828,7 +828,7 @@ function BillingTab({ token, company, setCompany }) {
           </button>
         ) : (
           <button className="btn btn-primary" onClick={startCheckout}>
-            S'abonner — 9,90 €/mois
+            S'abonner — 14,90 €/mois
           </button>
         )}
       </div>

@@ -150,7 +150,7 @@ export function AuthPage({ onAuthed }) {
                   <span style={{ fontSize: 26 }}>🏢</span>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>Je gère MA société</div>
-                    <div style={{ fontSize: 11, color: "var(--gold)" }}>Pro · 9,90 €/mois · 7 jours d'essai</div>
+                    <div style={{ fontSize: 11, color: "var(--gold)" }}>Pro · 14,90 €/mois · 7 jours d'essai</div>
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
@@ -201,7 +201,7 @@ export function AuthPage({ onAuthed }) {
               {accountType === "firm" ? (
                 <>📋 <strong>Compte Cabinet comptable</strong> · Gratuit illimité</>
               ) : (
-                <>🏢 <strong>Compte société</strong> · 9,90 €/mois · 7 jours d'essai</>
+                <>🏢 <strong>Compte société</strong> · 14,90 €/mois · 7 jours d'essai</>
               )}
               {" · "}
               <a

@@ -118,8 +118,8 @@ function CGV() {
 
       <H2>2. Offres et tarifs</H2>
       <ul>
-        <li><strong>IO BILL Pro mensuel</strong> : 9,90 € HT/mois (11,88 € TTC)</li>
-        <li><strong>IO BILL Pro annuel</strong> : 89 € HT/an (106,80 € TTC) — soit ≈ 7,42 €/mois</li>
+        <li><strong>IO BILL Pro mensuel</strong> : 14,90 € HT/mois (17,88 € TTC)</li>
+        <li><strong>IO BILL Pro annuel</strong> : 149 € HT/an (178,80 € TTC) — soit ≈ 12,42 €/mois</li>
         <li><strong>IO BILL Cabinet</strong> : 49 € HT/mois (58,80 € TTC) pour les cabinets comptables</li>
         <li><strong>Offre de lancement Cabinet</strong> : les 10 premiers cabinets bénéficient d'un abonnement gratuit à vie</li>
       </ul>

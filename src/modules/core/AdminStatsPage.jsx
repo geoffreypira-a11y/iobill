@@ -13,12 +13,12 @@ import { fmtEUR, fmtDate } from "../../lib/helpers.js";
  *   • Alertes : essais qui expirent + impayés à relancer
  *   • Activité récente
  *
- * Tarifs : 9,90 € HT/mois (pro_monthly) ou 89 € HT/an (pro_yearly).
+ * Tarifs : 14,90 € HT/mois (pro_monthly) ou 149 € HT/an (pro_yearly).
  */
 
-const PRICE_MONTHLY = 9.90;
-const PRICE_YEARLY = 89.00;
-const PRICE_YEARLY_MONTHLY_EQUIV = PRICE_YEARLY / 12; // 7,42 €
+const PRICE_MONTHLY = 14.90;
+const PRICE_YEARLY = 149.00;
+const PRICE_YEARLY_MONTHLY_EQUIV = PRICE_YEARLY / 12; // 12,42 €
 
 export function AdminStatsPage({ token, company }) {
   const [loading, setLoading] = useState(true);
@@ -244,8 +244,8 @@ export function AdminStatsPage({ token, company }) {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
-        MRR calculé sur l'hypothèse Pro mensuel 9,90 € HT.
-        Pour distinguer les annuels (89 € HT = 7,42 €/mois équivalent), il faudrait stocker
+        MRR calculé sur l'hypothèse Pro mensuel 14,90 € HT.
+        Pour distinguer les annuels (149 € HT = 12,42 €/mois équivalent), il faudrait stocker
         le price_id Stripe sur companies — à ajouter si la part annuelle devient significative.
       </div>
     </div>
