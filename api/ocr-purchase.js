@@ -158,7 +158,8 @@ export default async function handler(req, res) {
 }
 
 // ─── Structuration : transforme le texte brut en JSON metier ───
-async function structureWithMistral(text) {
+// v8.87 — exportée pour réutilisation par api/inbox-webhook.js
+export async function structureWithMistral(text) {
   const prompt =
 `Tu es un comptable francais. Voici le texte OCR d'une facture fournisseur.
 Extrais ces champs au format JSON STRICT (aucun markdown, aucun commentaire) :
@@ -256,4 +257,33 @@ function extractFileFromMultipart(buffer, boundary) {
     return { content, mime };
   }
   return null;
+}
+
+// ════════════════════════════════════════════════════════════════
+// v8.87 — Helper OCR réutilisable (par api/inbox-webhook.js).
+// Prend des bytes + mime, renvoie le texte OCR concaténé (ou "").
+// N'utilise PAS res : renvoie une string, lève en cas d'erreur dure.
+// ════════════════════════════════════════════════════════════════
+export async function ocrBytesToText(bytes, mime) {
+  if (!process.env.MISTRAL_API_KEY) throw new Error("MISTRAL_API_KEY manquant");
+  const base64 = Buffer.from(bytes).toString("base64");
+  const dataUrl = "data:" + (mime || "application/pdf") + ";base64," + base64;
+  const isImage = (mime || "").startsWith("image/");
+  const ocrPayload = isImage
+    ? { type: "image_url", image_url: dataUrl }
+    : { type: "document_url", document_url: dataUrl };
+  const r = await fetch("https://api.mistral.ai/v1/ocr", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + process.env.MISTRAL_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ model: "mistral-ocr-latest", document: ocrPayload, include_image_base64: false })
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error("Mistral OCR " + r.status + ": " + txt.slice(0, 200));
+  }
+  const ocr = await r.json();
+  return (ocr.pages || []).map((p) => p.markdown || p.text || "").join("\n\n").trim();
 }

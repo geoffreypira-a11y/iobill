@@ -49,6 +49,19 @@ export default async function handler(req, res) {
     }
   }
 
+  // v8.87 — Webhook Resend Inbound (Inbox OCR achats). Corps brut requis
+  // (signature Svix) → traité AVANT la réhydratation du body ci-dessous.
+  if (op === "inbox_webhook") {
+    let m;
+    try {
+      m = await import("./_lib/inbox-handler.js");
+    } catch (e) {
+      console.error("[public] module inbox indisponible", e?.stack || e?.message);
+      return json(res, 503, { error: "Module inbox indisponible" });
+    }
+    return m.handleInboxWebhook(req, res);
+  }
+
   // Réhydrate req.body pour les ops historiques (bodyParser désactivé).
   if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
     if (req.body === undefined) {
