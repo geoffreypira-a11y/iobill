@@ -29,6 +29,10 @@ import { ocrBytesToText, structureWithMistral } from "../ocr-purchase.js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SR_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+// v8.92 — L'API Receiving (lister/télécharger les PJ) exige une clé Resend
+// "Full Access" ; la clé d'envoi est souvent restreinte ("send only"). On
+// utilise une clé dédiée si fournie, sinon on retombe sur RESEND_API_KEY.
+const RESEND_RECEIVING_KEY = process.env.RESEND_RECEIVING_KEY || process.env.RESEND_API_KEY;
 const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
 
 function json(res, code, obj) { res.status(code).json(obj); }
@@ -141,7 +145,7 @@ export async function handleInboxWebhook(req, res) {
   let attachments = [];
   try {
     const ar = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments`, {
-      headers: { Authorization: "Bearer " + RESEND_API_KEY }
+      headers: { Authorization: "Bearer " + RESEND_RECEIVING_KEY }
     });
     if (ar.ok) { const aj = await ar.json(); attachments = aj.data || []; }
     else console.error("[inbox] API attachments", ar.status, (await ar.text().catch(() => "")).slice(0, 200));
@@ -203,6 +207,7 @@ export async function handleInboxWebhook(req, res) {
   try {
     await sbAdmin.insert("inbox_messages", {
       company_id: company.id,
+      alias: company.inbox_alias || null,
       received_at: new Date().toISOString(),
       sender_email: sender,
       subject,
