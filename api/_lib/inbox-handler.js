@@ -112,11 +112,17 @@ export async function handleInboxWebhook(req, res) {
   const sender = data.from || null;
   const subject = data.subject || null;
 
-  // 2) Retrouver la company via l'alias inbox (achats-xxx@inbox.iobill.fr).
+  // 2) Retrouver la company via l'alias inbox. On matche sur la PARTIE LOCALE
+  //    (avant le @), pas sur le domaine : l'alias stocké peut être
+  //    @inbox.iobill.fr alors que l'email arrive sur le domaine réellement
+  //    configuré dans Resend (ex. inbox.iobill.online). Ça découple le domaine
+  //    de réception du domaine historique des alias.
   let company = null;
   for (const rcpt of recipients) {
+    const localPart = String(rcpt).split("@")[0].trim();
+    if (!localPart) continue;
     const rows = await sbAdmin.select("companies", {
-      filter: `inbox_alias=eq.${rcpt}`,
+      filter: `inbox_alias=like.${localPart}@*`,
       select: "id,inbox_enabled,inbox_alias",
       limit: 1
     });
