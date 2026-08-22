@@ -349,7 +349,7 @@ function buildReminderMessage(template, inv) {
 
 async function sendReminderEmail(inv, subject, message) {
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
-  const FROM_EMAIL = process.env.RESEND_FROM || "facturation@iobill.fr";
+  const FROM_EMAIL = process.env.RESEND_FROM || "facturation@iobill.online";
   if (!RESEND_API_KEY) return false;
 
   const recipientEmail = inv.client_snapshot?.email;
