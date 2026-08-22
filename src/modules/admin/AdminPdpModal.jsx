@@ -34,14 +34,20 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
     adminCall("pa_admin_list")
       .then(({ companies, pending_requests }) => {
         if (!alive) return;
-        const me = (companies || []).find(c => c.id === company.id);
+        // v8.104 — Matching robuste de la société (String() pour éviter tout
+        // mismatch de type sur l'UUID).
+        const me = (companies || []).find(c => String(c.id) === String(company.id));
         const pa = me && me.pa;
         setMeta(pa || { configured: false });
-        if (pa && pa.configured) {
+        // v8.104 — On populate dès qu'une config existe (pa non nul), sans exiger
+        // pa.configured : les identifiants stockés (client_id, enabled, toggles)
+        // se réaffichent alors correctement à la réouverture du modal. Les secrets
+        // ne redescendent jamais (placeholder ••• si déjà enregistrés).
+        if (pa) {
           setCfg(c => ({
             ...c,
-            provider: pa.provider || "superpdp",
-            environment: pa.environment || "sandbox",
+            provider: pa.provider || c.provider || "superpdp",
+            environment: pa.environment || c.environment || "sandbox",
             base_url: pa.base_url || "",
             client_id: pa.client_id || "",
             enabled: !!pa.enabled,
@@ -54,7 +60,8 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
       .catch(e => setMsg({ t: "err", m: e.message }))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [company.id, adminCall]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.id]);
 
   const set = k => e =>
     setCfg(c => ({ ...c, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
