@@ -197,7 +197,15 @@ const superpdp = {
    * @param {Object} doc { bytes: Uint8Array|Buffer, contentType, filename }
    */
   async sendInvoice(cfg, doc) {
-    const j = await req(cfg.base_url + "/v1.beta/invoices", {
+    // v8.80 (P3a) — processing_rule : par défaut non posé (= B2B, comportement
+    // inchangé). Pour une facture B2C (client particulier), on passe "B2C" :
+    // SUPER PDP ne route alors PAS vers un acheteur (inexistant) mais extrait
+    // automatiquement les données d'e-reporting. Sans ça, une facture B2C reste
+    // bloquée sur "Téléversée".
+    const qs = doc.processingRule
+      ? "?processing_rule=" + encodeURIComponent(doc.processingRule)
+      : "";
+    const j = await req(cfg.base_url + "/v1.beta/invoices" + qs, {
       method: "POST",
       headers: await this._h(cfg, { "Content-Type": doc.contentType || "application/pdf" }),
       body: doc.bytes
@@ -206,9 +214,18 @@ const superpdp = {
   },
 
   async getInvoice(cfg, id) {
-    return req(cfg.base_url + "/v1.beta/invoices/" + encodeURIComponent(id), {
+    const j = await req(cfg.base_url + "/v1.beta/invoices/" + encodeURIComponent(id), {
       headers: await this._h(cfg)
     });
+    // v8.62 DEBUG — logge le détail BRUT des events SUPER PDP (le motif du rejet
+    // 213 y figure : IOBILL n'en lit habituellement que le status_code et jette
+    // le reste). Cherche "[PA][getInvoice]" dans les logs de la fonction Vercel
+    // IOBILL après une vérif de statut. À RETIRER une fois le 213 résolu.
+    try {
+      console.log("[PA][getInvoice] id=" + id + " raw=" +
+        JSON.stringify(j && j.events ? { events: j.events } : j).slice(0, 6000));
+    } catch (_) {}
+    return j;
   },
 
   /** Pagination par curseur bigint (starting_after_id), pas par date.

@@ -214,8 +214,13 @@ export async function paSendInvoice(company, payload) {
   const { impl, cfg } = getProvider(creds);
 
   try {
+    // v8.80 (P3a) — Détection B2C : client particulier → processing_rule="B2C".
+    // SUPER PDP fait alors l'e-reporting au lieu de router vers un acheteur.
+    // B2B (société) : on ne pose rien → comportement d'origine strictement intact.
+    const isB2C = inv.client_snapshot?.client_type === "individual";
     const out = await impl.sendInvoice(cfg, {
-      bytes, contentType: "application/pdf", filename: (inv.number || "facture") + ".pdf"
+      bytes, contentType: "application/pdf", filename: (inv.number || "facture") + ".pdf",
+      processingRule: isB2C ? "B2C" : undefined
     });
     await sbAdmin.update("invoices", "id=eq." + inv.id, {
       pdp_provider: creds.provider,
