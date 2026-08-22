@@ -409,11 +409,29 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     if (!allowed) return json(res, 403, { error: "Non autorisé" });
     if (link.status !== "pending") return json(res, 400, { error: "Invitation déjà " + link.status });
 
+    // v8.89 — Invitation par EMAIL : le lien a été créé sans company_id (le
+    // cabinet ne connaissait pas encore la société). À l'acceptation, on relie
+    // la company de l'utilisateur qui accepte. Sans ça, le lien reste orphelin
+    // et la fiche client affiche "Client introuvable".
+    let companyIdToSet = link.company_id;
+    if (!companyIdToSet) {
+      const ownCo = await sbSelect("companies", {
+        user_id: `eq.${user.id}`,
+        select: "id",
+        order: "created_at.asc",
+        limit: 1
+      });
+      if (ownCo && ownCo[0]) companyIdToSet = ownCo[0].id;
+    }
+
     const updated = await sbUpdate("firm_client_links", `id=eq.${link_id}`, {
       status: "accepted",
       accepted_at: new Date().toISOString(),
+      company_id: companyIdToSet,
       invitation_token: null
     });
+    // Reflète le company_id fraîchement posé dans les notifs ci-dessous.
+    link.company_id = companyIdToSet;
 
     // Notifier l'autre partie
     if (link.initiated_by === "firm") {
