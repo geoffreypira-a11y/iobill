@@ -22,8 +22,8 @@
 // ════════════════════════════════════════════════════════════════
 
 import crypto from "crypto";
-import { sbAdmin } from "./_lib/supabase-admin.js";
-import { ocrBytesToText, structureWithMistral } from "./ocr-purchase.js";
+import { sbAdmin } from "./supabase-admin.js";
+import { ocrBytesToText, structureWithMistral } from "../ocr-purchase.js";
 
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
