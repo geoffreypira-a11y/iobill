@@ -414,15 +414,19 @@ export function InvoicesListPage({ token, company }) {
   async function markEncaisseeLocal(inv) {
     const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
     const dateStr = new Date().toLocaleDateString("fr-FR");
+    const transmise = !!inv.pdp_transmission_id;
     if (!window.confirm(
       "Marquer cette facture (client particulier / B2C) comme encaissée le " + dateStr + " ?\n\n"
       + "Montant : " + fmtEUR(totalTtc) + "\n\n"
-      + "Elle entrera dans votre CA encaissé. Aucun fr:212 n'est envoyé : en B2C "
-      + "l'encaissement se déclare en e-reporting agrégé (par jour), pas via le "
-      + "cycle de vie PDP."
+      + "Elle entrera dans votre CA encaissé."
+      + (transmise
+          ? " Comme elle a été transmise, IOBILL enverra aussi fr:212 à votre PDP "
+            + "pour l'e-reporting de paiement B2C."
+          : " (Non transmise à la PDP : marquage local uniquement.)")
     )) return;
     setActionLoading(`encaisser-${inv.id}`);
     try {
+      // 1. Marquage local — toujours (CA encaissé), indépendant de la PDP.
       const nowIso = new Date().toISOString();
       await sb.update(token, "invoices", "id=eq." + inv.id, {
         status: "paid",
@@ -434,7 +438,35 @@ export function InvoicesListPage({ token, company }) {
       ));
       syncVatCurrentPeriod(token, company);
       capture("invoice_encaissee_b2c", { invoice_id: inv.id });
-      showToast("Facture B2C marquée encaissée ✓");
+
+      // 2. v8.81 (P3b) — Si la facture B2C a été transmise à la PDP, on envoie
+      //    aussi fr:212 : SUPER PDP en extrait les données d'e-reporting de
+      //    PAIEMENT (obligatoire pour les services). Best-effort : la compta
+      //    locale (déjà faite ci-dessus) ne dépend pas du succès PDP.
+      //    L'action pa_invoice_encaisser skippe d'elle-même si non transmise
+      //    ou déjà envoyée (idempotent).
+      if (transmise) {
+        try {
+          const r = await fetch("/api/admin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ action: "pa_invoice_encaisser", payload: { invoice_id: inv.id } })
+          });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.ok !== false) {
+            showToast(j.skipped
+              ? "Facture B2C encaissée ✓ (fr:212 déjà envoyé)"
+              : "Facture B2C encaissée · fr:212 transmis (e-reporting paiement) ✓");
+          } else {
+            showToast("Encaissée en local ✓ — fr:212 non transmis : "
+              + (j.message || j.error || "PDP"), "error");
+          }
+        } catch (e) {
+          showToast("Encaissée en local ✓ — fr:212 non transmis (réseau)", "error");
+        }
+      } else {
+        showToast("Facture B2C marquée encaissée ✓");
+      }
     } catch (e) {
       showToast(e.message || "Erreur lors du marquage", "error");
     }
