@@ -303,10 +303,10 @@ function ModulesTab({ token, company, setCompany }) {
     { code: "vat", label: "TVA", description: "Déclarations CA3 / CA12" },
     { code: "urssaf", label: "URSSAF", description: "Cotisations auto-entrepreneur (mensuel/trimestriel)" },
     { code: "accounting", label: "Export comptable", description: "FEC, CSV, connecteurs Pennylane / Tiime" },
-    { code: "banking", label: "Lettrage bancaire PSD2", description: "Connexion Bridge pour lettrage automatique" },
+    { code: "banking", label: "Lettrage bancaire PSD2", description: "Connexion Bridge pour lettrage automatique", comingSoon: true },
     { code: "client_portal", label: "Portail client", description: "Accès public sécurisé pour vos clients" },
     { code: "esign", label: "Signature électronique", description: "Signature interne (clic) ou Yousign (eIDAS)" },
-    { code: "advanced", label: "🔧 Mode avancé", description: "Affiche la section « Avancé » dans le menu : Cabinet, Équipe, Journal d'audit, API Développeur. Réservé aux utilisateurs expérimentés." }
+    { code: "advanced", label: "🔧 Mode avancé", description: "Affiche la section « Avancé » dans le menu : Cabinet, Équipe, Journal d'audit, API Développeur. Réservé aux utilisateurs expérimentés.", comingSoon: true }
   ];
 
   function toggle(code) {
@@ -332,7 +332,10 @@ function ModulesTab({ token, company, setCompany }) {
       </div>
 
       {MODULE_LIST.map((m) => {
-        const isOn = m.required || !!modules[m.code];
+        // v8.107 — Modules "Bientôt disponible" : grisés, non cliquables, toggle
+        // forcé OFF visuellement (l'état en base n'est pas modifié).
+        const locked = m.required || m.comingSoon;
+        const isOn = m.required || (!m.comingSoon && !!modules[m.code]);
         return (
           <div
             key={m.code}
@@ -345,10 +348,10 @@ function ModulesTab({ token, company, setCompany }) {
               background: isOn ? "var(--card2)" : "transparent",
               border: "1px solid " + (isOn ? "var(--border)" : "var(--border2)"),
               marginBottom: 8,
-              cursor: m.required ? "default" : "pointer",
-              opacity: m.required ? 0.85 : 1
+              cursor: locked ? "default" : "pointer",
+              opacity: m.comingSoon ? 0.5 : (m.required ? 0.85 : 1)
             }}
-            onClick={() => !m.required && toggle(m.code)}
+            onClick={() => !locked && toggle(m.code)}
           >
             <div style={{
               width: 38,
@@ -374,6 +377,7 @@ function ModulesTab({ token, company, setCompany }) {
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
                 {m.label}
                 {m.required && <span style={{ marginLeft: 8, fontSize: 10, color: "var(--gold)" }}>(requis)</span>}
+                {m.comingSoon && <span style={{ marginLeft: 8, fontSize: 10, color: "var(--muted)", border: "1px solid var(--border)", borderRadius: 6, padding: "1px 6px" }}>🔒 Bientôt disponible</span>}
               </div>
               <div style={{ fontSize: 11, color: "var(--muted2)" }}>{m.description}</div>
             </div>
