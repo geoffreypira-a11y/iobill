@@ -82,6 +82,7 @@ function publicCfg(c, companyId) {
     environment: c.environment,
     base_url: c.base_url,
     enabled: c.enabled,
+    transmission_enabled: c.transmission_enabled !== false, // v8.103 — null/absent = actif
     self_service_allowed: c.self_service_allowed === true,
     managed_by_admin: c.managed_by_admin === true,
     has_client_secret: !!c.client_secret,

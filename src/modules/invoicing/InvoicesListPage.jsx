@@ -19,6 +19,10 @@ export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  // v8.103 — Transmission PDP active pour cette société ? (défaut true = non
+  // bloquant ; chargé via pa_config). Si false → on remplace "Transmettre" par
+  // "Encaissée" (marquage local, pas de circuit PDP).
+  const [transmissionEnabled, setTransmissionEnabled] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -33,6 +37,29 @@ export function InvoicesListPage({ token, company }) {
   const [openMenu, setOpenMenu] = useState(null);
   // Modale de preview PDF : null ou objet facture
   const [previewInvoice, setPreviewInvoice] = useState(null);
+
+  // v8.103 — Charge l'état de transmission PDP de la société (best-effort).
+  // Si la transmission est désactivée côté admin, on remplacera "Transmettre"
+  // par "Encaissée". En cas d'échec/absence de config → on reste sur true
+  // (comportement inchangé : bouton Transmettre affiché comme avant).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "pa_config" })
+        });
+        const j = await r.json().catch(() => ({}));
+        const cfg = j.config || j;
+        if (alive && cfg && cfg.configured) {
+          setTransmissionEnabled(cfg.transmission_enabled !== false);
+        }
+      } catch (_) { /* on garde true */ }
+    })();
+    return () => { alive = false; };
+  }, [token, company?.id]);
 
   // Fermer le menu kebab si on clique en dehors ou si on scroll
   useEffect(() => {
@@ -772,7 +799,7 @@ export function InvoicesListPage({ token, company }) {
                             {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
                           </button>
                         )}
-                        {canTransmit && (
+                        {canTransmit && transmissionEnabled && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => transmitToAdmin(inv)}
@@ -781,6 +808,19 @@ export function InvoicesListPage({ token, company }) {
                             title="Transmettre la facture à l'administration via votre PDP"
                           >
                             {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                          </button>
+                        )}
+                        {/* v8.103 — Transmission désactivée : pas de circuit PDP →
+                            on propose l'encaissement local à la place. */}
+                        {canTransmit && !transmissionEnabled && inv.status !== "paid" && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => markEncaisseeLocal(inv)}
+                            disabled={actionLoading === `encaisser-${inv.id}`}
+                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                            title="Marquer la facture comme encaissée (transmission PDP désactivée)"
+                          >
+                            {actionLoading === `encaisser-${inv.id}` ? "⏳" : "💰 Encaissée"}
                           </button>
                         )}
                         {alreadyTransmitted && (() => {
