@@ -301,11 +301,11 @@ function ModulesTab({ token, company, setCompany }) {
     { code: "credit_notes", label: "Avoirs", description: "Avoirs liés à des factures émises" },
     { code: "purchases", label: "Achats fournisseurs", description: "Saisie + OCR Mistral des factures fournisseurs" },
     { code: "vat", label: "TVA", description: "Déclarations CA3 / CA12" },
-    { code: "urssaf", label: "URSSAF", description: "Cotisations auto-entrepreneur (mensuel/trimestriel)" },
-    { code: "accounting", label: "Export comptable", description: "FEC, CSV, connecteurs Pennylane / Tiime" },
+    { code: "urssaf", label: "URSSAF", description: "Cotisations auto-entrepreneur (mensuel/trimestriel)", comingSoon: true },
+    { code: "accounting", label: "Export comptable", description: "FEC, CSV, connecteurs Pennylane / Tiime", comingSoon: true },
     { code: "banking", label: "Lettrage bancaire PSD2", description: "Connexion Bridge pour lettrage automatique", comingSoon: true },
     { code: "client_portal", label: "Portail client", description: "Accès public sécurisé pour vos clients" },
-    { code: "esign", label: "Signature électronique", description: "Signature interne (clic) ou Yousign (eIDAS)" },
+    { code: "esign", label: "Signature électronique", description: "Signature interne (clic) ou Yousign (eIDAS)", comingSoon: true },
     { code: "advanced", label: "🔧 Mode avancé", description: "Affiche la section « Avancé » dans le menu : Cabinet, Équipe, Journal d'audit, API Développeur. Réservé aux utilisateurs expérimentés.", comingSoon: true }
   ];
 

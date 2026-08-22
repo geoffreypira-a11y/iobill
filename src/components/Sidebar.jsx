@@ -24,7 +24,13 @@ export function Sidebar({ token, company, user, onSignOut }) {
   const [openSignalsCount, setOpenSignalsCount] = useState(0);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
   const navigate = useNavigate();
-  const modules = company?.modules || {};
+  const rawModules = company?.modules || {};
+  // v8.107 — Modules "Bientôt disponible" (grisés dans Paramètres) : on les force
+  // à OFF ici pour retirer leurs liens de la barre latérale, sans toucher à la
+  // valeur stockée en base (réversible : retirer le code de la liste suffit).
+  const COMING_SOON_MODULES = ["urssaf", "accounting", "banking", "esign", "advanced"];
+  const modules = { ...rawModules };
+  for (const code of COMING_SOON_MODULES) modules[code] = false;
 
   const close = () => setMobileOpen(false);
 
