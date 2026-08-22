@@ -190,7 +190,10 @@ export async function handleInboxWebhook(req, res) {
         total_ttc_cents: toCents(structured.total_ttc),
         category: structured.category || null,
         accounting_code: structured.accounting_code || null,
-        status: "draft",
+        // v8.93 — statut "pending" (= "En cours / En attente") pour que l'achat
+        // apparaisse dans l'onglet En cours avec les actions payer/valider.
+        // "draft" n'est pas reconnu par la page Achats.
+        status: "pending",
         file_url: filePath,
         file_size: bytes.length,
         file_mime: mime,
