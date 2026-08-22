@@ -30,8 +30,26 @@ export function FirmClientFichePage({ token, user, company }) {
     setLink(l);
 
     if (l.company_id) {
-      const c = await sb.selectOne(token, "companies", `id=eq.${l.company_id}`, "*");
-      setClientCompany(c);
+      // v8.88 — Le cabinet ne lit PAS `companies` en direct de façon fiable
+      // (RLS) : le read direct retombait à null → "Client introuvable". On passe
+      // par l'action serveur firm_link_companies (comme le dashboard / la liste).
+      let co = null;
+      try {
+        const r = await fetch("/api/firm-invitation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "firm_link_companies", payload: { firm_id: firm.id } })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.companies) co = j.companies[l.id] || null;
+      } catch (_) { /* fallback ci-dessous */ }
+      // Fallback : on garde au moins l'id (les onglets lisent via RLS firm_can_read),
+      // pour que la fiche s'ouvre toujours si le lien existe.
+      setClientCompany(
+        co
+          ? { ...co, id: co.id || l.company_id }
+          : { id: l.company_id, legal_name: l.invited_email || "Client", siret: null }
+      );
     }
 
     // Charger les signalements ouverts

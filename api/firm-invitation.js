@@ -1076,10 +1076,20 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
       if (!l.company_id) continue;
       const c = await sbSelect("companies", {
         id: `eq.${l.company_id}`,
-        select: "legal_name,siret",
+        select: "id,legal_name,trade_name,siret,legal_form,vat_regime,vat_default_rate,source_app",
         limit: 1
       });
-      if (c && c[0]) out[l.id] = { name: c[0].legal_name, siret: c[0].siret };
+      if (c && c[0]) out[l.id] = {
+        id: c[0].id,
+        name: c[0].legal_name || c[0].trade_name,
+        legal_name: c[0].legal_name,
+        trade_name: c[0].trade_name,
+        siret: c[0].siret,
+        legal_form: c[0].legal_form,
+        vat_regime: c[0].vat_regime,
+        vat_default_rate: c[0].vat_default_rate,
+        source_app: c[0].source_app
+      };
     }
     return json(res, 200, { ok: true, companies: out });
   }
