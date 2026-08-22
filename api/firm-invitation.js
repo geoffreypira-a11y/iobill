@@ -909,8 +909,8 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
       return json(res, 400, { error: "URL Storage invalide" });
     }
 
-    // Buckets autorisés : factures émises + scans d'achats
-    if (bucket !== "invoices-pdf" && bucket !== "purchases-attach") {
+    // Buckets autorisés : factures émises + scans d'achats + relevés bancaires
+    if (bucket !== "invoices-pdf" && bucket !== "purchases-attach" && bucket !== "bank-statements") {
       return json(res, 400, { error: "Bucket non autorisé : " + bucket });
     }
 

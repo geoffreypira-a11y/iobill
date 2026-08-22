@@ -134,6 +134,9 @@ export function MyFirmSettingsPage({ token, user, company }) {
         )}
       </div>
 
+      {/* v8.86 — Relevés bancaires (transmis au cabinet) */}
+      {company?.id && <BankStatementsSection token={token} company={company} user={user} />}
+
       {/* Historique */}
       {others.length > 0 && (
         <details style={{ marginTop: 24 }}>
@@ -327,3 +330,143 @@ const sectionTitleStyle = { fontSize: 13, textTransform: "uppercase", letterSpac
 const loadingStyle = { minHeight: 400, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 13 };
 const modalBackdrop = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, backdropFilter: "blur(4px)" };
 const modalBox = { maxWidth: 500, width: "100%", margin: 20 };
+
+// ════════════════════════════════════════════════════════════════
+// v8.86 — Relevés bancaires : l'abonné dépose ses relevés (fichier +
+// nom choisi). Ils sont visibles en lecture par son cabinet comptable
+// (onglet "Relevés bancaires" côté cabinet). Bucket privé bank-statements ;
+// URL signée via l'action pdf_refresh_url.
+// ════════════════════════════════════════════════════════════════
+function BankStatementsSection({ token, company, user }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [file, setFile] = useState(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    const rows = await sb.select(token, "bank_statements", {
+      filter: `company_id=eq.${company.id}`,
+      order: "created_at.desc",
+      limit: 200
+    });
+    setItems(rows || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, [company?.id]);
+
+  function pick(f) {
+    setErr("");
+    if (!f) { setFile(null); return; }
+    setFile(f);
+    // Pré-remplit le nom avec le nom de fichier (sans extension) si vide.
+    if (!name.trim()) {
+      const base = f.name.replace(/\.[^.]+$/, "");
+      setName(base);
+    }
+  }
+
+  async function upload() {
+    if (!file) { setErr("Choisissez un fichier."); return; }
+    if (!name.trim()) { setErr("Donnez un nom au relevé."); return; }
+    setBusy(true); setErr("");
+    try {
+      const ext = (file.name.split(".").pop() || "pdf").toLowerCase().slice(0, 5);
+      const stamp = Date.now();
+      const path = `${company.id}/${stamp}_${name.trim().replace(/[^\w.-]+/g, "_")}.${ext}`;
+      const uploaded = await sb.uploadFile(token, "bank-statements", path, file);
+      if (!uploaded) {
+        setErr("Échec de l'upload. Vérifiez que le bucket 'bank-statements' existe (F12 pour les détails).");
+        setBusy(false); return;
+      }
+      const inserted = await sb.insert(token, "bank_statements", {
+        company_id: company.id,
+        file_url: path,
+        file_name: name.trim(),
+        size_bytes: file.size,
+        mime: file.type || null,
+        uploaded_by: user?.id || null
+      });
+      if (!inserted) { setErr("Fichier uploadé mais enregistrement échoué."); setBusy(false); return; }
+      setItems((prev) => [inserted[0] || { id: stamp, file_url: path, file_name: name.trim(), created_at: new Date().toISOString(), size_bytes: file.size }, ...prev]);
+      setFile(null); setName("");
+    } catch (e) {
+      setErr(e.message || "Erreur");
+    }
+    setBusy(false);
+  }
+
+  async function openFile(it) {
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+    const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/bank-statements/${it.file_url}`;
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.pdf_url) { alert(j.error || "Impossible d'ouvrir le fichier"); return; }
+      window.open(j.pdf_url, "_blank");
+    } catch (e) { alert("Erreur : " + e.message); }
+  }
+
+  async function remove(it) {
+    if (!confirm(`Supprimer le relevé « ${it.file_name} » ?`)) return;
+    await sb.delete(token, "bank_statements", `id=eq.${it.id}`);
+    setItems((prev) => prev.filter((x) => x.id !== it.id));
+    // Best-effort : suppression du fichier Storage (l'entrée BDD est déjà retirée).
+    try { await sb.deleteFile?.(token, "bank-statements", it.file_url); } catch (_) {}
+  }
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={sectionTitleStyle}>🏦 Relevés bancaires</h3>
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+          Déposez vos relevés bancaires : ils seront consultables par votre cabinet comptable depuis son espace.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "end" }}>
+          <label className="form-row">
+            <span className="form-label">Nom du relevé</span>
+            <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="ex : Relevé SG août 2026" />
+          </label>
+          <label className="form-row">
+            <span className="form-label">Fichier (PDF, image…)</span>
+            <input className="form-input" type="file" accept=".pdf,image/*" onChange={(e) => pick(e.target.files?.[0] || null)} />
+          </label>
+          <button className="btn btn-primary" onClick={upload} disabled={busy || !file}>
+            {busy ? "⏳ Envoi…" : "⬆️ Déposer"}
+          </button>
+        </div>
+        {err && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{err}</div>}
+      </div>
+
+      {loading ? (
+        <div style={{ color: "var(--muted)", fontSize: 12 }}>Chargement…</div>
+      ) : items.length === 0 ? (
+        <div className="card card-pad" style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
+          Aucun relevé déposé pour le moment.
+        </div>
+      ) : (
+        <div className="card" style={{ overflow: "hidden" }}>
+          {items.map((it) => (
+            <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid var(--border2, rgba(255,255,255,0.06))" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{it.file_name}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {fmtDate(it.created_at)}{it.size_bytes ? ` · ${(it.size_bytes / 1024).toFixed(0)} Ko` : ""}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => openFile(it)} title="Ouvrir">👁</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => remove(it)} title="Supprimer" style={{ color: "var(--red)" }}>🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

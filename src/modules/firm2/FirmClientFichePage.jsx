@@ -133,6 +133,7 @@ export function FirmClientFichePage({ token, user, company }) {
           { key: "invoices", label: "Factures" },
           { key: "purchases", label: "Achats" },
           { key: "vat", label: "TVA & URSSAF" },
+          { key: "bank", label: "Relevés bancaires" },
           { key: "signals", label: `Signalements${openSignals.length > 0 ? ` (${openSignals.length})` : ""}` }
         ].map((t) => (
           <button
@@ -161,6 +162,7 @@ export function FirmClientFichePage({ token, user, company }) {
       {tab === "invoices" && <InvoicesTab token={token} firm={firm} company={clientCompany} signals={signals} onSignalCreated={load} />}
       {tab === "purchases" && <PurchasesTab token={token} firm={firm} company={clientCompany} signals={signals} onSignalCreated={load} />}
       {tab === "vat" && <VatTab token={token} firm={firm} company={clientCompany} />}
+      {tab === "bank" && <BankStatementsTab token={token} firm={firm} company={clientCompany} />}
       {tab === "signals" && <SignalsTab token={token} signals={signals} onAction={load} />}
     </div>
   );
@@ -918,6 +920,125 @@ function FirmDeductibleModal({ token, firm, purchase, onClose, onSaved }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// v8.86 — Onglet : Relevés bancaires (cabinet, lecture seule)
+// Lit bank_statements via RLS firm_can_read ; URLs signées via pdf_refresh_url.
+// ════════════════════════════════════════════════════════════════
+function BankStatementsTab({ token, firm, company }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(() => new Set());
+  const [zipping, setZipping] = useState(false);
+
+  async function load() {
+    const rows = await sb.select(token, "bank_statements", {
+      filter: `company_id=eq.${company.id}`,
+      order: "created_at.desc",
+      limit: 200
+    });
+    setItems(rows || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, [company?.id]);
+
+  async function signedUrl(it) {
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+    const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/bank-statements/${it.file_url}`;
+    const r = await fetch("/api/firm-invitation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
+    });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && j.pdf_url ? j.pdf_url : null;
+  }
+
+  async function openFile(it) {
+    const url = await signedUrl(it);
+    if (!url) { alert("Impossible d'ouvrir le fichier."); return; }
+    window.open(url, "_blank");
+  }
+
+  function toggleOne(id) {
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAll() {
+    setSelected((prev) => prev.size === items.length ? new Set() : new Set(items.map((i) => i.id)));
+  }
+
+  async function downloadZip() {
+    const chosen = items.filter((i) => selected.has(i.id));
+    if (chosen.length === 0) return;
+    setZipping(true);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      let ok = 0;
+      for (const it of chosen) {
+        try {
+          const url = await signedUrl(it);
+          if (!url) continue;
+          const f = await fetch(url);
+          if (!f.ok) continue;
+          const blob = await f.blob();
+          const ext = (it.file_url.split(".").pop() || "pdf").split("?")[0].slice(0, 5);
+          const base = String(it.file_name || it.id).replace(/[^\w.-]+/g, "_");
+          zip.file(`${base}.${ext}`, blob);
+          ok++;
+        } catch (_) {}
+      }
+      if (ok === 0) { alert("Aucun relevé n'a pu être récupéré."); setZipping(false); return; }
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      const cname = (company.legal_name || company.trade_name || "client").replace(/[^\w.-]+/g, "_");
+      a.href = url; a.download = `releves_${cname}_${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      if (ok < chosen.length) alert(`${ok}/${chosen.length} relevés ajoutés au ZIP.`);
+    } catch (e) {
+      alert("Erreur ZIP : " + (e.message || e));
+    }
+    setZipping(false);
+  }
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;
+  if (items.length === 0) return <EmptyTab text="Aucun relevé bancaire déposé par ce client" />;
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+          {selected.size > 0 ? `${selected.size} relevé${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""}` : "Relevés déposés par le client"}
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={downloadZip} disabled={selected.size === 0 || zipping} style={{ whiteSpace: "nowrap" }}>
+          {zipping ? "⏳ Création du ZIP…" : `⬇️ Télécharger ZIP${selected.size > 0 ? ` (${selected.size})` : ""}`}
+        </button>
+      </div>
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border2, rgba(255,255,255,0.08))", fontSize: 11, color: "var(--muted)" }}>
+          <input type="checkbox" checked={selected.size === items.length} ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < items.length; }} onChange={toggleAll} title="Tout sélectionner" />
+          <span>Tout sélectionner</span>
+        </div>
+        {items.map((it) => (
+          <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid var(--border2, rgba(255,255,255,0.06))" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input type="checkbox" checked={selected.has(it.id)} onChange={() => toggleOne(it.id)} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{it.file_name}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {fmtDate(it.created_at)}{it.size_bytes ? ` · ${(it.size_bytes / 1024).toFixed(0)} Ko` : ""}
+                </div>
+              </div>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => openFile(it)} title="Ouvrir">👁</button>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
