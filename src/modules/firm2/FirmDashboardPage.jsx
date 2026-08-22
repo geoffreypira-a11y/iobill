@@ -24,7 +24,7 @@ export function FirmDashboardPage({ token, user, firm }) {
         const [links, sigs, msgs] = await Promise.all([
           sb.select(token, "firm_client_links", {
             filter: `firm_id=eq.${firm.id}&accepted_at=not.is.null&revoked_at=is.null`,
-            select: "id,company_id,accepted_at",
+            select: "id,company_id,accepted_at,invited_email",
             order: "accepted_at.desc",
             limit: 50
           }),
@@ -44,23 +44,29 @@ export function FirmDashboardPage({ token, user, firm }) {
         if (!alive) return;
 
         const linksList = links || [];
-        const companyIds = linksList.map((l) => l.company_id);
-        let companies = [];
-        if (companyIds.length > 0) {
-          companies = await sb.select(token, "companies", {
-            filter: `id=in.(${companyIds.join(",")})`,
-            select: "id,legal_name,trade_name,siret,sub_status",
-            limit: companyIds.length
+
+        // v8.85 — Le cabinet ne peut PAS lire `companies` directement (RLS) :
+        // le sb.select renvoyait vide → "Société sans nom". On passe par l'action
+        // serveur `firm_link_companies` (service_role), comme la page Mes clients.
+        let companiesMap = {};
+        try {
+          const r = await fetch("/api/firm-invitation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ action: "firm_link_companies", payload: { firm_id: firm.id } })
           });
-        }
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.companies) companiesMap = j.companies; // clé = link_id
+        } catch (_) { /* fallback silencieux */ }
+
         const clientsList = linksList.map((l) => {
-          const co = (companies || []).find((c) => c.id === l.company_id);
+          const co = companiesMap[l.id] || {};
           return {
             link_id: l.id,
             company_id: l.company_id,
-            name: co?.trade_name || co?.legal_name || "Société sans nom",
-            siret: co?.siret,
-            sub_status: co?.sub_status,
+            name: co.name || l.invited_email || "Société sans nom",
+            siret: co.siret,
+            sub_status: co.sub_status,
             signals_count: (sigs || []).filter((s) => s.company_id === l.company_id).length
           };
         });

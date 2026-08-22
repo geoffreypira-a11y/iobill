@@ -581,6 +581,9 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewTitle, setPreviewTitle] = useState("");
   const [dedFor, setDedFor] = useState(null); // v8.66 — mini-éditeur TVA récupérable (cabinet)
+  // v8.85 — Sélection multiple + export ZIP des justificatifs d'achat.
+  const [selected, setSelected] = useState(() => new Set());
+  const [zipping, setZipping] = useState(false);
 
   async function load() {
     const rows = await sb.select(token, "purchases", {
@@ -619,16 +622,108 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
     }
   }
 
+  // Achats ayant un justificatif téléchargeable (seuls sélectionnables).
+  const withPdf = purchases.filter((p) => p.file_url);
+
+  function toggleOne(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => {
+      if (prev.size === withPdf.length) return new Set();
+      return new Set(withPdf.map((p) => p.id));
+    });
+  }
+
+  // v8.85 — Télécharge les justificatifs sélectionnés dans un ZIP (côté client).
+  // Les achats utilisent file_url (chemin dans le bucket purchases-attach).
+  async function downloadZip() {
+    const chosen = withPdf.filter((p) => selected.has(p.id));
+    if (chosen.length === 0) return;
+    setZipping(true);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+      let ok = 0;
+      for (const p of chosen) {
+        const storedUrl = `${SUPABASE_URL}/storage/v1/object/sign/purchases-attach/${p.file_url}`;
+        try {
+          const r = await fetch("/api/firm-invitation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ action: "pdf_refresh_url", payload: { stored_url: storedUrl } })
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.pdf_url) continue;
+          const file = await fetch(j.pdf_url);
+          if (!file.ok) continue;
+          const blob = await file.blob();
+          const ext = (p.file_url.split(".").pop() || "pdf").split("?")[0].slice(0, 5);
+          const base = String(p.number || p.vendor_name || p.id).replace(/[^\w.-]+/g, "_");
+          const dateStr = p.issue_date ? String(p.issue_date).slice(0, 10) : "";
+          zip.file(`${base}${dateStr ? "_" + dateStr : ""}.${ext}`, blob);
+          ok++;
+        } catch (_) { /* on saute, on continue */ }
+      }
+      if (ok === 0) { alert("Aucun justificatif n'a pu être récupéré."); setZipping(false); return; }
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      const cname = (company.legal_name || company.trade_name || "client").replace(/[^\w.-]+/g, "_");
+      a.href = url;
+      a.download = `achats_${cname}_${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if (ok < chosen.length) alert(`${ok}/${chosen.length} justificatifs ajoutés au ZIP (les autres n'ont pas pu être récupérés).`);
+    } catch (e) {
+      alert("Erreur lors de la création du ZIP : " + (e.message || e));
+    }
+    setZipping(false);
+  }
+
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;
   if (purchases.length === 0) return <EmptyTab text="Aucun achat sur ce client" />;
 
   return (
     <>
+    {/* v8.85 — Barre d'export ZIP des justificatifs sélectionnés */}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+        {selected.size > 0
+          ? `${selected.size} justificatif${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""}`
+          : "Cochez les achats à exporter"}
+      </div>
+      <button
+        className="btn btn-primary btn-sm"
+        onClick={downloadZip}
+        disabled={selected.size === 0 || zipping}
+        style={{ whiteSpace: "nowrap" }}
+      >
+        {zipping ? "⏳ Création du ZIP…" : `⬇️ Télécharger ZIP${selected.size > 0 ? ` (${selected.size})` : ""}`}
+      </button>
+    </div>
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
         <table style={tableStyle}>
           <thead>
             <tr>
+              <th style={{ width: 32, textAlign: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={withPdf.length > 0 && selected.size === withPdf.length}
+                  ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < withPdf.length; }}
+                  onChange={toggleAll}
+                  title="Tout sélectionner"
+                  disabled={withPdf.length === 0}
+                />
+              </th>
               <th>N°</th>
               <th>Fournisseur</th>
               <th>Date</th>
@@ -644,6 +739,15 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
               const pSignals = signals.filter((s) => s.target_type === "purchase" && s.target_id === p.id && s.status === "open");
               return (
                 <tr key={p.id}>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggleOne(p.id)}
+                      disabled={!p.file_url}
+                      title={p.file_url ? "Sélectionner pour le ZIP" : "Pas de justificatif"}
+                    />
+                  </td>
                   <td>
                     <span style={{ fontFamily: "monospace" }}>{p.number || "—"}</span>
                     {pSignals.length > 0 && (
