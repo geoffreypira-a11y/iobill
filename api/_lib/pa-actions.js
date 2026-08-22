@@ -211,6 +211,17 @@ export async function paSendInvoice(company, payload) {
   if (!bytes) throw fail(400, "PDF Factur-X absent — génère-le d'abord");
 
   const creds = await loadCreds(company.id);
+  // v8.101 — PORTE DE TRANSMISSION. La réception (achats) reste active dès que le
+  // PDP est configuré ; seule l'ÉMISSION de factures vers la Plateforme Agréée
+  // peut être coupée par l'admin (`transmission_enabled=false`). Tant qu'elle est
+  // OFF, AUCUNE facture ne part au PDP (elle reste chez IOBILL/IOCAR, payée en
+  // local). ⚠️ On ne bloque QUE sur `=== false` explicite : colonne absente /
+  // null / undefined (tout l'existant avant migration) → comportement d'origine
+  // strictement inchangé. La génération Factur-X n'est PAS concernée (elle a lieu
+  // en amont ; ici on ne fait que la télétransmission).
+  if (creds.transmission_enabled === false) {
+    throw fail(403, "Transmission PDP désactivée — l'émission de factures vers la Plateforme Agréée n'est pas encore activée pour cette entreprise. (La facture reste disponible, la Factur-X est bien générée ; elle n'est simplement pas télétransmise.)");
+  }
   const { impl, cfg } = getProvider(creds);
 
   try {
@@ -668,6 +679,13 @@ export async function paAdminSave(adminUser, payload) {
     updated_by: "admin:" + adminUser.id,
     last_error: null
   };
+  // v8.101 — Toggle TRANSMISSION indépendant. Réception active dès que le PDP est
+  // configuré ; la transmission peut être coupée sans toucher la réception.
+  // Si l'UI admin ne l'envoie pas (ancien front), on retombe sur `enabled` →
+  // comportement inchangé (actif = transmission possible).
+  patch.transmission_enabled = (payload.transmission_enabled !== undefined)
+    ? !!payload.transmission_enabled
+    : !!payload.enabled;
   if (payload.client_id) patch.client_id = payload.client_id;
   if (payload.client_secret) patch.client_secret = payload.client_secret;
   if (payload.webhook_secret) patch.webhook_secret = payload.webhook_secret;
@@ -675,7 +693,7 @@ export async function paAdminSave(adminUser, payload) {
   await upsert("pa_credentials", [patch], "company_id");
   await logEvent({
     company_id: companyId, direction: "admin", event_type: "credentials.admin_updated",
-    status: "ok", message: "self_service=" + patch.self_service_allowed + " enabled=" + patch.enabled
+    status: "ok", message: "self_service=" + patch.self_service_allowed + " enabled=" + patch.enabled + " transmission=" + patch.transmission_enabled
   });
   return { ok: true };
 }
