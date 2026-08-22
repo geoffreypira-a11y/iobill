@@ -20,6 +20,7 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
     client_secret: "",
     webhook_secret: "",
     enabled: false,
+    transmission_enabled: true,
     self_service_allowed: false
   });
   const [meta, setMeta] = useState(null);
@@ -44,6 +45,7 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
             base_url: pa.base_url || "",
             client_id: pa.client_id || "",
             enabled: !!pa.enabled,
+            transmission_enabled: pa.transmission_enabled !== false,
             self_service_allowed: !!pa.self_service_allowed
           }));
         }
@@ -212,7 +214,18 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
             <div style={box}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 10 }}>
                 <input type="checkbox" checked={cfg.enabled} onChange={set("enabled")} />
-                Activer l'émission et la réception
+                Activer le PDP (réception des factures)
+              </label>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 10, opacity: cfg.enabled ? 1 : 0.45 }}>
+                <input type="checkbox" checked={cfg.transmission_enabled}
+                  onChange={set("transmission_enabled")} disabled={!cfg.enabled} style={{ marginTop: 3 }} />
+                <span>
+                  Autoriser la transmission (émission de factures vers le PDP)
+                  <br />
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    Décoché = les factures sont générées (Factur-X) mais NON télétransmises au PDP. La réception des achats reste active.
+                  </span>
+                </span>
               </label>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13 }}>
                 <input type="checkbox" checked={cfg.self_service_allowed}
