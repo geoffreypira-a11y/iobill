@@ -121,10 +121,10 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     }
   }
 
-  // v8.47.1 — FILIGRANE : logo garage en fond de page, EN DIAGONALE (-30°)
-  // Actif uniquement pour les apps externes (source_app renseigné) et si logo disponible.
-  // Dessiné TÔT (avant le reste du contenu) pour être en arrière-plan.
-  if (logoEmbeddedRef && company?.source_app && company.source_app !== "iobill") {
+  // v8.119 — FILIGRANE : logo en fond de page, EN DIAGONALE (+28° pdf-lib).
+  // Actif dès qu'un logo est embarqué, y compris pour IOBILL natif (avant, réservé
+  // aux apps externes type IOCAR). Dessiné TÔT pour être en arrière-plan.
+  if (logoEmbeddedRef) {
     try {
       const wmMaxSize = 400;
       const wmRatio = Math.min(
