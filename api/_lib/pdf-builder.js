@@ -505,11 +505,20 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
   // à `cellBaselineOffset` au-dessus du bas de la cellule pour centrer
   // verticalement (font size 9 → texte de ~7pt de haut, placé à 6pt
   // au-dessus du bas pour un blanc d'environ 7pt en haut, 6pt en bas).
-  const rowHeight = 20;
+  const rowHeight = 20;              // hauteur d'une ligne simple (1 sous-ligne)
   const cellBaselineOffset = 6;
+  const descLineGap = 11;            // v8.118 — espacement vertical entre sous-lignes
   const rowSeparators = [];
   for (const l of (lines || [])) {
-    const desc = (l.description || "").slice(0, 80);
+    // v8.118 — Désignation MULTI-LIGNES : on découpe sur les retours à la ligne,
+    // on tronque chaque sous-ligne à 80 caractères, et on plafonne à 6 sous-lignes
+    // pour éviter tout débordement de page. La hauteur de la row s'adapte.
+    let descLines = String(l.description || "").split(/\r?\n/).map((s) => s.slice(0, 80));
+    if (descLines.length === 0) descLines = [""];
+    if (descLines.length > 6) descLines = descLines.slice(0, 6);
+    const nLines = descLines.length;
+    const thisRowHeight = rowHeight + (nLines - 1) * descLineGap;
+
     const ht = (Number(l.line_ht_cents) / 100).toFixed(2);
     const pu = (Number(l.unit_price_ht_cents) / 100).toFixed(2);
     const qty = String(Number(l.quantity).toFixed(2)).replace(/\.00$/, "");
@@ -517,20 +526,26 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
 
     // Top et bottom de cette row
     const rowTopY = y;
-    const rowBottomY = y - rowHeight;
-    const baselineY = rowBottomY + cellBaselineOffset;
+    const rowBottomY = y - thisRowHeight;
+    // Baseline de la 1ère sous-ligne : calée sur le haut de la cellule
+    // (identique au rendu d'une ligne simple : rowTopY - 14).
+    const firstBaselineY = rowTopY - (rowHeight - cellBaselineOffset);
 
-    drawInCell(desc, 0, baselineY, 9, font, COLORS.dark);
-    drawInCell(qty, 1, baselineY, 9, font, COLORS.dark);
-    drawInCell(unit, 2, baselineY, 9, font, COLORS.dark);
-    drawInCell(pu + " €", 3, baselineY, 9, font, COLORS.dark);
+    // Désignation : une sous-ligne par retour à la ligne, empilées vers le bas.
+    descLines.forEach((dl, k) => {
+      drawInCell(dl, 0, firstBaselineY - k * descLineGap, 9, font, COLORS.dark);
+    });
+    // Les autres colonnes s'alignent sur la 1ère sous-ligne (haut de cellule).
+    drawInCell(qty, 1, firstBaselineY, 9, font, COLORS.dark);
+    drawInCell(unit, 2, firstBaselineY, 9, font, COLORS.dark);
+    drawInCell(pu + " €", 3, firstBaselineY, 9, font, COLORS.dark);
     if (!isMargeTva) {
       // v8.63 — "—" sur les lignes en marge (taux 0), "20%" sur les lignes taxables.
       const vatCell = Number(l.vat_rate) > 0 ? Number(l.vat_rate).toFixed(0) + "%" : "—";
-      drawInCell(vatCell, 4, baselineY, 9, font, COLORS.dark);
-      drawInCell(ht + " €", 5, baselineY, 9, font, COLORS.dark);
+      drawInCell(vatCell, 4, firstBaselineY, 9, font, COLORS.dark);
+      drawInCell(ht + " €", 5, firstBaselineY, 9, font, COLORS.dark);
     } else {
-      drawInCell(ht + " €", 4, baselineY, 9, font, COLORS.dark);
+      drawInCell(ht + " €", 4, firstBaselineY, 9, font, COLORS.dark);
     }
     y = rowBottomY;
     rowSeparators.push(rowBottomY); // séparateur exactement au bas de cette row

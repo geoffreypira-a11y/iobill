@@ -148,13 +148,15 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
               borderBottom: "1px solid var(--border2)"
             }}
           >
-            <input
+            <textarea
               className="form-input"
               value={l.description || ""}
               onChange={(e) => update(i, { description: e.target.value })}
-              placeholder="Désignation"
+              placeholder="Désignation (Entrée = nouvelle ligne)"
               disabled={readonly}
-              style={{ fontSize: 12.5 }}
+              rows={1}
+              onInput={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+              style={{ fontSize: 12.5, resize: "vertical", minHeight: 34, lineHeight: 1.4, fontFamily: "inherit", overflow: "hidden" }}
             />
             <input
               type="number"

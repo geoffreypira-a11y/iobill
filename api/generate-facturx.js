@@ -656,7 +656,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
         const unitPriceC = Number(l.unit_price_ht_cents ?? 0);
         const lineHtC = Number(l.line_ht_cents ?? Math.round(unitPriceC * qty));
         const rate = Number(l.vat_rate ?? 20);
-        const desc = x(l.description || "Ligne " + (i + 1));
+        // v8.118 — Le PDF visuel affiche la désignation en multi-lignes, mais dans
+        // le XML on aplatit les retours à la ligne (espace) : ram:Name doit rester
+        // une chaîne simple pour les validateurs EN16931.
+        const desc = x(String(l.description || ("Ligne " + (i + 1))).replace(/\r?\n+/g, " ").trim());
         return `
     <ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument>
