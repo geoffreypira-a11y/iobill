@@ -160,7 +160,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
             />
             <input
               type="number"
-              step="0.01"
+              step="1"
               className="form-input mono"
               value={l.quantity ?? ""}
               onChange={(e) => update(i, { quantity: e.target.value })}
@@ -178,7 +178,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
             </select>
             <input
               type="number"
-              step="0.01"
+              step="1"
               className="form-input mono"
               value={l.unit_price_ht ?? ""}
               onChange={(e) => update(i, { unit_price_ht: e.target.value })}
@@ -188,7 +188,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
             />
             <input
               type="number"
-              step="0.1"
+              step="1"
               className="form-input mono"
               value={l.discount_pct ?? 0}
               onChange={(e) => update(i, { discount_pct: e.target.value })}
