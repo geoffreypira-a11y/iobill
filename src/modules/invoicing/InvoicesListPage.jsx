@@ -23,6 +23,9 @@ export function InvoicesListPage({ token, company }) {
   // bloquant ; chargé via pa_config). Si false → on remplace "Transmettre" par
   // "Encaissée" (marquage local, pas de circuit PDP).
   const [transmissionEnabled, setTransmissionEnabled] = useState(true);
+  // v8.126 — Le PDP est-il réellement configuré pour cette société ? (défaut false)
+  // Le bouton "Transmettre" ne s'affiche QUE si PDP configuré ET transmission active.
+  const [pdpConfigured, setPdpConfigured] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -53,7 +56,8 @@ export function InvoicesListPage({ token, company }) {
         });
         const j = await r.json().catch(() => ({}));
         const cfg = j.config || j;
-        if (alive && cfg && cfg.configured) {
+        if (alive && cfg) {
+          setPdpConfigured(!!cfg.configured);
           setTransmissionEnabled(cfg.transmission_enabled !== false);
         }
       } catch (_) { /* on garde true */ }
@@ -799,7 +803,7 @@ export function InvoicesListPage({ token, company }) {
                             {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
                           </button>
                         )}
-                        {canTransmit && transmissionEnabled && (
+                        {canTransmit && pdpConfigured && transmissionEnabled && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => transmitToAdmin(inv)}
@@ -810,9 +814,9 @@ export function InvoicesListPage({ token, company }) {
                             {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
                           </button>
                         )}
-                        {/* v8.103 — Transmission désactivée : pas de circuit PDP →
-                            on propose l'encaissement local à la place. */}
-                        {canTransmit && !transmissionEnabled && inv.status !== "paid" && (
+                        {/* v8.103/126 — Pas de transmission possible (PDP non
+                            configuré OU transmission désactivée) → encaissement local. */}
+                        {canTransmit && (!pdpConfigured || !transmissionEnabled) && inv.status !== "paid" && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => markEncaisseeLocal(inv)}
