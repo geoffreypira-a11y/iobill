@@ -245,6 +245,19 @@ async function handleRequest(req, res) {
       return json(res, 200, { ok: true });
     }
 
+    // v8.122 — Numérotation MANUELLE (par société). Permet, quand c'est activé,
+    // de choisir le numéro d'une facture non transmise (cas migration en cours
+    // d'année). Défaut false → comportement d'origine strictement inchangé.
+    case "toggle_manual_numbering": {
+      const { companyId, value } = payload || {};
+      if (!companyId || typeof value !== "boolean") {
+        return json(res, 400, { error: "Paramètres invalides" });
+      }
+      const updated = await sbAdmin.update("companies", `id=eq.${companyId}`, { manual_numbering: value });
+      if (!updated) return json(res, 500, { error: "Échec" });
+      return json(res, 200, { ok: true });
+    }
+
     case "archive_company": {
       const { companyId, reason } = payload || {};
       if (!companyId) return json(res, 400, { error: "companyId manquant" });

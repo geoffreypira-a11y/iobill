@@ -113,6 +113,15 @@ export function AdminPage({ token, company }) {
     } catch (e) { alert("Erreur : " + e.message); }
   }
 
+  // v8.122 — Numérotation manuelle (par société) : permet de choisir les numéros
+  // de factures non transmises (migration en cours d'année). Défaut off.
+  async function toggleManualNumbering(c) {
+    try {
+      await adminCall("toggle_manual_numbering", { companyId: c.id, value: !c.manual_numbering });
+      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, manual_numbering: !c.manual_numbering } : x));
+    } catch (e) { alert("Erreur : " + e.message); }
+  }
+
   async function archiveCompany(companyId, reason) {
     try {
       await adminCall("archive_company", { companyId, reason });
@@ -298,6 +307,7 @@ export function AdminPage({ token, company }) {
                 onDelete={() => deleteCompany(c)}
                 onExport={() => exportCompany(c)}
                 onPdp={() => setPdpCompany(c)}
+                onToggleManualNumbering={() => toggleManualNumbering(c)}
                 onDeleteDoc={(table, id) => deleteDoc(table, id)}
               />
             ))
@@ -390,7 +400,7 @@ export function AdminPage({ token, company }) {
 // ═══════════════════════════════════════════════════════════
 // CompanyCard
 // ═══════════════════════════════════════════════════════════
-function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp }) {
+function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp, onToggleManualNumbering }) {
   const statusBadge = (() => {
     if (c._archived) return { label: "Archivé", color: "var(--muted)", bg: "rgba(255,255,255,0.05)" };
     if (c.sub_status === "active") return { label: "Abonné", color: "var(--green, #3ecf7a)", bg: "rgba(62,207,122,0.12)" };
@@ -441,6 +451,14 @@ function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, o
           </button>
           <button className="btn btn-ghost" onClick={onPdp} style={{ fontSize: 12, color: "var(--gold, #d4a843)" }} title="Plateforme agréée (Factur-X)">
             🔌 PDP Access
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={onToggleManualNumbering}
+            style={{ fontSize: 12, color: c.manual_numbering ? "var(--green, #3ecf7a)" : "var(--muted)" }}
+            title="Autoriser le choix manuel des numéros de facture (migration en cours d'année). Les factures déjà transmises restent verrouillées."
+          >
+            {c.manual_numbering ? "🔢 Numérotation manuelle : ON" : "🔢 Numérotation manuelle : OFF"}
           </button>
           {!c._archived ? (
             <>

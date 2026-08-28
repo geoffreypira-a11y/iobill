@@ -42,6 +42,11 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
   const [notes, setNotes] = useState(invoice?.notes || "");
   const [terms, setTerms] = useState(invoice?.terms || "");
   const [currency, setCurrency] = useState(invoice?.currency || "EUR");
+  // v8.122 — Numéro modifiable UNIQUEMENT si la numérotation manuelle est activée
+  // pour cette société (flag admin `manual_numbering`) ET la facture non transmise.
+  // Défaut false → champ verrouillé, comportement d'origine inchangé.
+  const [numberOverride, setNumberOverride] = useState(invoice?.number || "");
+  const canEditNumber = company?.manual_numbering === true && !invoice?.pdp_transmitted_at && !isReadonly;
   // v8.73 — Le régime TVA suit le réglage de l'entreprise (Paramètres).
   const [vatCategory, setVatCategory] = useState(
     invoice?.vat_category || (company.vat_regime === "franchise" ? "franchise" : "standard")
@@ -180,19 +185,34 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
     try {
       let saved;
       if (isNew) {
-        const number = await sb.rpc(token, "allocate_document_number", {
-          p_company_id: company.id,
-          p_doc_type: "invoice"
-        });
+        // v8.121 — Numéro personnalisé autorisé si transmission OFF, sinon on
+        // alloue le prochain numéro légal automatiquement.
+        let number;
+        if (canEditNumber && numberOverride.trim()) {
+          number = numberOverride.trim();
+        } else {
+          number = await sb.rpc(token, "allocate_document_number", {
+            p_company_id: company.id,
+            p_doc_type: "invoice"
+          });
+        }
         payload.number = number;
         payload.status = "draft";
         const created = await sb.insert(token, "invoices", payload);
         saved = created?.[0];
       } else {
+        // v8.121 — Numéro modifiable à l'édition si transmission OFF + non transmise.
+        if (canEditNumber && numberOverride.trim() && numberOverride.trim() !== invoice.number) {
+          payload.number = numberOverride.trim();
+        }
         const updated = await sb.update(token, "invoices", `id=eq.${invoice.id}`, payload);
         saved = updated?.[0];
       }
-      if (!saved) throw new Error("Erreur d'enregistrement");
+      if (!saved) throw new Error(
+        (canEditNumber && numberOverride.trim())
+          ? "Enregistrement impossible — ce numéro existe peut-être déjà pour une autre facture. Choisissez-en un autre."
+          : "Erreur d'enregistrement"
+      );
 
       // Lignes
       await sb.delete(token, "document_lines", `document_type=eq.invoice&document_id=eq.${saved.id}`);
@@ -318,6 +338,32 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
                     ⚠️ Pas d'email — l'envoi par mail ne sera pas possible
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* v8.121 — Numéro de facture : modifiable uniquement si la transmission
+              PDP est désactivée ET la facture non transmise. Sinon lecture seule. */}
+          <div className="form-row" style={{ marginBottom: 16 }}>
+            <label className="form-label">
+              Numéro de facture
+              {!canEditNumber && (
+                <span style={{ marginLeft: 8, fontSize: 10, color: "var(--muted)" }}>
+                  {invoice?.pdp_transmitted_at ? "🔒 verrouillé (transmise au PDP)" : "🔒 attribué automatiquement"}
+                </span>
+              )}
+            </label>
+            <input
+              className="form-input mono"
+              value={canEditNumber ? numberOverride : (invoice?.number || (isNew ? "— attribué à l'enregistrement —" : ""))}
+              onChange={(e) => setNumberOverride(e.target.value)}
+              disabled={!canEditNumber}
+              placeholder={isNew ? "Laisser vide = numéro auto" : ""}
+              style={{ maxWidth: 280 }}
+            />
+            {canEditNumber && (
+              <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 4 }}>
+                Numérotation manuelle activée : tu peux fixer le numéro à la main (il doit rester unique).
               </div>
             )}
           </div>
