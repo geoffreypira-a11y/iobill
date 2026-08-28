@@ -40,6 +40,8 @@ export function InvoicesListPage({ token, company }) {
   const [openMenu, setOpenMenu] = useState(null);
   // Modale de preview PDF : null ou objet facture
   const [previewInvoice, setPreviewInvoice] = useState(null);
+  // v8.130 — Modale d'encaissement local (partiel possible) : null ou facture
+  const [encaisseModal, setEncaisseModal] = useState(null);
 
   // v8.103 — Charge l'état de transmission PDP de la société (best-effort).
   // Si la transmission est désactivée côté admin, on remplacera "Transmettre"
@@ -496,53 +498,44 @@ export function InvoicesListPage({ token, company }) {
   // dans le CA encaissé), SANS fr:212. En B2C il n'y a pas d'e-facture au sens
   // PDP : l'encaissement se déclare en e-reporting AGRÉGÉ par jour, pas via un
   // statut de cycle de vie fr:212 (qui n'existe que pour l'e-invoicing B2B).
+  // v8.130 — Applique un encaissement LOCAL (partiel ou solde) depuis la modale.
+  // Cas non transmis uniquement : aucun appel PDP. Cumule sur paid_cents.
+  async function applyLocalEncaisse(inv, appliedCents) {
+    const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
+    const alreadyPaid = inv.paid_cents || 0;
+    const remaining = Math.max(0, totalTtc - alreadyPaid);
+    const applied = Math.min(Math.max(0, appliedCents), remaining); // borné au reste
+    if (applied <= 0) { showToast("Montant invalide", "error"); return; }
+    const newPaid = alreadyPaid + applied;
+    const solde = newPaid >= totalTtc - 1;                 // epsilon 1 cent
+    const newStatus = solde ? "paid" : "partial";
+    const finalPaid = solde ? totalTtc : newPaid;
+
+    setActionLoading(`encaisser-${inv.id}`);
+    try {
+      const nowIso = new Date().toISOString();
+      await sb.update(token, "invoices", "id=eq." + inv.id, {
+        status: newStatus, paid_cents: finalPaid, updated_at: nowIso
+      });
+      setInvoices((prev) => prev.map((x) =>
+        x.id === inv.id ? { ...x, status: newStatus, paid_cents: finalPaid } : x
+      ));
+      syncVatCurrentPeriod(token, company);
+      capture("invoice_encaissee_b2c", { invoice_id: inv.id, partial: !solde });
+      showToast(solde
+        ? "Facture soldée ✓"
+        : "Encaissement partiel enregistré ✓ — reste dû : " + fmtEUR(totalTtc - finalPaid));
+      setEncaisseModal(null);
+    } catch (e) {
+      showToast(e.message || "Erreur lors du marquage", "error");
+    }
+    setActionLoading(null);
+  }
+
   async function markEncaisseeLocal(inv) {
     const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
     const dateStr = new Date().toLocaleDateString("fr-FR");
     const transmise = !!inv.pdp_transmission_id;
-
-    // ─── v8.129 — Cas LOCAL (facture NON transmise / pas de PDP) : encaissement
-    // PARTIEL possible. On gère tout ici puis on RETURN → la branche PDP (fr:212)
-    // plus bas n'est JAMAIS atteinte dans ce cas et reste strictement inchangée
-    // pour les factures transmises.
-    if (!transmise) {
-      const alreadyPaid = inv.paid_cents || 0;
-      const remaining = Math.max(0, totalTtc - alreadyPaid);
-      if (remaining <= 0) { showToast("Facture déjà soldée ✓"); return; }
-      const raw = window.prompt(
-        "Encaissement (client B2C) — reste dû : " + fmtEUR(remaining) + "\n\n"
-        + "Laisse le montant proposé pour solder, ou saisis un montant partiel.",
-        (remaining / 100).toFixed(2)
-      );
-      if (raw === null) return; // annulé
-      const amount = Math.round(parseFloat(String(raw).replace(",", ".")) * 100);
-      if (!Number.isFinite(amount) || amount <= 0) { showToast("Montant invalide", "error"); return; }
-      const applied = Math.min(amount, remaining);           // on ne dépasse pas le reste
-      const newPaid = alreadyPaid + applied;
-      const solde = newPaid >= totalTtc - 1;                 // epsilon 1 cent
-      const newStatus = solde ? "paid" : "partial";
-      const finalPaid = solde ? totalTtc : newPaid;
-
-      setActionLoading(`encaisser-${inv.id}`);
-      try {
-        const nowIso = new Date().toISOString();
-        await sb.update(token, "invoices", "id=eq." + inv.id, {
-          status: newStatus, paid_cents: finalPaid, updated_at: nowIso
-        });
-        setInvoices((prev) => prev.map((x) =>
-          x.id === inv.id ? { ...x, status: newStatus, paid_cents: finalPaid } : x
-        ));
-        syncVatCurrentPeriod(token, company);
-        capture("invoice_encaissee_b2c", { invoice_id: inv.id, partial: !solde });
-        showToast(solde
-          ? "Facture soldée ✓"
-          : "Encaissement partiel enregistré ✓ — reste dû : " + fmtEUR(totalTtc - finalPaid));
-      } catch (e) {
-        showToast(e.message || "Erreur lors du marquage", "error");
-      }
-      setActionLoading(null);
-      return;
-    }
 
     if (!window.confirm(
       "Marquer cette facture (client particulier / B2C) comme encaissée le " + dateStr + " ?\n\n"
@@ -863,7 +856,7 @@ export function InvoicesListPage({ token, company }) {
                         {canTransmit && (!pdpConfigured || !transmissionEnabled) && inv.status !== "paid" && (
                           <button
                             className="btn btn-ghost btn-sm"
-                            onClick={() => markEncaisseeLocal(inv)}
+                            onClick={() => inv.pdp_transmission_id ? markEncaisseeLocal(inv) : setEncaisseModal(inv)}
                             disabled={actionLoading === `encaisser-${inv.id}`}
                             style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
                             title="Marquer la facture comme encaissée (transmission PDP désactivée)"
@@ -1004,6 +997,16 @@ export function InvoicesListPage({ token, company }) {
         />
       )}
 
+      {/* v8.130 — Modale d'encaissement LOCAL (partiel possible, sans PDP) */}
+      {encaisseModal && (
+        <EncaisseLocalModal
+          inv={encaisseModal}
+          busy={actionLoading === `encaisser-${encaisseModal.id}`}
+          onClose={() => setEncaisseModal(null)}
+          onSubmit={(cents) => applyLocalEncaisse(encaisseModal, cents)}
+        />
+      )}
+
       {/* ─── Menu kebab : rendu en position:fixed ─── */}
       {openMenu && (
         <div
@@ -1067,7 +1070,7 @@ export function InvoicesListPage({ token, company }) {
               <>
                 <div style={{ height: 1, background: "var(--border2)", margin: "4px 0" }} />
                 <MenuItemInv
-                  onClick={() => { markEncaisseeLocal(inv); setOpenMenu(null); }}
+                  onClick={() => { if (inv.pdp_transmission_id) markEncaisseeLocal(inv); else setEncaisseModal(inv); setOpenMenu(null); }}
                   style={{ color: "#2ecc71" }}
                 >
                   💰 Marquer encaissée (B2C)
@@ -1136,5 +1139,85 @@ function MenuItemInv({ children, onClick, style = {} }) {
     >
       {children}
     </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v8.130 — Modale d'encaissement LOCAL (partiel possible, sans PDP).
+// Calquée sur la modale de paiement d'IOCAR (récap + champ + "Solder").
+// ═══════════════════════════════════════════════════════════════════
+function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
+  const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
+  const alreadyPaid = inv.paid_cents || 0;
+  const remaining = Math.max(0, totalTtc - alreadyPaid);
+  const [montant, setMontant] = useState((remaining / 100).toFixed(2));
+
+  const amountCents = Math.round(parseFloat(String(montant).replace(",", ".")) * 100) || 0;
+  const applied = Math.min(Math.max(0, amountCents), remaining);
+  const newRemaining = Math.max(0, remaining - applied);
+  const solde = applied > 0 && applied >= remaining - 1; // epsilon 1 cent
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && !busy && onClose()}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-hd">
+          <span className="modal-title">💰 Encaissement</span>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ background: "var(--card2)", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "var(--muted)" }}>Total TTC</span>
+              <span style={{ fontWeight: 700 }}>{fmtEUR(totalTtc)}</span>
+            </div>
+            {alreadyPaid > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 6 }}>
+                <span style={{ color: "var(--muted)" }}>Déjà encaissé</span>
+                <span style={{ color: "var(--green)" }}>- {fmtEUR(alreadyPaid)}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border2)" }}>
+              <span>Reste à payer</span>
+              <span style={{ color: remaining <= 0 ? "var(--green)" : "var(--orange)" }}>{fmtEUR(remaining)}</span>
+            </div>
+          </div>
+
+          <label className="form-label" style={{ display: "block", marginBottom: 6 }}>Montant reçu (€)</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="form-input mono"
+              type="number" step="1" min="0"
+              value={montant}
+              onChange={(e) => setMontant(e.target.value)}
+              autoFocus
+              style={{ flex: 1, textAlign: "right" }}
+            />
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setMontant((remaining / 100).toFixed(2))}
+              title="Mettre le reste dû"
+            >
+              Solder
+            </button>
+          </div>
+          {applied > 0 && !solde && (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+              Après ce paiement, reste dû : <strong style={{ color: "var(--orange)" }}>{fmtEUR(newRemaining)}</strong> (statut : partiel)
+            </div>
+          )}
+          {solde && (
+            <div style={{ fontSize: 12, color: "var(--green)", marginTop: 8 }}>
+              La facture sera soldée ✓
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Annuler</button>
+          <button className="btn btn-primary" onClick={() => onSubmit(amountCents)} disabled={busy || applied <= 0}>
+            {busy ? "..." : "✅ Enregistrer"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
