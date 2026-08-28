@@ -69,7 +69,9 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
   async function save() {
     setBusy(true); setMsg(null);
     try {
-      await adminCall("pa_admin_save", { company_id: company.id, ...cfg });
+      // v8.127 — Cohérence : jamais de transmission sans réception active.
+      const payload = { ...cfg, transmission_enabled: cfg.enabled && cfg.transmission_enabled };
+      await adminCall("pa_admin_save", { company_id: company.id, ...payload });
       setCfg(c => ({ ...c, client_secret: "", webhook_secret: "" }));
       setMsg({ t: "ok", m: "Configuration enregistrée" });
       const { companies } = await adminCall("pa_admin_list");
@@ -220,11 +222,21 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
 
             <div style={box}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 10 }}>
-                <input type="checkbox" checked={cfg.enabled} onChange={set("enabled")} />
+                <input
+                  type="checkbox"
+                  checked={cfg.enabled}
+                  onChange={(e) => setCfg(c => ({
+                    ...c,
+                    enabled: e.target.checked,
+                    // v8.127 — Réception décochée => transmission forcée à OFF
+                    // (jamais de transmission sans réception active).
+                    transmission_enabled: e.target.checked ? c.transmission_enabled : false
+                  }))}
+                />
                 Activer le PDP (réception des factures)
               </label>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 10, opacity: cfg.enabled ? 1 : 0.45 }}>
-                <input type="checkbox" checked={cfg.transmission_enabled}
+                <input type="checkbox" checked={cfg.enabled && cfg.transmission_enabled}
                   onChange={set("transmission_enabled")} disabled={!cfg.enabled} style={{ marginTop: 3 }} />
                 <span>
                   Autoriser la transmission (émission de factures vers le PDP)
