@@ -500,6 +500,50 @@ export function InvoicesListPage({ token, company }) {
     const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
     const dateStr = new Date().toLocaleDateString("fr-FR");
     const transmise = !!inv.pdp_transmission_id;
+
+    // ─── v8.129 — Cas LOCAL (facture NON transmise / pas de PDP) : encaissement
+    // PARTIEL possible. On gère tout ici puis on RETURN → la branche PDP (fr:212)
+    // plus bas n'est JAMAIS atteinte dans ce cas et reste strictement inchangée
+    // pour les factures transmises.
+    if (!transmise) {
+      const alreadyPaid = inv.paid_cents || 0;
+      const remaining = Math.max(0, totalTtc - alreadyPaid);
+      if (remaining <= 0) { showToast("Facture déjà soldée ✓"); return; }
+      const raw = window.prompt(
+        "Encaissement (client B2C) — reste dû : " + fmtEUR(remaining) + "\n\n"
+        + "Laisse le montant proposé pour solder, ou saisis un montant partiel.",
+        (remaining / 100).toFixed(2)
+      );
+      if (raw === null) return; // annulé
+      const amount = Math.round(parseFloat(String(raw).replace(",", ".")) * 100);
+      if (!Number.isFinite(amount) || amount <= 0) { showToast("Montant invalide", "error"); return; }
+      const applied = Math.min(amount, remaining);           // on ne dépasse pas le reste
+      const newPaid = alreadyPaid + applied;
+      const solde = newPaid >= totalTtc - 1;                 // epsilon 1 cent
+      const newStatus = solde ? "paid" : "partial";
+      const finalPaid = solde ? totalTtc : newPaid;
+
+      setActionLoading(`encaisser-${inv.id}`);
+      try {
+        const nowIso = new Date().toISOString();
+        await sb.update(token, "invoices", "id=eq." + inv.id, {
+          status: newStatus, paid_cents: finalPaid, updated_at: nowIso
+        });
+        setInvoices((prev) => prev.map((x) =>
+          x.id === inv.id ? { ...x, status: newStatus, paid_cents: finalPaid } : x
+        ));
+        syncVatCurrentPeriod(token, company);
+        capture("invoice_encaissee_b2c", { invoice_id: inv.id, partial: !solde });
+        showToast(solde
+          ? "Facture soldée ✓"
+          : "Encaissement partiel enregistré ✓ — reste dû : " + fmtEUR(totalTtc - finalPaid));
+      } catch (e) {
+        showToast(e.message || "Erreur lors du marquage", "error");
+      }
+      setActionLoading(null);
+      return;
+    }
+
     if (!window.confirm(
       "Marquer cette facture (client particulier / B2C) comme encaissée le " + dateStr + " ?\n\n"
       + "Montant : " + fmtEUR(totalTtc) + "\n\n"
