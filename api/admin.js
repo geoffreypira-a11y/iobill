@@ -264,16 +264,29 @@ async function handleRequest(req, res) {
       return json(res, 200, { ok: true, trial_ends_at: newEnd });
     }
 
-    // Exempter (accès complet illimité sans paiement) : sub_status = "active".
-    // On repasse en "trialing" via extend_trial si besoin de re-limiter.
+    // Exempter (accès complet illimité sans paiement) : sub_status = "active"
+    // + marqueur is_exempt=true pour l'identifier (distinct d'un abonné payant).
     case "set_exempt": {
       const { companyId } = payload || {};
       if (!companyId) return json(res, 400, { error: "companyId manquant" });
       const updated = await sbAdmin.update("companies", `id=eq.${companyId}`, {
-        sub_status: "active", trial_ends_at: null
+        sub_status: "active", trial_ends_at: null, is_exempt: true
       });
       if (!updated) return json(res, 500, { error: "Échec" });
       return json(res, 200, { ok: true });
+    }
+
+    // Retirer l'exemption : is_exempt=false + remise en essai avec 7 jours de
+    // grâce (pour ne pas bloquer sèchement ; ajustable ensuite via extend_trial).
+    case "remove_exempt": {
+      const { companyId } = payload || {};
+      if (!companyId) return json(res, 400, { error: "companyId manquant" });
+      const graceEnd = new Date(Date.now() + 7 * 86400000).toISOString();
+      const updated = await sbAdmin.update("companies", `id=eq.${companyId}`, {
+        is_exempt: false, sub_status: "trialing", trial_ends_at: graceEnd
+      });
+      if (!updated) return json(res, 500, { error: "Échec" });
+      return json(res, 200, { ok: true, trial_ends_at: graceEnd });
     }
 
     // de choisir le numéro d'une facture non transmise (cas migration en cours

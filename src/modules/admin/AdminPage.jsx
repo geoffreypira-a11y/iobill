@@ -126,7 +126,14 @@ export function AdminPage({ token, company }) {
     if (!window.confirm(`Exempter « ${c.name || c.legal_name || "cette société"} » ?\nElle aura un accès complet illimité, sans paiement.`)) return;
     try {
       await adminCall("set_exempt", { companyId: c.id });
-      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, sub_status: "active", trial_ends_at: null } : x));
+      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, sub_status: "active", trial_ends_at: null, is_exempt: true } : x));
+    } catch (e) { alert("Erreur : " + e.message); }
+  }
+  async function removeExempt(c) {
+    if (!window.confirm(`Retirer l'exemption de « ${c.name || c.legal_name || "cette société"} » ?\nElle repassera en essai (7 jours de grâce).`)) return;
+    try {
+      const { trial_ends_at } = await adminCall("remove_exempt", { companyId: c.id });
+      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, is_exempt: false, sub_status: "trialing", trial_ends_at } : x));
     } catch (e) { alert("Erreur : " + e.message); }
   }
 
@@ -325,6 +332,7 @@ export function AdminPage({ token, company }) {
                 onToggleManualNumbering={() => toggleManualNumbering(c)}
                 onExtendTrial={(days) => extendTrial(c, days)}
                 onSetExempt={() => setExempt(c)}
+                onRemoveExempt={() => removeExempt(c)}
                 onDeleteDoc={(table, id) => deleteDoc(table, id)}
               />
             ))
@@ -417,13 +425,14 @@ export function AdminPage({ token, company }) {
 // ═══════════════════════════════════════════════════════════
 // CompanyCard
 // ═══════════════════════════════════════════════════════════
-function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp, onToggleManualNumbering, onExtendTrial, onSetExempt }) {
+function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp, onToggleManualNumbering, onExtendTrial, onSetExempt, onRemoveExempt }) {
   // v8.124 — Jours d'essai restants (si en essai).
   const trialDaysLeft = (c.sub_status === "trialing" && c.trial_ends_at)
     ? Math.ceil((new Date(c.trial_ends_at).getTime() - Date.now()) / 86400000)
     : null;
   const statusBadge = (() => {
     if (c._archived) return { label: "Archivé", color: "var(--muted)", bg: "rgba(255,255,255,0.05)" };
+    if (c.is_exempt) return { label: "Exempté", color: "var(--green, #3ecf7a)", bg: "rgba(62,207,122,0.12)" };
     if (c.sub_status === "active") return { label: "Abonné", color: "var(--green, #3ecf7a)", bg: "rgba(62,207,122,0.12)" };
     if (c.sub_status === "trialing") return { label: "Essai", color: "var(--gold, #d4a843)", bg: "rgba(212,168,67,0.12)" };
     if (c.sub_status === "past_due") return { label: "Impayé", color: "var(--orange)", bg: "rgba(232,150,61,0.12)" };
@@ -490,8 +499,12 @@ function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, o
           >
             {c.manual_numbering ? "🔢 Numérotation manuelle : ON" : "🔢 Numérotation manuelle : OFF"}
           </button>
-          {/* v8.124 — Gestion de l'essai */}
-          {c.sub_status !== "active" && (
+          {/* v8.124/125 — Gestion de l'essai / exemption */}
+          {c.is_exempt ? (
+            <button className="btn btn-ghost" onClick={onRemoveExempt} style={{ fontSize: 12, color: "var(--orange)" }} title="Retirer l'exemption (repasse en essai, 7 jours de grâce)">
+              ✖ Retirer l'exempt
+            </button>
+          ) : c.sub_status !== "active" && (
             <>
               <button className="btn btn-ghost" onClick={() => onExtendTrial(7)} style={{ fontSize: 12 }} title="Prolonger l'essai de 7 jours">
                 ⏳ +7j
