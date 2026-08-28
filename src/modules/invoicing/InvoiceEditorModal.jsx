@@ -240,6 +240,19 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
         await sb.insert(token, "document_lines", linesPayload);
       }
 
+      // v8.123 — Si le numéro a été saisi à la main, on recale le compteur auto
+      // pour que la prochaine facture continue à séquence+1 (best-effort, ne
+      // bloque pas l'enregistrement en cas d'échec).
+      if (canEditNumber && numberOverride.trim() && saved?.number) {
+        try {
+          await sb.rpc(token, "sync_document_seq", {
+            p_company_id: company.id,
+            p_doc_type: "invoice",
+            p_number: saved.number
+          });
+        } catch (_) { /* non bloquant */ }
+      }
+
       if (isNew) {
         capture("invoice_created", { invoice_id: saved.id });
         bumpModuleUsage(token, company.id, "invoices_created");
