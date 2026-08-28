@@ -804,7 +804,18 @@ export function InvoicesListPage({ token, company }) {
                         );
                       })()}
                     </td>
-                    <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+                    <td>
+                      <span className={"badge " + badge.cls}>{badge.label}</span>
+                      {inv.status === "partial" && (() => {
+                        const tot = inv.grand_total_cents || inv.total_ttc_cents || 0;
+                        const reste = Math.max(0, tot - (inv.paid_cents || 0));
+                        return (
+                          <div style={{ fontSize: 10.5, color: "var(--orange)", marginTop: 3, whiteSpace: "nowrap" }}>
+                            reste {fmtEUR(reste)}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
                         {/* Bouton principal : Voir (preview PDF) si emise, sinon Modifier */}
