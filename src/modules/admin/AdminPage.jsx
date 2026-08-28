@@ -115,6 +115,21 @@ export function AdminPage({ token, company }) {
 
   // v8.122 — Numérotation manuelle (par société) : permet de choisir les numéros
   // de factures non transmises (migration en cours d'année). Défaut off.
+  // v8.124 — Gestion essai : prolonger de N jours, ou exempter (accès illimité).
+  async function extendTrial(c, days) {
+    try {
+      const { trial_ends_at } = await adminCall("extend_trial", { companyId: c.id, days });
+      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, trial_ends_at, sub_status: "trialing" } : x));
+    } catch (e) { alert("Erreur : " + e.message); }
+  }
+  async function setExempt(c) {
+    if (!window.confirm(`Exempter « ${c.name || c.legal_name || "cette société"} » ?\nElle aura un accès complet illimité, sans paiement.`)) return;
+    try {
+      await adminCall("set_exempt", { companyId: c.id });
+      setCompanies((prev) => prev.map((x) => x.id === c.id ? { ...x, sub_status: "active", trial_ends_at: null } : x));
+    } catch (e) { alert("Erreur : " + e.message); }
+  }
+
   async function toggleManualNumbering(c) {
     try {
       await adminCall("toggle_manual_numbering", { companyId: c.id, value: !c.manual_numbering });
@@ -308,6 +323,8 @@ export function AdminPage({ token, company }) {
                 onExport={() => exportCompany(c)}
                 onPdp={() => setPdpCompany(c)}
                 onToggleManualNumbering={() => toggleManualNumbering(c)}
+                onExtendTrial={(days) => extendTrial(c, days)}
+                onSetExempt={() => setExempt(c)}
                 onDeleteDoc={(table, id) => deleteDoc(table, id)}
               />
             ))
@@ -400,7 +417,11 @@ export function AdminPage({ token, company }) {
 // ═══════════════════════════════════════════════════════════
 // CompanyCard
 // ═══════════════════════════════════════════════════════════
-function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp, onToggleManualNumbering }) {
+function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, onUnarchive, onDelete, onExport, onDeleteDoc, onPdp, onToggleManualNumbering, onExtendTrial, onSetExempt }) {
+  // v8.124 — Jours d'essai restants (si en essai).
+  const trialDaysLeft = (c.sub_status === "trialing" && c.trial_ends_at)
+    ? Math.ceil((new Date(c.trial_ends_at).getTime() - Date.now()) / 86400000)
+    : null;
   const statusBadge = (() => {
     if (c._archived) return { label: "Archivé", color: "var(--muted)", bg: "rgba(255,255,255,0.05)" };
     if (c.sub_status === "active") return { label: "Abonné", color: "var(--green, #3ecf7a)", bg: "rgba(62,207,122,0.12)" };
@@ -422,6 +443,15 @@ function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, o
             }}>
               {statusBadge.label}
             </span>
+            {trialDaysLeft !== null && (
+              <span style={{
+                padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                color: trialDaysLeft <= 0 ? "var(--red, #e0556a)" : (trialDaysLeft <= 3 ? "var(--orange)" : "var(--muted2)"),
+                background: "rgba(255,255,255,0.05)"
+              }}>
+                {trialDaysLeft <= 0 ? "essai expiré" : `${trialDaysLeft} j restant${trialDaysLeft > 1 ? "s" : ""}`}
+              </span>
+            )}
             {!c.is_active && !c._archived && (
               <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, color: "var(--muted)", background: "rgba(255,255,255,0.05)" }}>
                 Désactivé
@@ -460,6 +490,20 @@ function CompanyCard({ c, expanded, data, onToggle, onToggleActive, onArchive, o
           >
             {c.manual_numbering ? "🔢 Numérotation manuelle : ON" : "🔢 Numérotation manuelle : OFF"}
           </button>
+          {/* v8.124 — Gestion de l'essai */}
+          {c.sub_status !== "active" && (
+            <>
+              <button className="btn btn-ghost" onClick={() => onExtendTrial(7)} style={{ fontSize: 12 }} title="Prolonger l'essai de 7 jours">
+                ⏳ +7j
+              </button>
+              <button className="btn btn-ghost" onClick={() => onExtendTrial(30)} style={{ fontSize: 12 }} title="Prolonger l'essai de 30 jours">
+                ⏳ +30j
+              </button>
+              <button className="btn btn-ghost" onClick={onSetExempt} style={{ fontSize: 12, color: "var(--green, #3ecf7a)" }} title="Accès complet illimité, sans paiement">
+                ✅ Exempter
+              </button>
+            </>
+          )}
           {!c._archived ? (
             <>
               <button className="btn btn-ghost" onClick={onToggleActive} style={{ fontSize: 12 }}>

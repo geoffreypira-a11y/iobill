@@ -245,7 +245,37 @@ async function handleRequest(req, res) {
       return json(res, 200, { ok: true });
     }
 
-    // v8.122 — Numérotation MANUELLE (par société). Permet, quand c'est activé,
+    // v8.124 — Gestion de l'essai depuis l'admin.
+    // Prolonger l'essai de N jours (repart de max(now, fin actuelle) + N).
+    case "extend_trial": {
+      const { companyId, days } = payload || {};
+      if (!companyId || typeof days !== "number" || days === 0) {
+        return json(res, 400, { error: "Paramètres invalides" });
+      }
+      const rows = await sbAdmin.select("companies", { filter: `id=eq.${companyId}`, limit: 1 });
+      const co = rows && rows[0];
+      if (!co) return json(res, 404, { error: "Société introuvable" });
+      const base = Math.max(Date.now(), co.trial_ends_at ? new Date(co.trial_ends_at).getTime() : Date.now());
+      const newEnd = new Date(base + days * 86400000).toISOString();
+      const updated = await sbAdmin.update("companies", `id=eq.${companyId}`, {
+        trial_ends_at: newEnd, sub_status: "trialing"
+      });
+      if (!updated) return json(res, 500, { error: "Échec" });
+      return json(res, 200, { ok: true, trial_ends_at: newEnd });
+    }
+
+    // Exempter (accès complet illimité sans paiement) : sub_status = "active".
+    // On repasse en "trialing" via extend_trial si besoin de re-limiter.
+    case "set_exempt": {
+      const { companyId } = payload || {};
+      if (!companyId) return json(res, 400, { error: "companyId manquant" });
+      const updated = await sbAdmin.update("companies", `id=eq.${companyId}`, {
+        sub_status: "active", trial_ends_at: null
+      });
+      if (!updated) return json(res, 500, { error: "Échec" });
+      return json(res, 200, { ok: true });
+    }
+
     // de choisir le numéro d'une facture non transmise (cas migration en cours
     // d'année). Défaut false → comportement d'origine strictement inchangé.
     case "toggle_manual_numbering": {
