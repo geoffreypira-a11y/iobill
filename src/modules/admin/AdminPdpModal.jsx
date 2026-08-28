@@ -50,7 +50,7 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
             environment: pa.environment || c.environment || "sandbox",
             base_url: pa.base_url || "",
             client_id: pa.client_id || "",
-            enabled: !!pa.enabled,
+            enabled: pa.enabled !== false,
             transmission_enabled: pa.transmission_enabled !== false,
             self_service_allowed: !!pa.self_service_allowed
           }));

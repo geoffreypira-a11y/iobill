@@ -81,13 +81,11 @@ function publicCfg(c, companyId) {
     provider: c.provider,
     environment: c.environment,
     base_url: c.base_url,
-    enabled: c.enabled === true,
-    // v8.127 — Transmission EFFECTIVE côté abonné : IMPOSSIBLE sans réception
-    // active. Règle métier : on peut avoir la réception seule, jamais la
-    // transmission seule. Donc transmission = enabled ET transmission_enabled.
-    // (Corrige aussi les configs déjà enregistrées avec réception OFF +
-    //  transmission restée cochée : l'abonné verra "Encaissée", pas "Transmettre".)
-    transmission_enabled: c.enabled === true && c.transmission_enabled !== false,
+    enabled: c.enabled !== false,
+    // v8.128 — Transmission effective : bloquée UNIQUEMENT si la réception est
+    // EXPLICITEMENT désactivée (enabled === false). null/absent = actif (comme
+    // avant la séparation réception/transmission) → ne casse pas l'existant.
+    transmission_enabled: c.enabled !== false && c.transmission_enabled !== false,
     self_service_allowed: c.self_service_allowed === true,
     managed_by_admin: c.managed_by_admin === true,
     has_client_secret: !!c.client_secret,
