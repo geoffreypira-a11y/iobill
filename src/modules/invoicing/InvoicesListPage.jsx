@@ -42,6 +42,8 @@ export function InvoicesListPage({ token, company }) {
   const [previewInvoice, setPreviewInvoice] = useState(null);
   // v8.130 — Modale d'encaissement local (partiel possible) : null ou facture
   const [encaisseModal, setEncaisseModal] = useState(null);
+  // v8.143 — Modale historique des paiements (kebab) : null ou facture
+  const [paymentsModal, setPaymentsModal] = useState(null);
 
   // v8.103 — Charge l'état de transmission PDP de la société (best-effort).
   // Si la transmission est désactivée côté admin, on remplacera "Transmettre"
@@ -1018,6 +1020,15 @@ export function InvoicesListPage({ token, company }) {
         />
       )}
 
+      {/* v8.143 — Modale historique des paiements */}
+      {paymentsModal && (
+        <PaymentsHistoryModal
+          token={token}
+          inv={paymentsModal}
+          onClose={() => setPaymentsModal(null)}
+        />
+      )}
+
       {/* ─── Menu kebab : rendu en position:fixed ─── */}
       {openMenu && (
         <div
@@ -1037,6 +1048,9 @@ export function InvoicesListPage({ token, company }) {
         >
           <MenuItemInv onClick={() => { previewPdf(openMenu.invoice); setOpenMenu(null); }}>
             📄 Aperçu PDF
+          </MenuItemInv>
+          <MenuItemInv onClick={() => { setPaymentsModal(openMenu.invoice); setOpenMenu(null); }}>
+            🧾 Historique des paiements
           </MenuItemInv>
           {!openMenu.canEdit && (
             <MenuItemInv onClick={() => { shareLink(openMenu.invoice); setOpenMenu(null); }}>
@@ -1227,6 +1241,115 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
           <button className="btn btn-primary" onClick={() => onSubmit(amountCents)} disabled={busy || applied <= 0}>
             {busy ? "..." : "✅ Enregistrer"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v8.143 — Modale "Historique des paiements" (lecture seule).
+// Lit la table payments (déjà alimentée par le bridge IOCAR + encaissements).
+// N'écrit rien, ne touche à aucun PDF.
+// ═══════════════════════════════════════════════════════════════════
+const PAYMENT_METHOD_LABELS = {
+  bank_transfer: "Virement", virement: "Virement",
+  cash: "Espèces", especes: "Espèces",
+  check: "Chèque", cheque: "Chèque",
+  stripe: "CB (Stripe)", card: "Carte", cb: "Carte",
+  other: "Autre",
+};
+
+function PaymentsHistoryModal({ token, inv, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [payments, setPayments] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await sb.select(token, "payments", {
+          filter: `invoice_id=eq.${inv.id}`,
+          order: "paid_at.asc",
+        });
+        if (alive) setPayments(Array.isArray(rows) ? rows : []);
+      } catch (e) {
+        if (alive) setErr(e.message || "Erreur de chargement");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [token, inv.id]);
+
+  const total = inv.grand_total_cents || inv.total_ttc_cents || 0;
+  const encaisse = payments.reduce((s, p) => s + (Number(p.amount_cents) || 0), 0);
+  const reste = Math.max(0, total - encaisse);
+
+  const methodLabel = (m) => PAYMENT_METHOD_LABELS[String(m || "").toLowerCase()] || (m || "—");
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-hd">
+          <span className="modal-title">🧾 Historique des paiements</span>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14 }}>
+            Facture {inv.number || ""}
+          </div>
+
+          {/* Récap */}
+          <div style={{ background: "var(--card2)", borderRadius: 8, padding: "14px 16px", marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "var(--muted)" }}>Total TTC</span>
+              <span style={{ fontWeight: 700 }}>{fmtEUR(total)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 6 }}>
+              <span style={{ color: "var(--muted)" }}>Total encaissé</span>
+              <span style={{ color: "var(--green)" }}>- {fmtEUR(encaisse)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border2)" }}>
+              <span>Reste dû</span>
+              <span style={{ color: reste <= 0 ? "var(--green)" : "var(--orange)" }}>{fmtEUR(reste)}</span>
+            </div>
+          </div>
+
+          {/* Liste */}
+          {loading ? (
+            <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>Chargement…</div>
+          ) : err ? (
+            <div style={{ color: "var(--red)", fontSize: 13 }}>{err}</div>
+          ) : payments.length === 0 ? (
+            <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20, fontStyle: "italic" }}>
+              Aucun paiement enregistré pour cette facture.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+              <div style={{ display: "flex", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: "var(--muted)", padding: "0 4px 6px", borderBottom: "1px solid var(--border2)" }}>
+                <span style={{ flex: "0 0 90px" }}>Date</span>
+                <span style={{ flex: 1 }}>Moyen</span>
+                <span style={{ flex: "0 0 90px", textAlign: "right" }}>Montant</span>
+              </div>
+              {payments.map((p, i) => (
+                <div key={p.id || i} style={{ display: "flex", alignItems: "center", fontSize: 13, padding: "9px 4px", borderBottom: "1px solid var(--border2)" }}>
+                  <span style={{ flex: "0 0 90px", color: "var(--muted2)" }}>{p.paid_at ? fmtDate(p.paid_at) : "—"}</span>
+                  <span style={{ flex: 1 }}>
+                    {methodLabel(p.method)}
+                    {(p.notes || p.reference) && (
+                      <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 6 }}>· {p.notes || p.reference}</span>
+                    )}
+                  </span>
+                  <span style={{ flex: "0 0 90px", textAlign: "right", fontWeight: 600 }}>{fmtEUR(Number(p.amount_cents) || 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Fermer</button>
         </div>
       </div>
     </div>
