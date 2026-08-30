@@ -519,6 +519,19 @@ export function InvoicesListPage({ token, company }) {
       await sb.update(token, "invoices", "id=eq." + inv.id, {
         status: newStatus, paid_cents: finalPaid, updated_at: nowIso
       });
+      // v8.144 — Trace le détail de cet encaissement dans la table payments
+      // (comme les factures IOCAR) → l'historique des paiements est complet.
+      // Best-effort : n'échoue pas l'encaissement si l'insert ne passe pas.
+      try {
+        await sb.insert(token, "payments", {
+          company_id: company.id,
+          invoice_id: inv.id,
+          amount_cents: applied,
+          method: "other",
+          paid_at: nowIso,
+          notes: solde ? "Encaissement (solde)" : "Encaissement partiel"
+        });
+      } catch (_) { /* non bloquant */ }
       setInvoices((prev) => prev.map((x) =>
         x.id === inv.id ? { ...x, status: newStatus, paid_cents: finalPaid } : x
       ));
@@ -1284,8 +1297,14 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
   }, [token, inv.id]);
 
   const total = inv.grand_total_cents || inv.total_ttc_cents || 0;
-  const encaisse = payments.reduce((s, p) => s + (Number(p.amount_cents) || 0), 0);
+  const paidCents = inv.paid_cents || 0;
+  const sumPayments = payments.reduce((s, p) => s + (Number(p.amount_cents) || 0), 0);
+  // v8.144 — Fallback : les encaissements natifs (partiel v8.130) et anciennes
+  // factures ne créent pas toujours de lignes payments détaillées. On se base
+  // alors sur paid_cents pour ne pas afficher "0 encaissé" à tort.
+  const encaisse = Math.max(sumPayments, paidCents);
   const reste = Math.max(0, total - encaisse);
+  const missingDetail = paidCents > sumPayments + 1; // encaissé sans détail par paiement
 
   const methodLabel = (m) => PAYMENT_METHOD_LABELS[String(m || "").toLowerCase()] || (m || "—");
 
@@ -1322,7 +1341,7 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
             <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>Chargement…</div>
           ) : err ? (
             <div style={{ color: "var(--red)", fontSize: 13 }}>{err}</div>
-          ) : payments.length === 0 ? (
+          ) : (payments.length === 0 && !missingDetail) ? (
             <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20, fontStyle: "italic" }}>
               Aucun paiement enregistré pour cette facture.
             </div>
@@ -1345,6 +1364,16 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
                   <span style={{ flex: "0 0 90px", textAlign: "right", fontWeight: 600 }}>{fmtEUR(Number(p.amount_cents) || 0)}</span>
                 </div>
               ))}
+              {/* v8.144 — Montant encaissé sans détail par paiement (facture native/ancienne). */}
+              {missingDetail && (
+                <div style={{ display: "flex", alignItems: "center", fontSize: 13, padding: "9px 4px", borderBottom: "1px solid var(--border2)" }}>
+                  <span style={{ flex: "0 0 90px", color: "var(--muted2)" }}>—</span>
+                  <span style={{ flex: 1, fontStyle: "italic", color: "var(--muted2)" }}>
+                    Encaissement <span style={{ color: "var(--muted)", fontSize: 11 }}>· détail par paiement non disponible</span>
+                  </span>
+                  <span style={{ flex: "0 0 90px", textAlign: "right", fontWeight: 600 }}>{fmtEUR(paidCents - sumPayments)}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
