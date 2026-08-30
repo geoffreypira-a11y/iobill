@@ -6,6 +6,59 @@ import { fmtEUR, fmtDate, toCents, fromCents } from "../../lib/helpers.js";
 import { computeCurrentVatPeriod } from "../../lib/vat-sync.js";
 import { SignalButton } from "../../components/SignalButton.jsx";
 
+// ═══════════════════════════════════════════════════════════════════
+// v8.147 — Page annexe "Historique des paiements" ajoutée sur une COPIE
+// du PDF au téléchargement cabinet. L'original transmis n'est jamais modifié.
+// ═══════════════════════════════════════════════════════════════════
+const PM_LABELS = {
+  bank_transfer: "Virement", virement: "Virement", cash: "Especes", especes: "Especes",
+  check: "Cheque", cheque: "Cheque", stripe: "CB (Stripe)", card: "Carte", cb: "Carte", other: "Autre",
+};
+const _pmLabel = (m) => PM_LABELS[String(m || "").toLowerCase()] || (m || "-");
+const _san = (s) => String(s == null ? "" : s).replace(/[^\x20-\xFF]/g, "");
+const _eur = (c) => (Number(c || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u202f|\u00a0/g, " ") + " EUR";
+const _date = (d) => { if (!d) return "-"; try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return "-"; } };
+
+async function appendPaymentsPage(pdfBytes, data) {
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+  const doc = await PDFDocument.load(pdfBytes);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const page = doc.addPage([595.28, 841.89]);
+  const { width, height } = page.getSize();
+  const gold = rgb(0.83, 0.66, 0.26), dark = rgb(0.1, 0.1, 0.12), grey = rgb(0.5, 0.5, 0.55);
+  const T = (t, x, y, size, f, color) => page.drawText(_san(t), { x, y, size, font: f, color });
+
+  let y = height - 60;
+  T("Historique des paiements", 40, y, 18, bold, dark); y -= 22;
+  T("Facture " + (data.number || ""), 40, y, 11, font, grey); y -= 30;
+
+  const total = data.grand_total_cents || 0;
+  const sum = (data.payments || []).reduce((s, p) => s + (Number(p.amount_cents) || 0), 0);
+  const encaisse = Math.max(sum, data.paid_cents || 0);
+  const reste = Math.max(0, total - encaisse);
+  for (const [k, v] of [["Total TTC", _eur(total)], ["Total encaisse", _eur(encaisse)], ["Reste du", _eur(reste)]]) {
+    T(k, 40, y, 11, font, grey); T(v, 320, y, 11, bold, dark); y -= 18;
+  }
+  y -= 14;
+  T("Date", 40, y, 9, bold, gold); T("Moyen", 150, y, 9, bold, gold); T("Montant", 430, y, 9, bold, gold);
+  y -= 6; page.drawLine({ start: { x: 40, y }, end: { x: width - 40, y }, thickness: 0.5, color: grey }); y -= 16;
+
+  for (const p of (data.payments || [])) {
+    if (y < 60) { break; }
+    T(_date(p.paid_at), 40, y, 10, font, dark);
+    T((_pmLabel(p.method) + (p.notes ? "  -  " + p.notes : "")).slice(0, 60), 150, y, 10, font, dark);
+    T(_eur(p.amount_cents), 430, y, 10, bold, dark);
+    y -= 16;
+  }
+  if ((data.paid_cents || 0) > sum + 1) {
+    T("-", 40, y, 10, font, dark);
+    T("Encaissement (detail par paiement non disponible)", 150, y, 10, font, grey);
+    T(_eur((data.paid_cents || 0) - sum), 430, y, 10, bold, dark);
+  }
+  return await doc.save();
+}
+
 /**
  * FirmClientFichePage — v8.27 Sprint 3
  * Vue lecture client avec 4 onglets : Vue d'ensemble, Factures, Achats, TVA & URSSAF
@@ -358,9 +411,22 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
           if (!r.ok || !j.pdf_url) continue;
           const pdf = await fetch(j.pdf_url);
           if (!pdf.ok) continue;
-          const blob = await pdf.blob();
+          let bytes = new Uint8Array(await pdf.arrayBuffer());
+          // v8.147 — Annexe la page "Historique des paiements" sur une COPIE
+          // enrichie. L'original stocké/transmis au PDP n'est JAMAIS modifié.
+          try {
+            const pr = await fetch("/api/firm-invitation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ action: "invoice_payments", payload: { invoice_id: inv.id } })
+            });
+            const pj = await pr.json().catch(() => ({}));
+            if (pr.ok && ((pj.payments && pj.payments.length > 0) || pj.paid_cents > 0)) {
+              bytes = await appendPaymentsPage(bytes, pj);
+            }
+          } catch (_) { /* on garde le PDF sans annexe si souci */ }
           const safe = String(inv.number || inv.id).replace(/[^\w.-]+/g, "_");
-          zip.file(`${safe}.pdf`, blob);
+          zip.file(`${safe}.pdf`, bytes);
           ok++;
         } catch (_) { /* on saute cette facture, on continue */ }
       }

@@ -1001,6 +1001,54 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
   }
 
   // ═══════════════════════════════════════════════════════════════════
+  // INVOICE_PAYMENTS : renvoie l'historique des paiements d'une facture.
+  //   Entrée : { invoice_id }
+  //   Sortie : { ok: true, payments: [...], grand_total_cents, number, paid_cents }
+  //   Sécurité : firm_can_read sur la company de la facture (owner/admin/firm_member).
+  // ═══════════════════════════════════════════════════════════════════
+  if (action === "invoice_payments") {
+    const { invoice_id } = p;
+    if (!invoice_id) return json(res, 400, { error: "invoice_id requis" });
+
+    const invs = await sbSelect("invoices", {
+      id: `eq.${invoice_id}`, limit: 1,
+      select: "id,number,company_id,grand_total_cents,total_ttc_cents,paid_cents"
+    });
+    const inv = invs && invs[0];
+    if (!inv) return json(res, 404, { error: "Facture introuvable" });
+    const companyId = inv.company_id;
+
+    // Autorisation (même schéma que pdf_refresh_url : owner direct puis firm_can_read).
+    let allowed = false;
+    const ownCo = await sbSelect("companies", { id: `eq.${companyId}`, user_id: `eq.${user.id}`, select: "id", limit: 1 });
+    if (ownCo && ownCo.length > 0) allowed = true;
+    if (!allowed) {
+      try {
+        const rpcR = await fetch(`${SUPABASE_URL}/rest/v1/rpc/firm_can_read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: SR_KEY, Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ p_company_id: companyId })
+        });
+        if (rpcR.ok) { const can = await rpcR.json(); if (can === true) allowed = true; }
+      } catch (e) { /* refus par défaut */ }
+    }
+    if (!allowed) return json(res, 403, { error: "Accès refusé" });
+
+    const payments = await sbSelect("payments", {
+      invoice_id: `eq.${invoice_id}`,
+      order: "paid_at.asc",
+      select: "id,amount_cents,method,paid_at,notes,reference"
+    });
+    return json(res, 200, {
+      ok: true,
+      payments: payments || [],
+      number: inv.number || "",
+      grand_total_cents: inv.grand_total_cents || inv.total_ttc_cents || 0,
+      paid_cents: inv.paid_cents || 0
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // ATTACHMENT_SIGNED_URL : URL signée pour une PJ de message (bucket firm-attachments)
   //   Entrée : { thread_id, path }   (path = "thread_<id>/<filename>")
   //   Sortie : { ok: true, url }
