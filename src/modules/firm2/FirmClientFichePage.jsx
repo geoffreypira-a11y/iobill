@@ -348,6 +348,7 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
   const [loading, setLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewTitle, setPreviewTitle] = useState("");
+  const [previewInvoiceId, setPreviewInvoiceId] = useState(null); // v8.148
   // v8.84 — Sélection multiple + export ZIP des PDF factures (cabinet).
   const [selected, setSelected] = useState(() => new Set());
   const [zipping, setZipping] = useState(false);
@@ -370,6 +371,7 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     if (!url) { alert("PDF non disponible pour cette facture"); return; }
     setPreviewUrl(url);
     setPreviewTitle(`Facture ${inv.number}`);
+    setPreviewInvoiceId(inv.id); // v8.148 — pour annexer l'historique des paiements
   }
 
   // Factures ayant un PDF téléchargeable (seules sélectionnables).
@@ -575,18 +577,19 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     </div>
 
     {previewUrl && (
-      <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
+      <PdfPreviewModal token={token} url={previewUrl} invoiceId={previewInvoiceId} title={previewTitle} onClose={() => { setPreviewUrl(null); setPreviewInvoiceId(null); }} />
     )}
     </>
   );
 }
 
-function PdfPreviewModal({ token, url, title, onClose }) {
+function PdfPreviewModal({ token, url, title, onClose, invoiceId }) {
   const [freshUrl, setFreshUrl] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let alive = true;
+    let blobToRevoke = null;
     setFreshUrl(null);
     setError("");
 
@@ -607,6 +610,30 @@ function PdfPreviewModal({ token, url, title, onClose }) {
         const j = await r.json();
         if (!alive) return;
         if (!j.pdf_url) throw new Error("Pas d'URL retournée");
+
+        // v8.148 — Si la facture a des paiements, on annexe la page "Historique
+        // des paiements" (copie enrichie en mémoire), comme au téléchargement.
+        if (invoiceId) {
+          try {
+            const pr = await fetch("/api/firm-invitation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ action: "invoice_payments", payload: { invoice_id: invoiceId } })
+            });
+            const pj = await pr.json().catch(() => ({}));
+            if (pr.ok && ((pj.payments && pj.payments.length > 0) || pj.paid_cents > 0)) {
+              const pdfResp = await fetch(j.pdf_url);
+              const bytes = new Uint8Array(await pdfResp.arrayBuffer());
+              const enriched = await appendPaymentsPage(bytes, pj);
+              const blob = new Blob([enriched], { type: "application/pdf" });
+              const blobUrl = URL.createObjectURL(blob);
+              blobToRevoke = blobUrl;
+              if (!alive) { URL.revokeObjectURL(blobUrl); return; }
+              setFreshUrl(blobUrl);
+              return;
+            }
+          } catch (e) { /* on retombe sur le PDF simple */ }
+        }
         setFreshUrl(j.pdf_url);
       } catch (e) {
         if (!alive) return;
@@ -616,8 +643,8 @@ function PdfPreviewModal({ token, url, title, onClose }) {
       }
     })();
 
-    return () => { alive = false; };
-  }, [token, url]);
+    return () => { alive = false; if (blobToRevoke) URL.revokeObjectURL(blobToRevoke); };
+  }, [token, url, invoiceId]);
 
   return (
     <div style={pdfModalBackdrop} onClick={onClose}>
