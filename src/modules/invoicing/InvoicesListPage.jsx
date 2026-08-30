@@ -502,7 +502,7 @@ export function InvoicesListPage({ token, company }) {
   // statut de cycle de vie fr:212 (qui n'existe que pour l'e-invoicing B2B).
   // v8.130 — Applique un encaissement LOCAL (partiel ou solde) depuis la modale.
   // Cas non transmis uniquement : aucun appel PDP. Cumule sur paid_cents.
-  async function applyLocalEncaisse(inv, appliedCents) {
+  async function applyLocalEncaisse(inv, appliedCents, method) {
     const totalTtc = inv.grand_total_cents || inv.total_ttc_cents || 0;
     const alreadyPaid = inv.paid_cents || 0;
     const remaining = Math.max(0, totalTtc - alreadyPaid);
@@ -527,7 +527,7 @@ export function InvoicesListPage({ token, company }) {
           company_id: company.id,
           invoice_id: inv.id,
           amount_cents: applied,
-          method: "other",
+          method: method || "other",
           paid_at: nowIso,
           notes: solde ? "Encaissement (solde)" : "Encaissement partiel"
         });
@@ -1029,7 +1029,7 @@ export function InvoicesListPage({ token, company }) {
           inv={encaisseModal}
           busy={actionLoading === `encaisser-${encaisseModal.id}`}
           onClose={() => setEncaisseModal(null)}
-          onSubmit={(cents) => applyLocalEncaisse(encaisseModal, cents)}
+          onSubmit={(cents, method) => applyLocalEncaisse(encaisseModal, cents, method)}
         />
       )}
 
@@ -1189,6 +1189,8 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
   const alreadyPaid = inv.paid_cents || 0;
   const remaining = Math.max(0, totalTtc - alreadyPaid);
   const [montant, setMontant] = useState((remaining / 100).toFixed(2));
+  // v8.145 — Moyen de paiement de cet encaissement.
+  const [method, setMethod] = useState("bank_transfer");
 
   const amountCents = Math.round(parseFloat(String(montant).replace(",", ".")) * 100) || 0;
   const applied = Math.min(Math.max(0, amountCents), remaining);
@@ -1248,10 +1250,19 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
               La facture sera soldée ✓
             </div>
           )}
+
+          <label className="form-label" style={{ display: "block", margin: "16px 0 6px" }}>Moyen de paiement</label>
+          <select className="form-input" value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="bank_transfer">Virement</option>
+            <option value="cash">Espèces</option>
+            <option value="check">Chèque</option>
+            <option value="card">Carte</option>
+            <option value="other">Autre</option>
+          </select>
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Annuler</button>
-          <button className="btn btn-primary" onClick={() => onSubmit(amountCents)} disabled={busy || applied <= 0}>
+          <button className="btn btn-primary" onClick={() => onSubmit(amountCents, method)} disabled={busy || applied <= 0}>
             {busy ? "..." : "✅ Enregistrer"}
           </button>
         </div>
