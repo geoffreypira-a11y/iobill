@@ -1,7 +1,20 @@
-// IO BILL - CRON job de relances automatiques
-// A configurer dans vercel.json :
-//   "crons": [{ "path": "/api/cron-reminders", "schedule": "0 9 * * *" }]
-// (tous les jours a 9h)
+// IO BILL - Moteur de relances automatiques
+// ═══════════════════════════════════════════════════════════════════
+// Trois modes d'appel :
+//
+//   1. CRON Vercel (header x-vercel-cron) ou `Authorization: Bearer <CRON_SECRET>`
+//      → balaye TOUTES les sociétés. C'est le filet de sécurité quotidien.
+//
+//   2. v8.48 — INSTANTANÉ : `Authorization: Bearer <jwt utilisateur>`
+//      → balaye uniquement la société de l'utilisateur et envoie
+//        immédiatement les relances dues, sans attendre le cron.
+//        Body { mode: "auto" }   → déclenché par l'app à l'ouverture
+//                                  (limité à 1 passage / 10 min).
+//        Body { mode: "manual" } → bouton "Relancer maintenant"
+//                                  (limité à 1 passage / min).
+//
+//   3. Mode "single notif" (body { notif_id }) : envoi immédiat de l'email
+//      d'une notification, appelé depuis Postgres via pg_net.
 //
 // Cadence des relances :
 //   J+3   : rappel courtois
@@ -9,33 +22,37 @@
 //   J+30  : 2eme relance avec mention penalites
 //   J+60  : derniere relance avant procedure
 //
-// Securite : ce endpoint n'est appelable que par Vercel Cron OU avec un header
-// Authorization: Bearer <CRON_SECRET>.
+// Le moteur est IDEMPOTENT (reminder_count + last_reminder_sent_at) : on peut
+// le repasser toutes les 15 minutes sans jamais renvoyer deux fois la même
+// relance.
+// ═══════════════════════════════════════════════════════════════════
 
-import { sbAdmin, json } from "./_lib/supabase-admin.js";
+import { sbAdmin, json, authenticate } from "./_lib/supabase-admin.js";
+import { sendTrackedEmail, htmlToText, logEmail } from "./_lib/email-log.js";
 import { notifyAdmin } from "./_lib/monitor.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
+// Intervalle minimum entre deux passages déclenchés depuis l'app.
+const THROTTLE_MS = { manual: 60 * 1000, auto: 10 * 60 * 1000 };
+
 export default async function handler(req, res) {
+  let body = req.body;
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+
   // Auth Vercel Cron : header `x-vercel-cron: 1` automatiquement injecte par Vercel.
   // En complement, on accepte un Bearer si configure (utilise par pg_net pour le mode single notif).
   const isVercelCron = req.headers["x-vercel-cron"] === "1";
   const auth = req.headers.authorization || "";
   const hasSecret = CRON_SECRET && auth === `Bearer ${CRON_SECRET}`;
-
-  if (!isVercelCron && !hasSecret) {
-    return json(res, 401, { error: "Unauthorized" });
-  }
+  const isPrivileged = isVercelCron || hasSecret;
 
   // ═══════════════════════════════════════════════════════════
   // MODE "single notif" : appele depuis Postgres via pg_net
   // pour envoyer un email instantanement apres creation d'une notif.
   // Body: { notif_id: "uuid" }
   // ═══════════════════════════════════════════════════════════
-  let body = req.body;
-  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
-  const singleNotifId = body?.notif_id;
+  const singleNotifId = isPrivileged ? body?.notif_id : null;
 
   if (singleNotifId) {
     try {
@@ -60,20 +77,7 @@ export default async function handler(req, res) {
       // Recuperer email recipient
       const companyRow = await sbAdmin.selectOne("companies", `id=eq.${notif.company_id}`);
       if (!companyRow) return json(res, 404, { error: "company not found" });
-      let userEmail = companyRow.email;
-      if (!userEmail && companyRow.user_id) {
-        try {
-          const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-          const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-          const ur = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${companyRow.user_id}`, {
-            headers: { apikey: SERVICE_ROLE, Authorization: "Bearer " + SERVICE_ROLE }
-          });
-          if (ur.ok) {
-            const user = await ur.json();
-            userEmail = user?.email;
-          }
-        } catch {}
-      }
+      const userEmail = await resolveUserEmail(companyRow);
       if (!userEmail) return json(res, 400, { error: "no email for user" });
 
       const sent = await sendNotifEmail({ notif, company: companyRow, recipientEmail: userEmail });
@@ -95,15 +99,83 @@ export default async function handler(req, res) {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // MODE CRON normal (sans body) : relances factures + emails notifs en attente
+  // v8.48 — DÉCLENCHEMENT INSTANTANÉ par un utilisateur connecté
   // ═══════════════════════════════════════════════════════════
+  let scopedCompany = null;
+  let source = "cron";
 
+  if (!isPrivileged) {
+    const userAuth = await authenticate(req);
+    if (userAuth.error) return json(res, 401, { error: "Unauthorized" });
+
+    scopedCompany = userAuth.company;
+    source = body?.mode === "auto" ? "auto" : "manual";
+
+    if (scopedCompany.reminders_email_enabled === false) {
+      return json(res, 200, {
+        ok: true,
+        skipped: "reminders_disabled",
+        message: "Les relances automatiques sont désactivées pour cette société."
+      });
+    }
+
+    // Anti-rafale : inutile de rebalayer les factures toutes les 10 secondes.
+    const last = scopedCompany.reminders_last_run_at
+      ? Date.parse(scopedCompany.reminders_last_run_at)
+      : 0;
+    const gap = THROTTLE_MS[source];
+    if (last && Date.now() - last < gap) {
+      return json(res, 200, {
+        ok: true,
+        throttled: true,
+        last_run_at: scopedCompany.reminders_last_run_at,
+        message: "Relances déjà vérifiées il y a moins de "
+          + Math.round(gap / 60000) + " min."
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // BALAYAGE DES FACTURES EN RETARD
+  // ═══════════════════════════════════════════════════════════
+  const result = await runReminders({
+    companyId: scopedCompany?.id || null,
+    source
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // ENVOI EMAILS pour les notifications non lues + pref email=true
+  // (uniquement sur le passage global : c'est du courrier interne)
+  // ═══════════════════════════════════════════════════════════
+  let notifEmailsSent = 0;
+  if (!scopedCompany) notifEmailsSent = await runPendingNotifEmails();
+
+  return json(res, 200, {
+    ok: true,
+    scope: scopedCompany ? "company" : "all",
+    source,
+    ...result,
+    notif_emails_sent: notifEmailsSent
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Moteur : balaye les factures en retard et envoie ce qui est dû
+// ═══════════════════════════════════════════════════════════
+async function runReminders({ companyId = null, source = "cron" } = {}) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const nowIso = new Date().toISOString();
 
   // Toutes les factures en retard (status != paid/canceled, due_date passee)
+  const filter = [
+    `status=in.(issued,sent,partial,overdue)`,
+    `due_date=lt.${today.toISOString().slice(0, 10)}`,
+    companyId ? `company_id=eq.${companyId}` : null
+  ].filter(Boolean).join("&");
+
   const allOverdue = await sbAdmin.select("invoices", {
-    filter: `status=in.(issued,sent,partial,overdue)&due_date=lt.${today.toISOString().slice(0, 10)}`,
+    filter,
     order: "due_date.asc",
     limit: 1000
   });
@@ -111,7 +183,9 @@ export default async function handler(req, res) {
   let sent = 0;
   let updated = 0;
   let errors = 0;
+  let skipped = 0;
   const reminders = [];
+  const companies = new Map(); // cache company_id → row
 
   for (const inv of allOverdue || []) {
     const dueDate = new Date(inv.due_date);
@@ -141,27 +215,45 @@ export default async function handler(req, res) {
 
     if (!template) continue;
 
-    // Envoyer la relance via l'API send-document (en interne)
     try {
       // v8.110 — Relances activables par société (défaut ON : null/undefined =
       // activé). Si explicitement désactivé, on n'envoie NI email NI SMS.
-      const company = await sbAdmin.selectOne("companies", `id=eq.${inv.company_id}`);
+      let company = companies.get(inv.company_id);
+      if (company === undefined) {
+        company = await sbAdmin.selectOne("companies", `id=eq.${inv.company_id}`);
+        companies.set(inv.company_id, company);
+      }
       if (company && company.reminders_email_enabled === false) continue;
 
       const message = buildReminderMessage(template, inv);
       const subject = buildReminderSubject(template, inv);
 
       // 1) Email
-      const ok = await sendReminderEmail(inv, subject, message);
-      if (ok) {
+      const out = await sendReminderEmail(inv, company, subject, message, source, template);
+      if (out.ok) {
         await sbAdmin.update("invoices", `id=eq.${inv.id}`, {
-          last_reminder_sent_at: new Date().toISOString(),
+          last_reminder_sent_at: nowIso,
           reminder_count: (inv.reminder_count || 0) + 1
         });
         sent++;
-        reminders.push({ invoice: inv.number, template, overdueDays, channel: "email" });
+        reminders.push({
+          invoice: inv.number, template, overdueDays, channel: "email",
+          status: "sent", recipient: out.recipient
+        });
+      } else if (out.reason === "missing_recipient_email") {
+        // Cause n°1 des « mon client n'a rien reçu » : pas d'email sur la fiche.
+        skipped++;
+        reminders.push({
+          invoice: inv.number, template, overdueDays, channel: "email",
+          status: "skipped",
+          error: "Aucune adresse email sur la fiche client"
+        });
       } else {
         errors++;
+        reminders.push({
+          invoice: inv.number, template, overdueDays, channel: "email",
+          status: "failed", recipient: out.recipient, error: out.error
+        });
       }
 
       // 2) SMS aux relances tardives (J+30, J+60) si SMS active sur la company
@@ -172,18 +264,42 @@ export default async function handler(req, res) {
           const smsOk = await sendReminderSms(inv, company, clientPhone, template);
           if (smsOk) {
             sent++;
-            reminders.push({ invoice: inv.number, template, overdueDays, channel: "sms" });
+            reminders.push({
+              invoice: inv.number, template, overdueDays, channel: "sms", status: "sent"
+            });
           }
         }
       }
     } catch (e) {
       errors++;
+      reminders.push({
+        invoice: inv.number, template, overdueDays, channel: "email",
+        status: "failed", error: e?.message || "erreur inconnue"
+      });
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ENVOI EMAILS pour les notifications non lues + pref email=true
-  // ═══════════════════════════════════════════════════════════
+  // Horodater le passage (affiché dans les réglages + anti-rafale).
+  const touched = companyId ? [companyId] : [...companies.keys()];
+  for (const id of touched) {
+    await sbAdmin.update("companies", `id=eq.${id}`, { reminders_last_run_at: nowIso });
+  }
+
+  return {
+    scanned: (allOverdue || []).length,
+    marked_overdue: updated,
+    reminders_sent: sent,
+    skipped,
+    errors,
+    run_at: nowIso,
+    detail: reminders
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Emails des notifications internes en attente
+// ═══════════════════════════════════════════════════════════
+async function runPendingNotifEmails() {
   let notifEmailsSent = 0;
   try {
     // 1) Recuperer les notifs eligibles : non lues, pas encore emailees,
@@ -219,22 +335,7 @@ export default async function handler(req, res) {
         const companyRow = await sbAdmin.selectOne("companies", `id=eq.${notif.company_id}`);
         if (!companyRow) continue;
 
-        // L'email peut etre dans company.email OU faut le chercher via auth.users (service_role)
-        let userEmail = companyRow.email;
-        if (!userEmail && companyRow.user_id) {
-          // Appel direct API auth admin
-          try {
-            const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-            const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-            const ur = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${companyRow.user_id}`, {
-              headers: { apikey: SERVICE_ROLE, Authorization: "Bearer " + SERVICE_ROLE }
-            });
-            if (ur.ok) {
-              const user = await ur.json();
-              userEmail = user?.email;
-            }
-          } catch {}
-        }
+        const userEmail = await resolveUserEmail(companyRow);
         if (!userEmail) continue;
 
         // Envoi via Resend
@@ -251,25 +352,31 @@ export default async function handler(req, res) {
   } catch (e) {
     console.error("[cron] notif scan error", e.message);
   }
+  return notifEmailsSent;
+}
 
-  return json(res, 200, {
-    ok: true,
-    scanned: (allOverdue || []).length,
-    marked_overdue: updated,
-    reminders_sent: sent,
-    notif_emails_sent: notifEmailsSent,
-    errors,
-    detail: reminders
-  });
+// L'email peut etre dans company.email OU faut le chercher via auth.users (service_role)
+async function resolveUserEmail(companyRow) {
+  if (companyRow.email) return companyRow.email;
+  if (!companyRow.user_id) return null;
+  try {
+    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const ur = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${companyRow.user_id}`, {
+      headers: { apikey: SERVICE_ROLE, Authorization: "Bearer " + SERVICE_ROLE }
+    });
+    if (ur.ok) {
+      const user = await ur.json();
+      return user?.email || null;
+    }
+  } catch {}
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════
 // Envoi email de notification (helper)
 // ═══════════════════════════════════════════════════════════
 async function sendNotifEmail({ notif, company, recipientEmail }) {
-  const RESEND_API_KEY = process.env.RESEND_API_KEY;
-  if (!RESEND_API_KEY) return false;
-
   const FROM = (process.env.RESEND_FROM || "notifications@iobill.online")
     .replace(/.*<([^>]+)>.*/, "$1")
     .trim();
@@ -305,20 +412,23 @@ async function sendNotifEmail({ notif, company, recipientEmail }) {
     </div>
   `;
 
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + RESEND_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+  const out = await sendTrackedEmail(
+    {
       from: `IO BILL <${FROM}>`,
       to: [recipientEmail],
       subject: `${icon} ${notif.title}`,
-      html
-    })
-  });
-  return r.ok;
+      html,
+      text: htmlToText(html)
+    },
+    {
+      company_id: notif.company_id,
+      kind: "notification",
+      document_type: "notification",
+      document_id: notif.id,
+      trigger_source: "cron"
+    }
+  );
+  return out.ok;
 }
 
 function escapeHtml(s) {
@@ -351,15 +461,32 @@ function buildReminderMessage(template, inv) {
   return tpls[template];
 }
 
-async function sendReminderEmail(inv, subject, message) {
-  const RESEND_API_KEY = process.env.RESEND_API_KEY;
-  const FROM_EMAIL = process.env.RESEND_FROM || "facturation@iobill.online";
-  if (!RESEND_API_KEY) return false;
+async function sendReminderEmail(inv, company, subject, message, source, template) {
+  const FROM_EMAIL = (process.env.RESEND_FROM || "facturation@iobill.online")
+    .replace(/.*<([^>]+)>.*/, "$1")
+    .trim();
 
   const recipientEmail = inv.client_snapshot?.email;
-  if (!recipientEmail) return false;
+  const supplierName = inv.company_snapshot?.legal_name || company?.legal_name || "IO BILL";
 
-  const supplierName = inv.company_snapshot?.legal_name || "IO BILL";
+  // Pas d'email sur la fiche client → on trace le motif au lieu d'échouer en
+  // silence (c'est LA raison la plus fréquente d'une relance jamais reçue).
+  if (!recipientEmail) {
+    await logEmail({
+      company_id: inv.company_id,
+      kind: "reminder",
+      document_type: "invoice",
+      document_id: inv.id,
+      document_number: inv.number,
+      subject,
+      status: "skipped",
+      error: "missing_recipient_email — aucune adresse email sur la fiche client",
+      reminder_template: template,
+      trigger_source: source
+    });
+    return { ok: false, reason: "missing_recipient_email", recipient: null };
+  }
+
   const html = `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"></head>
 <body style="font-family:-apple-system,sans-serif;color:#222;background:#f5f4f0;padding:24px;margin:0">
@@ -379,17 +506,32 @@ async function sendReminderEmail(inv, subject, message) {
   </div>
 </body></html>`;
 
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: `${supplierName} <${FROM_EMAIL}>`,
-      to: [recipientEmail],
-      subject,
-      html
-    })
+  const payload = {
+    from: `${supplierName.replace(/[<>"\\]/g, "").trim()} <${FROM_EMAIL}>`,
+    to: [recipientEmail],
+    subject,
+    html,
+    // Partie texte : indispensable pour ne pas tomber en spam.
+    text: message
+  };
+
+  // v8.48 — reply_to sur l'email de l'émetteur : le client répond au
+  // fournisseur, pas dans le vide. C'est aussi un bon signal anti-spam.
+  if (company?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(company.email)) {
+    payload.reply_to = company.email;
+  }
+
+  const out = await sendTrackedEmail(payload, {
+    company_id: inv.company_id,
+    kind: "reminder",
+    document_type: "invoice",
+    document_id: inv.id,
+    document_number: inv.number,
+    reminder_template: template,
+    trigger_source: source
   });
-  return r.ok;
+
+  return { ok: out.ok, error: out.error, recipient: recipientEmail };
 }
 
 function formatEUR(cents) {
@@ -451,6 +593,21 @@ async function sendReminderSms(inv, company, phone, template) {
         invoice_id: inv.id,
         recipient_phone: normalized,
         message, provider: "ovh", status: "sent"
+      });
+      // Journal unifié des envois (email + SMS)
+      await logEmail({
+        company_id: inv.company_id,
+        kind: "reminder",
+        document_type: "invoice",
+        document_id: inv.id,
+        document_number: inv.number,
+        recipient: normalized,
+        subject: message.slice(0, 120),
+        provider: "ovh",
+        channel: "sms",
+        status: "sent",
+        reminder_template: template,
+        sent_at: new Date().toISOString()
       });
       // Increment counter
       await sbAdmin.update("companies", `id=eq.${inv.company_id}`, {

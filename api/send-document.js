@@ -4,6 +4,7 @@
 // - Branding de l'emetteur en grand, IO BILL en petit footer
 
 import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { sendTrackedEmail, htmlToText } from "./_lib/email-log.js";
 import { randomBytes } from "node:crypto";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -246,7 +247,10 @@ export default async function handler(req, res) {
     from: fromHeader,
     to: [recipientEmail],
     subject,
-    html
+    html,
+    // v8.48 — partie texte : un email 100 % HTML est un signal de spam
+    // classique. La version texte améliore nettement la délivrabilité.
+    text: htmlToText(html)
   };
   if (replyTo) resendPayload.reply_to = replyTo;
 
@@ -260,32 +264,29 @@ export default async function handler(req, res) {
     ];
   }
 
-  let resendRes;
-  try {
-    resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${RESEND_API_KEY}`
-      },
-      body: JSON.stringify(resendPayload)
-    });
-  } catch (e) {
-    return json(res, 502, { error: "Reseau Resend indisponible", detail: e?.message });
-  }
+  // v8.48 — envoi tracé : chaque tentative (succès ou échec) laisse une ligne
+  // dans email_log, complétée ensuite par les accusés Resend (delivered,
+  // bounced, opened...) via le webhook /api/public?op=email_events.
+  const sendResult = await sendTrackedEmail(resendPayload, {
+    company_id: company.id,
+    kind: document_type,
+    document_type,
+    document_id,
+    document_number: doc.number || null,
+    trigger_source: "manual"
+  });
 
-  if (!resendRes.ok) {
-    const errText = await resendRes.text().catch(() => "");
+  if (!sendResult.ok) {
     return json(res, 502, {
-      error: "Erreur Resend (" + resendRes.status + ")",
-      detail: errText.slice(0, 500),
-      hint: resendRes.status === 422
+      error: sendResult.error || "Envoi Resend impossible",
+      email_log_id: sendResult.log_id,
+      hint: sendResult.status === 422
         ? "Verifiez que votre domaine est valide dans Resend et que l'adresse from est correcte."
         : undefined
     });
   }
 
-  const resendData = await resendRes.json();
+  const resendData = { id: sendResult.id };
 
   // 8) Marquer le document comme envoye
   // Note : public_token n'est PAS stocke sur quote/invoice, il est dans la table public_tokens
@@ -309,6 +310,7 @@ export default async function handler(req, res) {
   return json(res, 200, {
     ok: true,
     resend_id: resendData.id,
+    email_log_id: sendResult.log_id,
     recipient: recipientEmail,
     pdf_attached: !!pdfBase64,
     public_url: publicUrl

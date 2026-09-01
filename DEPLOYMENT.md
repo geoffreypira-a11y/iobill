@@ -268,6 +268,9 @@ VITE_POSTHOG_HOST=https://eu.i.posthog.com
 # Cron
 CRON_SECRET   # génère une chaîne aléatoire 32 chars
 
+# (Recommandé) — Accusés de délivrance des emails (v8.48)
+RESEND_EVENTS_WEBHOOK_SECRET   # "Signing secret" whsec_... du webhook Resend
+
 # App
 PUBLIC_BASE_URL=https://iobill.fr
 ```
@@ -278,10 +281,59 @@ Le `vercel.json` à la racine déclare déjà :
 ```json
 "crons": [{
   "path": "/api/cron-reminders",
-  "schedule": "0 9 * * *"
+  "schedule": "0 7 * * *"
 }]
 ```
-→ Vercel exécutera **chaque jour à 9h UTC** la route de relances impayés.
+→ Vercel exécutera **chaque jour à 7h UTC** (9h à Paris en été) la route de
+relances impayés.
+
+**Ce cron n'est qu'un filet de sécurité.** Depuis la v8.48, les relances sont
+aussi déclenchées :
+
+- **à chaque ouverture de l'application** par l'utilisateur connecté
+  (`POST /api/cron-reminders` avec son JWT, body `{"mode":"auto"}`) — limité
+  à un passage toutes les 10 min par société ;
+- **à la demande** via le bouton « Envoyer les relances dues maintenant »
+  (Réglages → Relances), body `{"mode":"manual"}` — limité à 1 passage/min.
+
+Le moteur est idempotent (`reminder_count` + `last_reminder_sent_at`) : le
+repasser souvent ne renvoie jamais deux fois la même relance.
+
+> **Relances continues sans ouvrir l'app** — le plan Vercel Hobby limite les
+> crons à un déclenchement par jour. Pour un passage toutes les 15 minutes,
+> soit tu passes le `schedule` à `*/15 * * * *` (plan Pro), soit tu actives
+> `pg_cron` + `pg_net` dans Supabase et tu décommentes le bloc prévu en fin de
+> `supabase/migration_v8_48_email_log.sql`.
+
+### 8.3.bis Webhook Resend — confirmations d'envoi (v8.48)
+
+Sans ce webhook, IO BILL sait seulement qu'un email a été *accepté* par Resend.
+Avec, il sait s'il a été **délivré**, **ouvert**, **rejeté** (adresse invalide,
+boîte pleine) ou **signalé en spam** — et l'affiche dans « Suivi des envois ».
+
+1. Resend → **Webhooks** → *Add endpoint*
+2. URL : `https://app.iobill.online/api/public?op=email_events`
+3. Événements : `email.sent`, `email.delivered`, `email.delivery_delayed`,
+   `email.bounced`, `email.complained`, `email.opened`, `email.clicked`
+4. Copie le **Signing secret** (`whsec_...`) dans la variable Vercel
+   `RESEND_EVENTS_WEBHOOK_SECRET`, puis redéploie.
+
+> Si la variable n'est pas définie, l'endpoint accepte les événements sans
+> vérifier la signature : **définis-la en production**.
+
+#### Délivrabilité — pourquoi un client « ne reçoit rien »
+
+Par ordre de fréquence :
+
+1. **Pas d'adresse email sur la fiche client** → la relance est journalisée
+   en `skipped` avec ce motif exact.
+2. **L'email est en spam chez le destinataire** → le journal affiche
+   `delivered`. Vérifie que SPF, DKIM et **DMARC** sont bien publiés pour le
+   domaine d'envoi dans Resend → *Domains*.
+3. **Adresse invalide / boîte pleine** → journal `bounced`, avec le message
+   du serveur distant.
+4. **Domaine non vérifié chez Resend** → journal `failed` avec l'erreur
+   Resend 403/422 exacte.
 
 ### 8.4 Premier déploiement
 
@@ -527,12 +579,22 @@ UPDATE companies SET is_admin = TRUE WHERE email = 'ton-email@domaine.com';
 ### 9.11 Cron de relances (test manuel)
 
 ```bash
-# Test manuel du cron (en bypass Vercel) :
+# Test manuel du cron global (en bypass Vercel) :
 curl -X GET "https://<ton-domaine>.vercel.app/api/cron-reminders" \
   -H "Authorization: Bearer <CRON_SECRET>"
+
+# Test du déclenchement instantané d'une seule société (JWT utilisateur) :
+curl -X POST "https://<ton-domaine>.vercel.app/api/cron-reminders" \
+  -H "Authorization: Bearer <JWT_UTILISATEUR>" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"manual"}'
 ```
 
-✅ **Attendu** : `{ scanned: N, reminders_sent: M, ... }`
+✅ **Attendu** : `{ scanned: N, reminders_sent: M, skipped: S, errors: E, detail: [...] }`
+
+`detail[]` donne, facture par facture, le destinataire et le motif exact en cas
+de non-envoi. Le même détail est stocké dans la table `email_log` et visible
+dans l'app (Factures → menu ⋮ → **Suivi des envois**).
 
 Pour tester un vrai retard :
 ```sql
@@ -664,6 +726,9 @@ Test webhook : POST sur `/api/pdp-webhook` avec `{ "transmission_id": "...", "st
 - [ ] Yousign en mode **Production**
 - [ ] Vercel : variables `NODE_ENV=production`
 - [ ] CRON_SECRET généré et stocké
+- [ ] `migration_v8_48_email_log.sql` exécutée (journal des envois)
+- [ ] Webhook Resend `email_events` créé + RESEND_EVENTS_WEBHOOK_SECRET posé
+- [ ] SPF / DKIM / DMARC verts dans Resend → Domains
 - [ ] Sentry/monitoring (optionnel mais recommandé)
 - [ ] Conditions générales d'utilisation rédigées
 - [ ] Politique de confidentialité rédigée

@@ -62,6 +62,20 @@ export default async function handler(req, res) {
     return m.handleInboxWebhook(req, res);
   }
 
+  // v8.48 — Webhook Resend "events" (accusés de délivrance des emails).
+  // Corps brut requis (signature Svix) → AVANT la réhydratation du body.
+  //   URL à déclarer dans Resend : /api/public?op=email_events
+  if (op === "email_events") {
+    let m;
+    try {
+      m = await import("./_lib/email-log.js");
+    } catch (e) {
+      console.error("[public] module email-log indisponible", e?.stack || e?.message);
+      return json(res, 503, { error: "Module email-log indisponible" });
+    }
+    return m.handleEmailEventsWebhook(req, res);
+  }
+
   // Réhydrate req.body pour les ops historiques (bodyParser désactivé).
   if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
     if (req.body === undefined) {
@@ -75,7 +89,7 @@ export default async function handler(req, res) {
   if (op === "share") return handleShare(req, res);
   if (op === "fetch") return handleFetch(req, res);
   if (op === "external") return handleExternal(req, res);
-  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=external or ?op=pa_webhook" });
+  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=external, ?op=pa_webhook or ?op=email_events" });
 }
 
 function inferOp(req) {
