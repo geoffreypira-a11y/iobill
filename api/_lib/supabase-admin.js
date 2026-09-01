@@ -80,6 +80,44 @@ export const sbAdmin = {
   }
 };
 
+// v8.48 — Helper: URL Storage signée (service_role).
+// Les URLs signées stockées en base expirent (1h) : il faut resigner à chaque
+// usage plutôt que réutiliser la valeur en colonne.
+//   downloadAs : force le nom du fichier au téléchargement (Content-Disposition)
+export async function signStorageUrl(bucket, path, expiresIn = 300, downloadAs = null) {
+  if (!SUPABASE_URL || !SERVICE_ROLE || !bucket || !path) return null;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + SERVICE_ROLE,
+        apikey: SERVICE_ROLE,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ expiresIn })
+    });
+    if (!r.ok) {
+      console.warn("[signStorageUrl] échec", r.status, bucket, path);
+      return null;
+    }
+    const j = await r.json();
+    if (!j.signedURL) return null;
+    let out = `${SUPABASE_URL}/storage/v1${j.signedURL}`;
+    if (downloadAs) out += `&download=${encodeURIComponent(downloadAs)}`;
+    return out;
+  } catch (e) {
+    console.warn("[signStorageUrl] exception", e?.message);
+    return null;
+  }
+}
+
+// v8.48 — Extrait { bucket, path } d'une URL Storage (signée ou publique).
+export function parseStorageUrl(url) {
+  const m = String(url || "").match(/\/object\/(?:sign|public|authenticated)\/([^/]+)\/([^?]+)/);
+  if (!m) return null;
+  return { bucket: m[1], path: decodeURIComponent(m[2]) };
+}
+
 // Helper: extrait le token Bearer du header Authorization
 export function extractToken(req) {
   const auth = req.headers.authorization || req.headers.Authorization || "";

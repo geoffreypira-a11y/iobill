@@ -4,6 +4,14 @@ import { LogoMark } from "../../components/Logo.jsx";
 import { fmtEUR, fmtDate, fmtDateLong } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
 
+// v8.48 — Lien de téléchargement d'un PDF depuis un lien public.
+// On passe TOUJOURS par l'API : elle resigne l'URL Storage à chaque clic.
+// Les URLs signées stockées en base expirent au bout d'une heure — le client
+// récupérait alors un fichier de 110 octets contenant {"error":"InvalidJWT"}.
+function publicPdfHref(token, type, id) {
+  return `/api/public?op=pdf&token=${encodeURIComponent(token)}&type=${type}&doc=${id}`;
+}
+
 export function PublicQuotePage() {
   const { token } = useParams();
   const [data, setData] = useState(null);
@@ -188,7 +196,7 @@ export function PublicQuotePage() {
         {/* Actions */}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
           {q.pdf_url && (
-            <a href={q.pdf_url} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
+            <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
               📄 Télécharger en PDF
             </a>
           )}
@@ -427,7 +435,7 @@ export function PublicInvoicePage() {
             </a>
           )}
           {(inv.facturx_pdf_url || inv.pdf_url) && (
-            <a href={inv.facturx_pdf_url || inv.pdf_url} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
+            <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
               📄 Télécharger Factur-X
             </a>
           )}
@@ -551,7 +559,7 @@ export function PublicPortalPage() {
                           </a>
                         )}
                         {(inv.facturx_pdf_url || inv.pdf_url) && (
-                          <a href={inv.facturx_pdf_url || inv.pdf_url} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }}>
+                          <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }}>
                             📄
                           </a>
                         )}
@@ -591,7 +599,7 @@ export function PublicPortalPage() {
                     <td><QuoteStatusBadge status={q.status} /></td>
                     <td style={{ textAlign: "right" }}>
                       {q.pdf_url && (
-                        <a href={q.pdf_url} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer">📄</a>
+                        <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer">📄</a>
                       )}
                     </td>
                   </tr>

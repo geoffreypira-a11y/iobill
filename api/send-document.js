@@ -3,7 +3,7 @@
 // - Bouton "Voir et accepter" pointant vers la page publique (signature simple)
 // - Branding de l'emetteur en grand, IO BILL en petit footer
 
-import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { authenticate, sbAdmin, json, signStorageUrl, parseStorageUrl } from "./_lib/supabase-admin.js";
 import { sendTrackedEmail, htmlToText } from "./_lib/email-log.js";
 import { randomBytes } from "node:crypto";
 
@@ -105,13 +105,25 @@ export default async function handler(req, res) {
     }
   }
 
-  // Si on a une URL mais pas le base64, on telecharge le PDF depuis Storage
+  // Si on a une URL mais pas le base64, on telecharge le PDF depuis Storage.
+  // v8.48 — l'URL stockée en base est une URL signée qui expire au bout d'1h :
+  // passé ce délai le téléchargement renvoyait le JSON d'erreur Supabase et
+  // l'email partait SANS la facture en pièce jointe, sans rien signaler.
+  // On resigne donc systématiquement avant de télécharger.
   if (pdfUrl && !pdfBase64) {
+    const parsed = parseStorageUrl(pdfUrl);
+    const fetchUrl = parsed
+      ? (await signStorageUrl(parsed.bucket, parsed.path, 300)) || pdfUrl
+      : pdfUrl;
     try {
-      const r = await fetch(pdfUrl);
-      if (r.ok) {
+      const r = await fetch(fetchUrl);
+      const ct = r.headers.get("content-type") || "";
+      if (r.ok && !ct.includes("application/json")) {
         const buf = await r.arrayBuffer();
         pdfBase64 = bufferToBase64(buf);
+      } else {
+        console.warn("[send-document] PDF illisible:", r.status, ct,
+          (await r.text().catch(() => "")).slice(0, 200));
       }
     } catch (e) {
       console.warn("[send-document] Cannot download PDF:", e?.message);
@@ -273,7 +285,8 @@ export default async function handler(req, res) {
     document_type,
     document_id,
     document_number: doc.number || null,
-    trigger_source: "manual"
+    trigger_source: "manual",
+    extra: { pdf_attached: !!pdfBase64 }
   });
 
   if (!sendResult.ok) {

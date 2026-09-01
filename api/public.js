@@ -10,7 +10,7 @@
 //   - sinon → fetch
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { authenticate, sbAdmin, json, signStorageUrl, parseStorageUrl } from "./_lib/supabase-admin.js";
 
 // v8.47 : bodyParser désactivé pour pouvoir vérifier la signature HMAC
 // du webhook PA sur les octets BRUTS. Les autres ops reçoivent un
@@ -86,10 +86,17 @@ export default async function handler(req, res) {
     }
   }
 
+  // v8.48 — Téléchargement PDF depuis un lien public.
+  // Les URLs Storage stockées en base sont signées 1h : passé ce délai, le
+  // client tombait sur {"error":"InvalidJWT"} enregistré sous le nom du
+  // document. On resigne donc à CHAQUE clic, tant que le token public est
+  // valide.
+  if (op === "pdf") return handlePublicPdf(req, res);
+
   if (op === "share") return handleShare(req, res);
   if (op === "fetch") return handleFetch(req, res);
   if (op === "external") return handleExternal(req, res);
-  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=external, ?op=pa_webhook or ?op=email_events" });
+  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=pdf, ?op=external, ?op=pa_webhook or ?op=email_events" });
 }
 
 function inferOp(req) {
@@ -173,6 +180,83 @@ function generateToken(length) {
     out += chars[arr[i] % chars.length];
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF — Téléchargement d'un PDF depuis un lien public (sans auth)
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/public?op=pdf&token=<token public>&doc=<uuid>&type=invoice|quote|credit_note
+//
+// Répond par une redirection 302 vers une URL Storage signée fraîche (5 min),
+// avec un nom de fichier propre. Le lien reste donc valable aussi longtemps
+// que le token public lui-même — contrairement à l'URL signée stockée en base,
+// qui expirait au bout d'une heure.
+//
+// On ne consomme PAS le token (pas d'incrément de use_count) : télécharger un
+// PDF ne doit ni épuiser un max_uses ni fausser la notification
+// « document consulté ».
+const PDF_BUCKET = "invoices-pdf";
+const PDF_TABLES = { invoice: "invoices", quote: "quotes", credit_note: "credit_notes" };
+const PDF_PREFIX = { invoice: "", quote: "devis-", credit_note: "avoir-" };
+const PDF_LABEL = { invoice: "Facture", quote: "Devis", credit_note: "Avoir" };
+
+async function handlePublicPdf(req, res) {
+  if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+
+  const q = req.query || {};
+  const token = q.token;
+  const docId = q.doc;
+  const type = q.type || "invoice";
+
+  if (!token || !docId) return json(res, 400, { error: "token et doc requis" });
+  if (!PDF_TABLES[type]) return json(res, 400, { error: "type invalide" });
+
+  // ─── Validation du token (sans le consommer) ───
+  const t = await sbAdmin.selectOne("public_tokens", `token=eq.${encodeURIComponent(token)}`);
+  if (!t) return json(res, 404, { error: "Lien invalide" });
+  if (t.revoked_at) return json(res, 404, { error: "Ce lien a été révoqué" });
+  if (t.expires_at && new Date(t.expires_at) < new Date()) {
+    return json(res, 404, { error: "Ce lien a expiré. Demandez-en un nouveau à votre prestataire." });
+  }
+
+  // ─── Le document demandé est-il bien couvert par ce token ? ───
+  const doc = await sbAdmin.selectOne(
+    PDF_TABLES[type],
+    `id=eq.${docId}&company_id=eq.${t.company_id}`
+  );
+  if (!doc) return json(res, 404, { error: "Document introuvable" });
+
+  if (t.scope === "portal") {
+    // Portail client : le document doit appartenir au client du token.
+    if (doc.client_id !== t.resource_id) return json(res, 403, { error: "Accès refusé" });
+  } else if (t.scope !== type || t.resource_id !== docId) {
+    return json(res, 403, { error: "Accès refusé" });
+  }
+
+  // ─── Chemin du fichier dans Storage ───
+  // On l'extrait de l'URL signée stockée (source de vérité), avec repli sur la
+  // convention de nommage si la colonne est vide.
+  const stored = doc.facturx_pdf_url || doc.pdf_url || null;
+  const parsed = parseStorageUrl(stored);
+  const bucket = parsed?.bucket || PDF_BUCKET;
+  const path = parsed?.path
+    || (doc.number ? `${t.company_id}/${PDF_PREFIX[type]}${doc.number}.pdf` : null);
+  if (!path) {
+    return json(res, 404, { error: "Le PDF de ce document n'a pas encore été généré." });
+  }
+
+  const filename = `${PDF_LABEL[type]}-${String(doc.number || "document").replace(/[^a-zA-Z0-9._-]/g, "_")}.pdf`;
+  const fresh = await signStorageUrl(bucket, path, 300, filename);
+  if (!fresh) {
+    return json(res, 404, {
+      error: "Le PDF de ce document est introuvable. Contactez votre prestataire pour qu'il le régénère."
+    });
+  }
+
+  res.statusCode = 302;
+  res.setHeader("Location", fresh);
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return res.end();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -335,6 +335,31 @@ Par ordre de fréquence :
 4. **Domaine non vérifié chez Resend** → journal `failed` avec l'erreur
    Resend 403/422 exacte.
 
+### 8.3.ter Téléchargement des PDF depuis les liens publics (v8.48)
+
+Les colonnes `invoices.pdf_url` / `facturx_pdf_url` / `quotes.pdf_url`
+contiennent des URLs Supabase Storage **signées pour 1 heure**. Les pages
+publiques (devis, facture, portail client) les utilisaient telles quelles :
+passé une heure, le client téléchargeait un fichier de ~110 octets contenant
+`{"error":"InvalidJWT","message":"\"exp\" claim timestamp check failed"}`,
+enregistré sous le nom du document (`FAC-2026-0019.json`).
+
+Ces pages passent désormais par :
+
+```
+GET /api/public?op=pdf&token=<token public>&doc=<uuid>&type=invoice|quote|credit_note
+→ 302 vers une URL Storage resignée (5 min), nom de fichier forcé
+```
+
+L'endpoint vérifie que le document est bien couvert par le token (pour un
+token `portal`, que la facture appartient au client du portail) et **ne
+consomme pas** le token (ni `use_count`, ni `max_uses`). Le lien reste donc
+valable aussi longtemps que le lien public lui-même.
+
+`send-document` resigne également l'URL avant de télécharger le PDF à joindre
+à l'email : auparavant, une URL expirée faisait partir l'email **sans pièce
+jointe**, sans aucun message d'erreur.
+
 ### 8.4 Premier déploiement
 
 ```bash

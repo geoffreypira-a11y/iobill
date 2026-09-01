@@ -627,7 +627,10 @@ export function InvoicesListPage({ token, company }) {
       await refreshInvoices();
       // v8.48 — l'envoi est tracé : le menu « Suivi des envois » indique si le
       // client l'a réellement reçu (délivré / ouvert / rejeté).
-      showToast(`Facture envoyée à ${j.recipient}${j.pdf_attached ? " (PDF joint)" : ""} — suivi disponible dans le menu ⋮`);
+      showToast(j.pdf_attached
+        ? `Facture envoyée à ${j.recipient} (PDF joint) — suivi dans le menu ⋮`
+        : `Facture envoyée à ${j.recipient} ⚠️ sans PDF joint — régénérez le PDF puis renvoyez`,
+        j.pdf_attached ? undefined : "error");
     } catch (e) {
       showToast(e.message, "error");
     }
