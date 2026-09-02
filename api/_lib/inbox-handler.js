@@ -2,7 +2,9 @@
 // ════════════════════════════════════════════════════════════════
 // v8.87 — Webhook Resend Inbound pour l'Inbox OCR achats.
 //
-// Flux : email envoyé à achats-xxx@inbox.iobill.fr
+// Flux : email envoyé à achats-xxx@<domaine de réception configuré dans Resend>
+// (v8.52 : inbox.iobill.online — cf. migration_v8_52_inbox_domaine.sql. Le
+//  domaine des alias en base DOIT rester aligné sur ce domaine.)
 //   → Resend le reçoit et POST cet endpoint (event "email.received")
 //   → on retrouve la company via l'alias
 //   → on récupère les pièces jointes via l'API Resend Receiving
@@ -126,7 +128,7 @@ export async function handleInboxWebhook(req, res) {
     const localPart = String(rcpt).split("@")[0].trim();
     if (!localPart) continue;
     const rows = await sbAdmin.select("companies", {
-      filter: `inbox_alias=like.${localPart}@*`,
+      filter: `inbox_alias=ilike.${localPart}@*`,
       select: "id,inbox_enabled,inbox_alias",
       limit: 1
     });
