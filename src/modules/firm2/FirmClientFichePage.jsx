@@ -5,6 +5,8 @@ import { useMyFirm } from "../../components/FirmMode.jsx";
 import { fmtEUR, fmtDate, toCents, fromCents } from "../../lib/helpers.js";
 import { computeCurrentVatPeriod } from "../../lib/vat-sync.js";
 import { SignalButton } from "../../components/SignalButton.jsx";
+import { useTableSort, SortableTh, useSortedRows } from "../../components/TableSort.jsx";
+import { useListFilters, ListToolbar, NoResults } from "../../components/ListToolbar.jsx";
 
 // ═══════════════════════════════════════════════════════════════════
 // v8.147 — Page annexe "Historique des paiements" ajoutée sur une COPIE
@@ -352,13 +354,18 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
   // v8.84 — Sélection multiple + export ZIP des PDF factures (cabinet).
   const [selected, setSelected] = useState(() => new Set());
   const [zipping, setZipping] = useState(false);
+  // v8.62 — Recherche, période et tri par colonne.
+  const filters = useListFilters();
+  const { sort, toggleSort } = useTableSort("firm.invoices.sort", { key: "issue_date", dir: "desc" });
 
   async function load() {
     const rows = await sb.select(token, "invoices", {
       filter: `company_id=eq.${company.id}`,
       select: "id,number,issue_date,due_date,status,subtotal_ht_cents,vat_total_cents,total_ttc_cents,grand_total_cents,debour_total_cents,paid_cents,pdf_url,facturx_pdf_url",
       order: "issue_date.desc",
-      limit: 100
+      // v8.62 — 100 pièces ne couvraient pas un exercice complet : la recherche
+      // et le filtre de période auraient porté sur un sous-ensemble muet.
+      limit: 500
     });
     setInvoices(rows || []);
     setLoading(false);
@@ -374,8 +381,33 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     setPreviewInvoiceId(inv.id); // v8.148 — pour annexer l'historique des paiements
   }
 
-  // Factures ayant un PDF téléchargeable (seules sélectionnables).
-  const withPdf = invoices.filter((i) => i.facturx_pdf_url || i.pdf_url);
+  // v8.62 — Filtrage (recherche + période) puis tri, avant tout le reste :
+  // sélection, ZIP et compteurs portent sur ce que l'utilisateur voit.
+  const visible = invoices.filter((inv) =>
+    filters.match(inv, (i) => i.issue_date, (i) => [i.number, i.status])
+  );
+  const sortedInvoices = useSortedRows(
+    visible,
+    sort,
+    (i, k) => {
+      switch (k) {
+        case "number":     return i.number || "";
+        case "issue_date": return i.issue_date || "";
+        case "due_date":   return i.due_date || "";
+        case "ht":         return i.subtotal_ht_cents || 0;
+        case "vat":        return i.vat_total_cents || 0;
+        case "ttc":        return i.grand_total_cents ?? ((i.total_ttc_cents || 0) + (i.debour_total_cents || 0));
+        case "status":     return i.status || "";
+        default:           return i.issue_date || "";
+      }
+    },
+    (i) => i.number || ""
+  );
+
+  // Factures ayant un PDF téléchargeable (seules sélectionnables), parmi les
+  // lignes visibles : cocher « tout » ne doit pas embarquer ce qui est filtré.
+  const withPdf = sortedInvoices.filter((i) => i.facturx_pdf_url || i.pdf_url);
+  const hiddenSelected = selected.size - withPdf.filter((i) => selected.has(i.id)).length;
 
   function toggleOne(id) {
     setSelected((prev) => {
@@ -455,11 +487,23 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
 
   return (
     <>
+      {/* v8.62 — Recherche + période. Toujours affichée, même sans résultat :
+          sinon l'utilisateur ne pourrait plus défaire son propre filtre. */}
+      <ListToolbar
+        filters={filters}
+        placeholder="N° de facture, statut…"
+        shown={sortedInvoices.length}
+        total={invoices.length}
+      />
+
+      {sortedInvoices.length === 0 ? <NoResults onReset={filters.reset} /> : (
+      <>
       {/* v8.84 — Barre d'export ZIP des factures sélectionnées */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>
           {selected.size > 0
-            ? `${selected.size} facture${selected.size > 1 ? "s" : ""} sélectionnée${selected.size > 1 ? "s" : ""}`
+            ? `${withPdf.filter((i) => selected.has(i.id)).length} facture(s) sélectionnée(s)`
+              + (hiddenSelected > 0 ? ` · ${hiddenSelected} masquée(s) par le filtre, non exportée(s)` : "")
             : "Cochez les factures à exporter"}
         </div>
         <button
@@ -487,18 +531,18 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
                     disabled={withPdf.length === 0}
                   />
                 </th>
-                <th>N°</th>
-                <th>Date</th>
-                <th>Échéance</th>
-                <th style={{ textAlign: "right" }}>HT</th>
-                <th style={{ textAlign: "right" }}>TVA</th>
-                <th style={{ textAlign: "right" }}>TTC</th>
-                <th>Statut</th>
+                <SortableTh label="N°"       sortKey="number"     sort={sort} onSort={toggleSort} />
+                <SortableTh label="Date"     sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Échéance" sortKey="due_date"   sort={sort} onSort={toggleSort} />
+                <SortableTh label="HT"       sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TVA"      sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TTC"      sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="Statut"   sortKey="status"     sort={sort} onSort={toggleSort} />
                 <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {invoices.map((inv) => {
+              {sortedInvoices.map((inv) => {
                 const invSignals = signals.filter((s) => s.target_type === "invoice" && s.target_id === inv.id && s.status === "open");
                 const hasPdf = inv.facturx_pdf_url || inv.pdf_url;
                 return (
@@ -575,6 +619,8 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
         </table>
       </div>
     </div>
+      </>
+      )}
 
     {previewUrl && (
       <PdfPreviewModal token={token} url={previewUrl} invoiceId={previewInvoiceId} title={previewTitle} onClose={() => { setPreviewUrl(null); setPreviewInvoiceId(null); }} />
@@ -697,12 +743,15 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
   // v8.85 — Sélection multiple + export ZIP des justificatifs d'achat.
   const [selected, setSelected] = useState(() => new Set());
   const [zipping, setZipping] = useState(false);
+  // v8.62 — Recherche, période et tri par colonne.
+  const filters = useListFilters();
+  const { sort, toggleSort } = useTableSort("firm.purchases.sort", { key: "issue_date", dir: "desc" });
 
   async function load() {
     const rows = await sb.select(token, "purchases", {
       filter: `company_id=eq.${company.id}`,
       order: "issue_date.desc",
-      limit: 100
+      limit: 500
     });
     console.log("[Achats cabinet] company_id:", company.id, "rows:", rows?.length, "sample:", rows?.[0]);
     setPurchases(rows || []);
@@ -735,8 +784,32 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
     }
   }
 
-  // Achats ayant un justificatif téléchargeable (seuls sélectionnables).
-  const withPdf = purchases.filter((p) => p.file_url);
+  // v8.62 — Filtrage (recherche + période) puis tri, avant sélection et ZIP.
+  const visible = purchases.filter((p) =>
+    filters.match(p, (x) => x.issue_date, (x) => [x.number, x.vendor_name, x.category])
+  );
+  const sortedPurchases = useSortedRows(
+    visible,
+    sort,
+    (p, k) => {
+      switch (k) {
+        case "number":     return p.number || "";
+        case "vendor":     return p.vendor_name || "";
+        case "issue_date": return p.issue_date || "";
+        case "category":   return p.category || "";
+        case "ht":         return p.subtotal_ht_cents || 0;
+        case "vat":        return p.vat_total_cents || 0;
+        case "ttc":        return p.total_ttc_cents || 0;
+        default:           return p.issue_date || "";
+      }
+    },
+    (p) => p.vendor_name || ""
+  );
+
+  // Achats ayant un justificatif téléchargeable (seuls sélectionnables), parmi
+  // les lignes visibles : cocher « tout » ne prend pas ce qui est filtré.
+  const withPdf = sortedPurchases.filter((p) => p.file_url);
+  const hiddenSelected = selected.size - withPdf.filter((p) => selected.has(p.id)).length;
 
   function toggleOne(id) {
     setSelected((prev) => {
@@ -806,11 +879,22 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
 
   return (
     <>
+    {/* v8.62 — Recherche + période */}
+    <ListToolbar
+      filters={filters}
+      placeholder="Fournisseur, n°, catégorie…"
+      shown={sortedPurchases.length}
+      total={purchases.length}
+    />
+
+    {sortedPurchases.length === 0 ? <NoResults onReset={filters.reset} /> : (
+    <>
     {/* v8.85 — Barre d'export ZIP des justificatifs sélectionnés */}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
       <div style={{ fontSize: 12, color: "var(--muted)" }}>
         {selected.size > 0
-          ? `${selected.size} justificatif${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""}`
+          ? `${withPdf.filter((p) => selected.has(p.id)).length} justificatif(s) sélectionné(s)`
+            + (hiddenSelected > 0 ? ` · ${hiddenSelected} masqué(s) par le filtre, non exporté(s)` : "")
           : "Cochez les achats à exporter"}
       </div>
       <button
@@ -837,18 +921,18 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
                   disabled={withPdf.length === 0}
                 />
               </th>
-              <th>N°</th>
-              <th>Fournisseur</th>
-              <th>Date</th>
-              <th>Catégorie</th>
-              <th style={{ textAlign: "right" }}>HT</th>
-              <th style={{ textAlign: "right" }}>TVA</th>
-              <th style={{ textAlign: "right" }}>TTC</th>
+              <SortableTh label="N°"          sortKey="number"     sort={sort} onSort={toggleSort} />
+              <SortableTh label="Fournisseur" sortKey="vendor"     sort={sort} onSort={toggleSort} />
+              <SortableTh label="Date"        sortKey="issue_date" sort={sort} onSort={toggleSort} />
+              <SortableTh label="Catégorie"   sortKey="category"   sort={sort} onSort={toggleSort} />
+              <SortableTh label="HT"          sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
+              <SortableTh label="TVA"         sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
+              <SortableTh label="TTC"         sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
               <th style={{ textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {purchases.map((p) => {
+            {sortedPurchases.map((p) => {
               const pSignals = signals.filter((s) => s.target_type === "purchase" && s.target_id === p.id && s.status === "open");
               return (
                 <tr key={p.id}>
@@ -931,6 +1015,8 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
         </table>
       </div>
     </div>
+    </>
+    )}
 
     {previewUrl && (
       <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
@@ -1043,12 +1129,16 @@ function BankStatementsTab({ token, firm, company }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(() => new Set());
   const [zipping, setZipping] = useState(false);
+  // v8.62 — Recherche, période et tri. Liste de cartes et non tableau :
+  // le tri passe par un menu déroulant plutôt que par des en-têtes cliquables.
+  const filters = useListFilters();
+  const { sort, setSortDirect } = useTableSort("firm.bank.sort", { key: "created_at", dir: "desc" });
 
   async function load() {
     const rows = await sb.select(token, "bank_statements", {
       filter: `company_id=eq.${company.id}`,
       order: "created_at.desc",
-      limit: 200
+      limit: 500
     });
     setItems(rows || []);
     setLoading(false);
@@ -1073,15 +1163,40 @@ function BankStatementsTab({ token, firm, company }) {
     window.open(url, "_blank");
   }
 
+  // v8.62 — La période porte sur la date de dépôt, seule date portée par un
+  // relevé côté IOBILL (le mois couvert n'est pas une colonne).
+  const visible = items.filter((it) =>
+    filters.match(it, (x) => x.created_at, (x) => [x.file_name])
+  );
+  const shown = useSortedRows(
+    visible,
+    sort,
+    (it, k) => {
+      switch (k) {
+        case "file_name":  return it.file_name || "";
+        case "size_bytes": return it.size_bytes || 0;
+        default:           return it.created_at || "";
+      }
+    },
+    (it) => it.file_name || ""
+  );
+  const hiddenSelected = selected.size - shown.filter((i) => selected.has(i.id)).length;
+
   function toggleOne(id) {
     setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAll() {
-    setSelected((prev) => prev.size === items.length ? new Set() : new Set(items.map((i) => i.id)));
+    // Porte sur les seules lignes visibles, pour ne pas embarquer du filtré.
+    setSelected((prev) => {
+      const allShown = shown.length > 0 && shown.every((i) => prev.has(i.id));
+      const n = new Set(prev);
+      shown.forEach((i) => allShown ? n.delete(i.id) : n.add(i.id));
+      return n;
+    });
   }
 
   async function downloadZip() {
-    const chosen = items.filter((i) => selected.has(i.id));
+    const chosen = shown.filter((i) => selected.has(i.id));
     if (chosen.length === 0) return;
     setZipping(true);
     try {
@@ -1121,9 +1236,39 @@ function BankStatementsTab({ token, firm, company }) {
 
   return (
     <>
+      {/* v8.62 — Recherche + période + tri */}
+      <ListToolbar
+        filters={filters}
+        placeholder="Nom du fichier…"
+        shown={shown.length}
+        total={items.length}
+      >
+        <select
+          value={`${sort.key}:${sort.dir}`}
+          onChange={(e) => {
+            const [k, d] = e.target.value.split(":");
+            setSortDirect(k, d);
+          }}
+          title="Trier"
+          style={{ background: "var(--card)", border: "1px solid var(--border2)", borderRadius: 6, padding: "9px 10px", color: "var(--text)", fontSize: 13, cursor: "pointer" }}
+        >
+          <option value="created_at:desc">Dépôt — plus récent</option>
+          <option value="created_at:asc">Dépôt — plus ancien</option>
+          <option value="file_name:asc">Nom — A → Z</option>
+          <option value="file_name:desc">Nom — Z → A</option>
+          <option value="size_bytes:desc">Taille — décroissante</option>
+          <option value="size_bytes:asc">Taille — croissante</option>
+        </select>
+      </ListToolbar>
+
+      {shown.length === 0 ? <NoResults onReset={filters.reset} /> : (
+      <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>
-          {selected.size > 0 ? `${selected.size} relevé${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""}` : "Relevés déposés par le client"}
+          {selected.size > 0
+            ? `${shown.filter((i) => selected.has(i.id)).length} relevé(s) sélectionné(s)`
+              + (hiddenSelected > 0 ? ` · ${hiddenSelected} masqué(s) par le filtre, non exporté(s)` : "")
+            : "Relevés déposés par le client"}
         </div>
         <button className="btn btn-primary btn-sm" onClick={downloadZip} disabled={selected.size === 0 || zipping} style={{ whiteSpace: "nowrap" }}>
           {zipping ? "⏳ Création du ZIP…" : `⬇️ Télécharger ZIP${selected.size > 0 ? ` (${selected.size})` : ""}`}
@@ -1131,10 +1276,10 @@ function BankStatementsTab({ token, firm, company }) {
       </div>
       <div className="card" style={{ overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border2, rgba(255,255,255,0.08))", fontSize: 11, color: "var(--muted)" }}>
-          <input type="checkbox" checked={selected.size === items.length} ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < items.length; }} onChange={toggleAll} title="Tout sélectionner" />
+          <input type="checkbox" checked={shown.length > 0 && shown.every((i) => selected.has(i.id))} ref={(el) => { if (el) { const n = shown.filter((i) => selected.has(i.id)).length; el.indeterminate = n > 0 && n < shown.length; } }} onChange={toggleAll} title="Tout sélectionner" />
           <span>Tout sélectionner</span>
         </div>
-        {items.map((it) => (
+        {shown.map((it) => (
           <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid var(--border2, rgba(255,255,255,0.06))" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <input type="checkbox" checked={selected.has(it.id)} onChange={() => toggleOne(it.id)} />
@@ -1149,6 +1294,8 @@ function BankStatementsTab({ token, firm, company }) {
           </div>
         ))}
       </div>
+      </>
+      )}
     </>
   );
 }
