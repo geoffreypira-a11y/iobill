@@ -35,6 +35,12 @@ export function InvoicesListPage({ token, company }) {
   // factures. Le choix est mémorisé d'une session à l'autre.
   const { sort, toggleSort } = useTableSort("iobill:invoices:sort", { key: "issue_date", dir: "desc" });
 
+  // v8.27.5 — signalements ouverts du cabinet sur chaque facture.
+  // /!\ Cette déclaration avait été supprimée par mégarde en v8.52 lors de
+  // l'extraction du tri : l'import et les usages subsistaient, mais la
+  // variable n'existait plus → ReferenceError au rendu, page blanche.
+  const { byId: signalsByInvoiceId } = useSignalCounts(token, company?.id, "invoice");
+
   const [editModal, setEditModal] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [pendingIssue, setPendingIssue] = useState(null);
