@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Routes, Route, Outlet, Navigate, useNavigate } from "react-router-dom";
 import { sb } from "./lib/supabase.js";
 import { saveSession, loadSession, clearSession } from "./lib/session.js";
+import { kickReminders } from "./lib/reminders.js";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { LogoFull } from "./components/Logo.jsx";
 import { VatReminderBanner } from "./components/VatReminderBanner.jsx";
@@ -164,6 +165,10 @@ export default function App() {
       setSentryUser(user);
       identify(user, co);
       setBootstrapping(false);
+      // v8.48 — Relances : on déclenche un passage du moteur à l'ouverture de
+      // l'app (throttlé côté client ET serveur) pour ne pas attendre le cron
+      // quotidien. Volontairement non attendu : n'impacte pas le démarrage.
+      if (co) kickReminders(s.token);
     })();
   }, []);
 
@@ -174,6 +179,7 @@ export default function App() {
     resolveActiveCompany(token, user, null).then((co) => {
       setCompany(co);
       identify(user, co);
+      if (co) kickReminders(token);
     });
   }
 

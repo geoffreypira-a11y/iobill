@@ -3,7 +3,8 @@
 // - Bouton "Voir et accepter" pointant vers la page publique (signature simple)
 // - Branding de l'emetteur en grand, IO BILL en petit footer
 
-import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { authenticate, sbAdmin, json, signStorageUrl, parseStorageUrl } from "./_lib/supabase-admin.js";
+import { sendTrackedEmail, htmlToText, parseRecipients } from "./_lib/email-log.js";
 import { randomBytes } from "node:crypto";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -48,17 +49,19 @@ export default async function handler(req, res) {
   const doc = await sbAdmin.selectOne(table, `id=eq.${document_id}&company_id=eq.${company.id}`);
   if (!doc) return json(res, 404, { error: "Document introuvable" });
 
-  // 2) Destinataire (override > client_snapshot.email)
-  const recipientEmail = override_recipient || doc.client_snapshot?.email || null;
+  // 2) Destinataires (override > client_snapshot.email)
+  // v8.49 — le champ peut contenir plusieurs adresses séparées par ";" ou "," :
+  // la première reçoit le document, les autres sont mises en copie.
+  const rawRecipients = override_recipient || doc.client_snapshot?.email || null;
+  const { to: recipientEmail, cc: ccEmails, all: allRecipients } = parseRecipients(rawRecipients);
 
   if (!recipientEmail) {
     return json(res, 400, {
-      error: "Aucune adresse email pour le destinataire. Ajoutez un email au client ou indiquez une adresse pour cet envoi.",
-      hint: "missing_recipient_email"
+      error: rawRecipients
+        ? "Format d'email destinataire invalide : " + rawRecipients
+        : "Aucune adresse email pour le destinataire. Ajoutez un email au client ou indiquez une adresse pour cet envoi.",
+      hint: rawRecipients ? "invalid_recipient_email" : "missing_recipient_email"
     });
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
-    return json(res, 400, { error: "Format d'email destinataire invalide : " + recipientEmail });
   }
 
   // 3) Generer ou recuperer le PDF
@@ -104,13 +107,25 @@ export default async function handler(req, res) {
     }
   }
 
-  // Si on a une URL mais pas le base64, on telecharge le PDF depuis Storage
+  // Si on a une URL mais pas le base64, on telecharge le PDF depuis Storage.
+  // v8.48 — l'URL stockée en base est une URL signée qui expire au bout d'1h :
+  // passé ce délai le téléchargement renvoyait le JSON d'erreur Supabase et
+  // l'email partait SANS la facture en pièce jointe, sans rien signaler.
+  // On resigne donc systématiquement avant de télécharger.
   if (pdfUrl && !pdfBase64) {
+    const parsed = parseStorageUrl(pdfUrl);
+    const fetchUrl = parsed
+      ? (await signStorageUrl(parsed.bucket, parsed.path, 300)) || pdfUrl
+      : pdfUrl;
     try {
-      const r = await fetch(pdfUrl);
-      if (r.ok) {
+      const r = await fetch(fetchUrl);
+      const ct = r.headers.get("content-type") || "";
+      if (r.ok && !ct.includes("application/json")) {
         const buf = await r.arrayBuffer();
         pdfBase64 = bufferToBase64(buf);
+      } else {
+        console.warn("[send-document] PDF illisible:", r.status, ct,
+          (await r.text().catch(() => "")).slice(0, 200));
       }
     } catch (e) {
       console.warn("[send-document] Cannot download PDF:", e?.message);
@@ -245,8 +260,12 @@ export default async function handler(req, res) {
   const resendPayload = {
     from: fromHeader,
     to: [recipientEmail],
+    ...(ccEmails.length ? { cc: ccEmails } : {}),
     subject,
-    html
+    html,
+    // v8.48 — partie texte : un email 100 % HTML est un signal de spam
+    // classique. La version texte améliore nettement la délivrabilité.
+    text: htmlToText(html)
   };
   if (replyTo) resendPayload.reply_to = replyTo;
 
@@ -260,32 +279,30 @@ export default async function handler(req, res) {
     ];
   }
 
-  let resendRes;
-  try {
-    resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${RESEND_API_KEY}`
-      },
-      body: JSON.stringify(resendPayload)
-    });
-  } catch (e) {
-    return json(res, 502, { error: "Reseau Resend indisponible", detail: e?.message });
-  }
+  // v8.48 — envoi tracé : chaque tentative (succès ou échec) laisse une ligne
+  // dans email_log, complétée ensuite par les accusés Resend (delivered,
+  // bounced, opened...) via le webhook /api/public?op=email_events.
+  const sendResult = await sendTrackedEmail(resendPayload, {
+    company_id: company.id,
+    kind: document_type,
+    document_type,
+    document_id,
+    document_number: doc.number || null,
+    trigger_source: "manual",
+    extra: { pdf_attached: !!pdfBase64, recipients: allRecipients }
+  });
 
-  if (!resendRes.ok) {
-    const errText = await resendRes.text().catch(() => "");
+  if (!sendResult.ok) {
     return json(res, 502, {
-      error: "Erreur Resend (" + resendRes.status + ")",
-      detail: errText.slice(0, 500),
-      hint: resendRes.status === 422
+      error: sendResult.error || "Envoi Resend impossible",
+      email_log_id: sendResult.log_id,
+      hint: sendResult.status === 422
         ? "Verifiez que votre domaine est valide dans Resend et que l'adresse from est correcte."
         : undefined
     });
   }
 
-  const resendData = await resendRes.json();
+  const resendData = { id: sendResult.id };
 
   // 8) Marquer le document comme envoye
   // Note : public_token n'est PAS stocke sur quote/invoice, il est dans la table public_tokens
@@ -309,7 +326,9 @@ export default async function handler(req, res) {
   return json(res, 200, {
     ok: true,
     resend_id: resendData.id,
-    recipient: recipientEmail,
+    email_log_id: sendResult.log_id,
+    recipient: allRecipients.join(", "),
+    recipients: allRecipients,
     pdf_attached: !!pdfBase64,
     public_url: publicUrl
   });

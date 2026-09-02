@@ -53,6 +53,21 @@ export const uid = () => {
 
 // VALIDATION
 export const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || "");
+
+// v8.49 — Plusieurs destinataires dans un même champ.
+// On accepte le point-virgule, la virgule et le retour à la ligne comme
+// séparateurs : "compta@client.fr ; direction@client.fr".
+export const parseEmailList = (raw) =>
+  String(raw || "")
+    .split(/[;,\n]/)
+    .map((e) => e.trim())
+    .filter(Boolean);
+
+// Vrai si le champ ne contient QUE des adresses valides (au moins une).
+export const isEmailList = (raw) => {
+  const list = parseEmailList(raw);
+  return list.length > 0 && list.every(isEmail);
+};
 export const isSiret = (s) => /^\d{14}$/.test((s || "").replace(/\s/g, ""));
 export const isSiren = (s) => /^\d{9}$/.test((s || "").replace(/\s/g, ""));
 // v8.48.16 — Un SIRET valide ou un SIREN valide. Utilisé côté PA :

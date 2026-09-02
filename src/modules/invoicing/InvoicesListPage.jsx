@@ -14,6 +14,7 @@ import { capture } from "../../lib/telemetry.js";
 import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 import { NotifBadge } from "../../components/NotifBadge.jsx";
 import { useSignalCounts } from "../../lib/useSignalCounts.js";
+import { EmailTrackingModal } from "../../components/EmailTrackingModal.jsx";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -38,6 +39,8 @@ export function InvoicesListPage({ token, company }) {
   const [actionLoading, setActionLoading] = useState(null);
   const [toast, setToast] = useState(null);
   const [openMenu, setOpenMenu] = useState(null);
+  // v8.48 — modale « suivi des envois » d'une facture
+  const [trackingInvoice, setTrackingInvoice] = useState(null);
   // Modale de preview PDF : null ou objet facture
   const [previewInvoice, setPreviewInvoice] = useState(null);
   // v8.130 — Modale d'encaissement local (partiel possible) : null ou facture
@@ -622,7 +625,12 @@ export function InvoicesListPage({ token, company }) {
       if (!r.ok) throw new Error(j.error || "Erreur d'envoi");
       capture("invoice_sent", { invoice_id: inv.id });
       await refreshInvoices();
-      showToast(`Facture envoyée à ${j.recipient}${j.pdf_attached ? " (PDF joint)" : ""}`);
+      // v8.48 — l'envoi est tracé : le menu « Suivi des envois » indique si le
+      // client l'a réellement reçu (délivré / ouvert / rejeté).
+      showToast(j.pdf_attached
+        ? `Facture envoyée à ${j.recipient} (PDF joint) — suivi dans le menu ⋮`
+        : `Facture envoyée à ${j.recipient} ⚠️ sans PDF joint — régénérez le PDF puis renvoyez`,
+        j.pdf_attached ? undefined : "error");
     } catch (e) {
       showToast(e.message, "error");
     }
@@ -646,7 +654,10 @@ export function InvoicesListPage({ token, company }) {
       if (!r.ok) throw new Error(j.error || "Erreur");
       if (j.public_url) {
         try { await navigator.clipboard.writeText(j.public_url); } catch {}
-        showToast("Lien copié dans le presse-papiers !");
+        if (j.status_changed === "sent") await refreshInvoices();
+        showToast(j.status_changed === "sent"
+          ? "Lien copié — la facture passe en « Envoyée »"
+          : "Lien copié dans le presse-papiers !");
       }
     } catch (e) {
       showToast(e.message, "error");
@@ -1042,6 +1053,15 @@ export function InvoicesListPage({ token, company }) {
         />
       )}
 
+      {/* v8.48 — Suivi des envois email (délivré / ouvert / rejeté) */}
+      {trackingInvoice && (
+        <EmailTrackingModal
+          token={token}
+          document={{ id: trackingInvoice.id, number: trackingInvoice.number, type: "invoice" }}
+          onClose={() => setTrackingInvoice(null)}
+        />
+      )}
+
       {/* ─── Menu kebab : rendu en position:fixed ─── */}
       {openMenu && (
         <div
@@ -1064,6 +1084,9 @@ export function InvoicesListPage({ token, company }) {
           </MenuItemInv>
           <MenuItemInv onClick={() => { setPaymentsModal(openMenu.invoice); setOpenMenu(null); }}>
             🧾 Historique des paiements
+          </MenuItemInv>
+          <MenuItemInv onClick={() => { setTrackingInvoice(openMenu.invoice); setOpenMenu(null); }}>
+            📬 Suivi des envois
           </MenuItemInv>
           {!openMenu.canEdit && (
             <MenuItemInv onClick={() => { shareLink(openMenu.invoice); setOpenMenu(null); }}>

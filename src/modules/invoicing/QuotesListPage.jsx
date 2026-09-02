@@ -248,7 +248,12 @@ export function QuotesListPage({ token, company }) {
       if (!r.ok) throw new Error(j.error || "Erreur");
       if (j.public_url) {
         try { await navigator.clipboard.writeText(j.public_url); } catch {}
-        showToast("Lien copié dans le presse-papiers !");
+        // v8.49 — partager le lien fait passer le devis en "Envoyé" : il devient
+        // visible et signable depuis l'espace client.
+        if (j.status_changed === "sent") await refreshQuotes();
+        showToast(j.status_changed === "sent"
+          ? "Lien copié — le devis passe en « Envoyé » et apparaît dans l'espace client"
+          : "Lien copié dans le presse-papiers !");
       }
     } catch (e) {
       showToast(e.message, "error");

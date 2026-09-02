@@ -10,7 +10,7 @@
 //   - sinon → fetch
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { authenticate, sbAdmin, json } from "./_lib/supabase-admin.js";
+import { authenticate, sbAdmin, json, signStorageUrl, parseStorageUrl } from "./_lib/supabase-admin.js";
 
 // v8.47 : bodyParser désactivé pour pouvoir vérifier la signature HMAC
 // du webhook PA sur les octets BRUTS. Les autres ops reçoivent un
@@ -62,6 +62,20 @@ export default async function handler(req, res) {
     return m.handleInboxWebhook(req, res);
   }
 
+  // v8.48 — Webhook Resend "events" (accusés de délivrance des emails).
+  // Corps brut requis (signature Svix) → AVANT la réhydratation du body.
+  //   URL à déclarer dans Resend : /api/public?op=email_events
+  if (op === "email_events") {
+    let m;
+    try {
+      m = await import("./_lib/email-log.js");
+    } catch (e) {
+      console.error("[public] module email-log indisponible", e?.stack || e?.message);
+      return json(res, 503, { error: "Module email-log indisponible" });
+    }
+    return m.handleEmailEventsWebhook(req, res);
+  }
+
   // Réhydrate req.body pour les ops historiques (bodyParser désactivé).
   if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
     if (req.body === undefined) {
@@ -72,10 +86,17 @@ export default async function handler(req, res) {
     }
   }
 
+  // v8.48 — Téléchargement PDF depuis un lien public.
+  // Les URLs Storage stockées en base sont signées 1h : passé ce délai, le
+  // client tombait sur {"error":"InvalidJWT"} enregistré sous le nom du
+  // document. On resigne donc à CHAQUE clic, tant que le token public est
+  // valide.
+  if (op === "pdf") return handlePublicPdf(req, res);
+
   if (op === "share") return handleShare(req, res);
   if (op === "fetch") return handleFetch(req, res);
   if (op === "external") return handleExternal(req, res);
-  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=external or ?op=pa_webhook" });
+  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=pdf, ?op=external, ?op=pa_webhook or ?op=email_events" });
 }
 
 function inferOp(req) {
@@ -105,15 +126,16 @@ async function handleShare(req, res) {
   if (!resource_id) return json(res, 400, { error: "resource_id required" });
 
   // Verifier que la resource appartient bien a la company
+  let resource = null;
   if (scope === "quote") {
-    const q = await sbAdmin.selectOne("quotes", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!q) return json(res, 404, { error: "Quote not found" });
+    resource = await sbAdmin.selectOne("quotes", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Quote not found" });
   } else if (scope === "invoice") {
-    const i = await sbAdmin.selectOne("invoices", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!i) return json(res, 404, { error: "Invoice not found" });
+    resource = await sbAdmin.selectOne("invoices", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Invoice not found" });
   } else if (scope === "portal") {
-    const c = await sbAdmin.selectOne("clients", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!c) return json(res, 404, { error: "Client not found" });
+    resource = await sbAdmin.selectOne("clients", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Client not found" });
   }
 
   // Generer token URL-safe
@@ -136,6 +158,25 @@ async function handleShare(req, res) {
     return json(res, 500, { error: "Token creation failed" });
   }
 
+  // v8.49 — Partager le lien d'un document, c'est le transmettre au client :
+  // le document passe donc en "envoyé", exactement comme un envoi par email.
+  // Sans ça un devis partagé par lien restait en brouillon, et un brouillon
+  // n'apparaît jamais dans l'espace client.
+  let statusChanged = null;
+  if (scope === "quote" && resource?.status === "draft") {
+    await sbAdmin.update("quotes", `id=eq.${resource_id}`, {
+      status: "sent",
+      sent_at: new Date().toISOString()
+    });
+    statusChanged = "sent";
+  } else if (scope === "invoice" && resource?.status === "issued") {
+    await sbAdmin.update("invoices", `id=eq.${resource_id}`, {
+      status: "sent",
+      sent_at: new Date().toISOString()
+    });
+    statusChanged = "sent";
+  }
+
   // URL publique a partager
   const baseUrl = req.headers["x-forwarded-host"]
     ? `https://${req.headers["x-forwarded-host"]}`
@@ -146,7 +187,8 @@ async function handleShare(req, res) {
     ok: true,
     token,
     public_url: baseUrl + path,
-    expires_at: expiresAt
+    expires_at: expiresAt,
+    status_changed: statusChanged
   });
 }
 
@@ -159,6 +201,86 @@ function generateToken(length) {
     out += chars[arr[i] % chars.length];
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF — Téléchargement d'un PDF depuis un lien public (sans auth)
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/public?op=pdf&token=<token public>&doc=<uuid>&type=invoice|quote|credit_note
+//
+// Répond par une redirection 302 vers une URL Storage signée fraîche (5 min),
+// avec un nom de fichier propre. Le lien reste donc valable aussi longtemps
+// que le token public lui-même — contrairement à l'URL signée stockée en base,
+// qui expirait au bout d'une heure.
+//
+// On ne consomme PAS le token (pas d'incrément de use_count) : télécharger un
+// PDF ne doit ni épuiser un max_uses ni fausser la notification
+// « document consulté ».
+const PDF_BUCKET = "invoices-pdf";
+const PDF_TABLES = { invoice: "invoices", quote: "quotes", credit_note: "credit_notes" };
+const PDF_PREFIX = { invoice: "", quote: "devis-", credit_note: "avoir-" };
+const PDF_LABEL = { invoice: "Facture", quote: "Devis", credit_note: "Avoir" };
+
+async function handlePublicPdf(req, res) {
+  if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+
+  const q = req.query || {};
+  const token = q.token;
+  const docId = q.doc;
+  const type = q.type || "invoice";
+  // v8.49 — par défaut le PDF s'OUVRE dans le navigateur (visionneuse native,
+  // y compris sur mobile). `dl=1` force le téléchargement.
+  const forceDownload = q.dl === "1" || q.dl === "true";
+
+  if (!token || !docId) return json(res, 400, { error: "token et doc requis" });
+  if (!PDF_TABLES[type]) return json(res, 400, { error: "type invalide" });
+
+  // ─── Validation du token (sans le consommer) ───
+  const t = await sbAdmin.selectOne("public_tokens", `token=eq.${encodeURIComponent(token)}`);
+  if (!t) return json(res, 404, { error: "Lien invalide" });
+  if (t.revoked_at) return json(res, 404, { error: "Ce lien a été révoqué" });
+  if (t.expires_at && new Date(t.expires_at) < new Date()) {
+    return json(res, 404, { error: "Ce lien a expiré. Demandez-en un nouveau à votre prestataire." });
+  }
+
+  // ─── Le document demandé est-il bien couvert par ce token ? ───
+  const doc = await sbAdmin.selectOne(
+    PDF_TABLES[type],
+    `id=eq.${docId}&company_id=eq.${t.company_id}`
+  );
+  if (!doc) return json(res, 404, { error: "Document introuvable" });
+
+  if (t.scope === "portal") {
+    // Portail client : le document doit appartenir au client du token.
+    if (doc.client_id !== t.resource_id) return json(res, 403, { error: "Accès refusé" });
+  } else if (t.scope !== type || t.resource_id !== docId) {
+    return json(res, 403, { error: "Accès refusé" });
+  }
+
+  // ─── Chemin du fichier dans Storage ───
+  // On l'extrait de l'URL signée stockée (source de vérité), avec repli sur la
+  // convention de nommage si la colonne est vide.
+  const stored = doc.facturx_pdf_url || doc.pdf_url || null;
+  const parsed = parseStorageUrl(stored);
+  const bucket = parsed?.bucket || PDF_BUCKET;
+  const path = parsed?.path
+    || (doc.number ? `${t.company_id}/${PDF_PREFIX[type]}${doc.number}.pdf` : null);
+  if (!path) {
+    return json(res, 404, { error: "Le PDF de ce document n'a pas encore été généré." });
+  }
+
+  const filename = `${PDF_LABEL[type]}-${String(doc.number || "document").replace(/[^a-zA-Z0-9._-]/g, "_")}.pdf`;
+  const fresh = await signStorageUrl(bucket, path, 300, forceDownload ? filename : null);
+  if (!fresh) {
+    return json(res, 404, {
+      error: "Le PDF de ce document est introuvable. Contactez votre prestataire pour qu'il le régénère."
+    });
+  }
+
+  res.statusCode = 302;
+  res.setHeader("Location", fresh);
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return res.end();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -311,16 +433,67 @@ async function handleFetch(req, res) {
       })
     ]);
     if (!client) return json(res, 404, { error: "Client not found" });
+
+    // v8.49 — Les devis doivent être CONSULTABLES depuis l'espace client
+    // (et acceptables en ligne), pas seulement téléchargeables en PDF.
+    // On attache donc à chaque devis son lien public, en réutilisant le token
+    // existant quand il y en a un de valide.
+    const portalBase = req.headers["x-forwarded-host"]
+      ? `https://${req.headers["x-forwarded-host"]}`
+      : (process.env.PUBLIC_BASE_URL || "https://app.iobill.online");
+
+    const quotesWithLinks = [];
+    for (const qt of (quotes || []).slice(0, 50)) {
+      const qToken = await ensurePublicToken(company_id, "quote", qt.id);
+      quotesWithLinks.push({
+        ...qt,
+        public_url: qToken ? `${portalBase}/p/quote/${qToken}` : null
+      });
+    }
+
     return json(res, 200, {
       scope: "portal",
       company,
       client,
       invoices: invoices || [],
-      quotes: quotes || []
+      quotes: quotesWithLinks
     });
   }
 
   return json(res, 400, { error: "Unknown scope" });
+}
+
+// v8.49 — Retourne un token public valide pour une ressource, en créant un
+// nouveau token seulement si aucun token utilisable n'existe déjà.
+async function ensurePublicToken(companyId, scope, resourceId, expiresInDays = 90) {
+  try {
+    const existing = await sbAdmin.select("public_tokens", {
+      filter: `scope=eq.${scope}&resource_id=eq.${resourceId}&company_id=eq.${companyId}`,
+      order: "created_at.desc",
+      limit: 5,
+      select: "token,expires_at,revoked_at,max_uses,use_count"
+    });
+    for (const t of existing || []) {
+      const notExpired = !t.expires_at || new Date(t.expires_at) > new Date();
+      const notRevoked = !t.revoked_at;
+      const usesLeft = t.max_uses == null || (t.use_count || 0) < t.max_uses;
+      if (notExpired && notRevoked && usesLeft) return t.token;
+    }
+
+    const token = generateToken(32);
+    const created = await sbAdmin.insert("public_tokens", {
+      token,
+      company_id: companyId,
+      scope,
+      resource_id: resourceId,
+      expires_at: new Date(Date.now() + expiresInDays * 86400000).toISOString(),
+      max_uses: null
+    });
+    return created && (Array.isArray(created) ? created[0] : created) ? token : null;
+  } catch (e) {
+    console.warn("[public] ensurePublicToken", e?.message);
+    return null;
+  }
 }
 
 function safeParse(s) {

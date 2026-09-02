@@ -6,6 +6,8 @@ import { fmtDate, isSiret, formatSiret, isEmail } from "../../lib/helpers.js";
 import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
 import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePush } from "../../lib/push.js";
+import { runRemindersNow } from "../../lib/reminders.js";
+import { EmailTrackingModal, EmailStatusBadge } from "../../components/EmailTrackingModal.jsx";
 
 const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security", "tickets"];
 
@@ -1657,6 +1659,36 @@ function SmsTab({ token, company, setCompany }) {
   const [enabled, setEnabled] = useState(company.reminders_email_enabled !== false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  // v8.48 — envoi immédiat + journal des envois
+  const [running, setRunning] = useState(false);
+  const [runReport, setRunReport] = useState(null);
+  const [lastRunAt, setLastRunAt] = useState(company.reminders_last_run_at || null);
+  const [log, setLog] = useState([]);
+  const [showAllLog, setShowAllLog] = useState(false);
+
+  async function loadLog() {
+    const rows = await sb.select(token, "email_log", {
+      order: "created_at.desc",
+      limit: 5
+    });
+    setLog(Array.isArray(rows) ? rows : []);
+  }
+
+  useEffect(() => { loadLog(); }, [token]);
+
+  async function relancerMaintenant() {
+    setRunning(true); setMsg(""); setRunReport(null);
+    try {
+      const out = await runRemindersNow(token);
+      setRunReport(out);
+      if (out.last_run_at) setLastRunAt(out.last_run_at);
+      if (out.run_at) setLastRunAt(out.run_at);
+      await loadLog();
+    } catch (e) {
+      setMsg("Erreur : " + (e.message || "envoi impossible"));
+    }
+    setRunning(false);
+  }
 
   async function toggle() {
     setSaving(true); setMsg("");
@@ -1693,25 +1725,137 @@ function SmsTab({ token, company, setCompany }) {
       {msg && <div className="tipline" style={{ marginTop: 12 }}>{msg}</div>}
 
       {enabled && (
-        <div style={{ marginTop: 20, padding: "14px 16px", borderRadius: 8, background: "var(--card2)", border: "1px solid var(--border)" }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", letterSpacing: 0.5, marginBottom: 10 }}>
-            ⚙️ Conditions d'envoi
+        <>
+          <div style={{ marginTop: 20, padding: "14px 16px", borderRadius: 8, background: "var(--card2)", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", letterSpacing: 0.5, marginBottom: 10 }}>
+              ⚡ Envoi immédiat
+            </div>
+            <p style={{ fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.7, margin: "0 0 12px" }}>
+              Les relances dues sont vérifiées et envoyées <strong>dès l'ouverture d'IO BILL</strong>,
+              puis une fois par jour automatiquement. Vous pouvez aussi lancer un
+              passage tout de suite.
+            </p>
+            <button className="btn btn-primary" onClick={relancerMaintenant} disabled={running}>
+              {running ? "Envoi en cours…" : "⚡ Envoyer les relances dues maintenant"}
+            </button>
+            {lastRunAt && (
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 10 }}>
+                Dernière vérification : {fmtDate(lastRunAt)} à{" "}
+                {new Date(lastRunAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
+            {runReport && <RunReport report={runReport} />}
           </div>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.9 }}>
-            <li><strong>Heure d'envoi :</strong> tous les jours à <strong>9h00</strong> (heure de Paris).</li>
-            <li><strong>Cadence :</strong> J+3 (1ʳᵉ relance), J+10 (relance ferme), J+30 (mention des pénalités), J+60 (dernière avant procédure).</li>
-            <li>Uniquement pour les factures <strong>en retard et non réglées</strong>.</li>
-            <li>Le client doit avoir une <strong>adresse email</strong> enregistrée.</li>
-            <li>Chaque email inclut un bouton <strong>« Régler maintenant »</strong> si un lien de paiement existe.</li>
-            <li>Les relances <strong>s'arrêtent automatiquement</strong> dès que la facture est payée.</li>
-          </ul>
-        </div>
+
+          <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 8, background: "var(--card2)", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", letterSpacing: 0.5 }}>
+                📬 Confirmations d'envoi
+              </div>
+              <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 11 }}
+                onClick={() => setShowAllLog(true)}>
+                Tout voir
+              </button>
+            </div>
+            {log.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.7 }}>
+                Aucun envoi enregistré pour l'instant. Chaque email envoyé (facture,
+                devis, relance) apparaîtra ici avec son statut réel : délivré,
+                ouvert, rejeté ou non envoyé.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {log.map((r) => (
+                  <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                    <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.document_number ? r.document_number + " · " : ""}
+                      <span style={{ color: "var(--muted2)" }}>{r.recipient || "—"}</span>
+                    </div>
+                    <EmailStatusBadge status={r.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 8, background: "var(--card2)", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", letterSpacing: 0.5, marginBottom: 10 }}>
+              ⚙️ Conditions d'envoi
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.9 }}>
+              <li><strong>Déclenchement :</strong> à chaque ouverture de l'application, plus un passage automatique quotidien.</li>
+              <li><strong>Cadence :</strong> J+3 (1ʳᵉ relance), J+10 (relance ferme), J+30 (mention des pénalités), J+60 (dernière avant procédure).</li>
+              <li>Uniquement pour les factures <strong>en retard et non réglées</strong>.</li>
+              <li>Le client doit avoir une <strong>adresse email</strong> enregistrée — sans email, la relance est marquée « non envoyée » dans le journal.</li>
+              <li>Chaque email inclut un bouton <strong>« Régler maintenant »</strong> si un lien de paiement existe.</li>
+              <li>Les relances <strong>s'arrêtent automatiquement</strong> dès que la facture est payée.</li>
+            </ul>
+          </div>
+        </>
+      )}
+
+      {showAllLog && (
+        <EmailTrackingModal
+          token={token}
+          title="Suivi de tous les envois"
+          onClose={() => setShowAllLog(false)}
+        />
       )}
 
       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 18, lineHeight: 1.7 }}>
         📱 <strong>Relance par SMS</strong> (complément — bientôt disponible) : pour les relances tardives
         (J+30 / J+60) lorsque le client a un numéro de téléphone. Nécessite une configuration OVH SMS.
       </div>
+    </div>
+  );
+}
+
+// v8.48 — Compte rendu du passage manuel des relances.
+function RunReport({ report }) {
+  if (report.throttled) {
+    return (
+      <div className="tipline" style={{ marginTop: 12 }}>
+        {report.message || "Relances déjà vérifiées il y a moins d'une minute."}
+      </div>
+    );
+  }
+  if (report.skipped === "reminders_disabled") {
+    return <div className="tipline" style={{ marginTop: 12 }}>{report.message}</div>;
+  }
+
+  const sent = report.reminders_sent || 0;
+  const notSent = report.skipped || 0;
+  const errors = report.errors || 0;
+  const detail = Array.isArray(report.detail) ? report.detail : [];
+
+  return (
+    <div style={{
+      marginTop: 12, padding: "10px 12px", borderRadius: 6, fontSize: 12,
+      background: "rgba(62,207,122,.08)", border: "1px solid var(--border)", lineHeight: 1.7
+    }}>
+      <div style={{ fontWeight: 700 }}>
+        {sent > 0
+          ? `${sent} relance${sent > 1 ? "s" : ""} envoyée${sent > 1 ? "s" : ""} ✓`
+          : "Aucune relance à envoyer pour l'instant"}
+      </div>
+      <div style={{ color: "var(--muted2)" }}>
+        {report.scanned || 0} facture(s) en retard analysée(s)
+        {notSent ? ` · ${notSent} non envoyée(s)` : ""}
+        {errors ? ` · ${errors} en erreur` : ""}
+      </div>
+      {detail.length > 0 && (
+        <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: "var(--muted2)" }}>
+          {detail.slice(0, 8).map((d, i) => (
+            <li key={i}>
+              {d.invoice} — {d.status === "sent"
+                ? `envoyée à ${d.recipient}`
+                : d.status === "skipped"
+                  ? `non envoyée : ${d.error}`
+                  : `échec : ${d.error}`}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
