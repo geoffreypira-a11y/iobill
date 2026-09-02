@@ -231,6 +231,38 @@ export function QuotesListPage({ token, company }) {
     setActionLoading(null);
   }
 
+  // v8.49 — Rendre un devis "actif" sans passer par l'email.
+  // L'espace client n'affiche que les devis transmis : tant qu'un devis reste
+  // en brouillon, le client ne le voit pas. Cette action le déclare envoyé,
+  // exactement comme le ferait un envoi par email ou le partage du lien.
+  async function markQuoteSent(q) {
+    if (q.status !== "draft") return;
+    if (!confirm(
+      `Marquer le devis ${q.number} comme envoyé ?\n\n`
+      + "Il devient visible et signable dans l'espace client.\n"
+      + "Un devis envoyé ne peut plus être supprimé (vous pourrez toujours le "
+      + "modifier ou en créer une nouvelle version)."
+    )) return;
+    setActionLoading(`markSent-${q.id}`);
+    try {
+      // Repli si la colonne sent_at n'existe pas encore (migration v8.50) :
+      // le statut prime, c'est lui qui rend le devis visible côté client.
+      let updated = await sb.update(token, "quotes", `id=eq.${q.id}`, {
+        status: "sent",
+        sent_at: new Date().toISOString()
+      });
+      if (!updated || !updated[0]) {
+        updated = await sb.update(token, "quotes", `id=eq.${q.id}`, { status: "sent" });
+      }
+      if (!updated || !updated[0]) throw new Error("Erreur lors du changement de statut");
+      await refreshQuotes();
+      showToast("Devis marqué comme envoyé — il apparaît dans l'espace client");
+    } catch (e) {
+      showToast(e.message || "Erreur", "error");
+    }
+    setActionLoading(null);
+  }
+
   function previewPdf(q) {
     // Ouvre la modale d'apercu PDF (pattern IOcar PrintDoc)
     setPreviewQuote(q);
@@ -686,6 +718,14 @@ export function QuotesListPage({ token, company }) {
           <MenuItem onClick={() => { shareLink(openMenu.quote); setOpenMenu(null); }}>
             🔗 Copier le lien public
           </MenuItem>
+          {openMenu.quote.status === "draft" && (
+            <MenuItem
+              onClick={() => { markQuoteSent(openMenu.quote); setOpenMenu(null); }}
+              style={{ color: "var(--gold)" }}
+            >
+              ✅ Marquer comme envoyé (espace client)
+            </MenuItem>
+          )}
           {openMenu.canConvert && openMenu.canSend && (
             <MenuItem
               onClick={() => { setPendingConvert(openMenu.quote); setOpenMenu(null); }}

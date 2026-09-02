@@ -352,6 +352,23 @@ Attention : les documents **déjà émis** gardent l'email figé dans leur
 `client_snapshot` au moment de l'émission. Modifier la fiche client ne change
 donc que les documents émis ensuite.
 
+### 8.3.sexies Colonne `sent_at` manquante — documents bloqués en brouillon (v8.50)
+
+**Symptôme** : un devis envoyé par email restait « Brouillon », une facture
+envoyée restait « Émise » — et n'apparaissait donc jamais dans l'espace client,
+alors que Resend confirmait la livraison de l'email.
+
+**Cause** : `send-document` marque le document envoyé avec
+`UPDATE quotes SET status='sent', sent_at=now()`, mais la colonne `sent_at`
+n'existait ni sur `quotes` ni sur `invoices` (seul `credit_notes` l'avait reçue
+en v8.14). PostgREST rejetait la requête **entière** en 400 — `status` compris —
+et l'erreur était avalée par `sbAdmin.update`, qui renvoie `null` sans lever.
+
+**Correctif** : exécuter `supabase/migration_v8_50_sent_at.sql`, qui ajoute la
+colonne aux deux tables et rattrape les dates d'envoi des documents déjà
+transmis. Le code retente aussi sur le seul `status` si la colonne manque, pour
+ne plus jamais bloquer sur ce motif.
+
 ### 8.3.quinquies Quand un document devient visible dans l'espace client (v8.49)
 
 L'espace client (`/p/portal/<token>`) ne montre que les documents réellement
@@ -794,6 +811,7 @@ Test webhook : POST sur `/api/pdp-webhook` avec `{ "transmission_id": "...", "st
 - [ ] Vercel : variables `NODE_ENV=production`
 - [ ] CRON_SECRET généré et stocké
 - [ ] `migration_v8_48_email_log.sql` exécutée (journal des envois)
+- [ ] `migration_v8_50_sent_at.sql` exécutée (sent_at sur quotes + invoices)
 - [ ] Webhook Resend `email_events` créé + RESEND_EVENTS_WEBHOOK_SECRET posé
 - [ ] SPF / DKIM / DMARC verts dans Resend → Domains
 - [ ] Sentry/monitoring (optionnel mais recommandé)
