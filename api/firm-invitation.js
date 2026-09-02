@@ -318,12 +318,71 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const cleanEmail = String(email).trim().toLowerCase();
 
     const existingFirm = await findBySiretOrSiren("accounting_firms", cleanSiret, "id,name,email,siret");
+
+    // v8.55 — Cabinet pas encore inscrit : on enregistre la demande et on
+    // l'invite à créer son compte. Elle deviendra un vrai lien à son
+    // inscription (trigger attach_pending_firm_requests).
+    //
+    // Sans ça, seul le sens cabinet → client fonctionnait : firm_client_links
+    // impose un firm_id NOT NULL, on ne peut donc pas y stocker une invitation
+    // vers un cabinet qui n'existe pas.
     if (!existingFirm) {
-      return json(res, 404, {
-        error: "Aucun cabinet IO BILL trouvé avec ce numéro. Vérifiez le SIRET ou le SIREN "
-          + "auprès de votre comptable — et s'il n'a pas encore de compte IO BILL, "
-          + "c'est à lui de vous inviter depuis son espace cabinet.",
-        hint: "firm_not_found"
+      const siren = sirenOf(cleanSiret);
+
+      const alreadyRequested = await sbSelect("firm_invitation_requests", {
+        company_id: `eq.${company_id}`,
+        status: "eq.pending",
+        select: "id,invited_siret",
+        limit: 20
+      });
+      const duplicate = (alreadyRequested || []).some(
+        (r) => sirenOf(r.invited_siret) === siren
+      );
+      if (duplicate) {
+        return json(res, 409, {
+          error: "Vous avez déjà une demande en attente pour ce cabinet."
+        });
+      }
+
+      const request = await sbInsert("firm_invitation_requests", {
+        company_id,
+        invited_siret: cleanSiret,
+        invited_email: cleanEmail,
+        message: (message || "").slice(0, 500),
+        status: "pending"
+      });
+      if (!request) {
+        return json(res, 500, {
+          error: "Échec d'enregistrement de la demande. Si la migration v8.55 n'a pas "
+            + "été exécutée, lancez migration_v8_55_demandes_cabinet.sql dans Supabase."
+        });
+      }
+
+      await sendEmail({
+        to: cleanEmail,
+        subject: `${clientCompany.legal_name} souhaite vous confier sa comptabilité sur IO BILL`,
+        html: `<div style="font-family: -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
+<h2 style="color: #d4a843;">🦉 IO BILL · Demande de rattachement</h2>
+<p>Bonjour,</p>
+<p><strong>${clientCompany.legal_name}</strong>${clientCompany.siret ? ` (SIRET ${clientCompany.siret})` : ""} souhaite vous rattacher comme cabinet comptable sur IO BILL.</p>
+${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12px; margin: 16px 0; color: #555;">${String(message).replace(/</g, "&lt;")}</blockquote>` : ""}
+<p>Votre cabinet n'a pas encore de compte IO BILL. Créez-le avec le SIRET
+<strong>${cleanSiret}</strong> : la demande de ce client vous attendra
+automatiquement dans votre espace cabinet.</p>
+<p style="text-align: center; margin: 28px 0;">
+<a href="${APP_URL}/firm/onboarding" style="background: #d4a843; color: #0b0c10; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600;">Créer mon espace cabinet</a>
+</p>
+<p style="font-size: 12px; color: #888;">Le mode Comptable est gratuit pour consulter les documents de vos clients.</p>
+<p style="font-size: 11px; color: #aaa;">— IO BILL · app.iobill.online</p>
+</div>`
+      });
+
+      return json(res, 200, {
+        ok: true,
+        pending_firm_signup: true,
+        request: Array.isArray(request) ? request[0] : request,
+        message: "Ce cabinet n'a pas encore de compte IO BILL. Nous lui avons envoyé "
+          + "une invitation : votre demande sera automatiquement rattachée dès son inscription."
       });
     }
 
@@ -387,6 +446,44 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     });
 
     return json(res, 200, { ok: true, link: link[0] });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CANCEL REQUEST — annuler une demande vers un cabinet non inscrit
+  // ═══════════════════════════════════════════════════════════════════
+  if (action === "cancel_request") {
+    const { request_id } = p;
+    if (!request_id) return json(res, 400, { error: "request_id requis" });
+
+    const rows = await sbSelect("firm_invitation_requests", {
+      id: `eq.${request_id}`,
+      select: "id,company_id,status",
+      limit: 1
+    });
+    const request = rows?.[0];
+    if (!request) return json(res, 404, { error: "Demande introuvable" });
+
+    // La demande doit appartenir à une company de l'utilisateur.
+    const owned = await sbSelect("companies", {
+      id: `eq.${request.company_id}`,
+      user_id: `eq.${user.id}`,
+      select: "id",
+      limit: 1
+    });
+    if (!owned || owned.length === 0) {
+      return json(res, 403, { error: "Cette demande ne vous appartient pas" });
+    }
+    if (request.status !== "pending") {
+      return json(res, 400, { error: `Demande déjà ${request.status}` });
+    }
+
+    const updated = await sbUpdate("firm_invitation_requests", `id=eq.${request_id}`, {
+      status: "canceled",
+      canceled_at: new Date().toISOString()
+    });
+    if (!updated) return json(res, 500, { error: "Échec de l'annulation" });
+
+    return json(res, 200, { ok: true });
   }
 
   // ═══════════════════════════════════════════════════════════════════
