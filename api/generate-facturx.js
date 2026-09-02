@@ -611,7 +611,21 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
   const x = (s) => String(s || "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
 
-  const supplierName = x(co.legal_name);
+  // v8.64 — PEPPOL-EN16931-R008 : « Document MUST not contain empty elements ».
+  // Les balises d'adresse étaient émises inconditionnellement : un acheteur
+  // sans adresse — le cas normal d'une cliente de salon poussée par IOBEAUTY —
+  // produisait <ram:PostcodeCode></ram:PostcodeCode> et deux autres balises
+  // vides, soit trois règles enfreintes et une facture rejetée.
+  //
+  // Dans BG-8 (adresse de l'acheteur), seul BT-55 (code pays) est obligatoire :
+  // rue, code postal et ville sont facultatifs. Les omettre est donc conforme,
+  // et bien préférable à inventer une adresse de complaisance sur une facture.
+  const tagIf = (tag, value) => {
+    const v = x(value);
+    return v ? `<ram:${tag}>${v}</ram:${tag}>` : "";
+  };
+
+  const supplierName = x(co.legal_name || co.trade_name);
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
   // v8.48.21 — Fix BR-CO-14 : reconstruit vat_breakdown depuis les lignes
   // si vide, sinon Σ(TVA par catégorie) ≠ TVA totale et la validation échoue.
@@ -795,10 +809,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           return "";
         })()}
         <ram:PostalTradeAddress>
-          <ram:PostcodeCode>${x(co.postal_code)}</ram:PostcodeCode>
-          <ram:LineOne>${x(co.address_line1)}</ram:LineOne>
-          ${co.address_line2 ? `<ram:LineTwo>${x(co.address_line2)}</ram:LineTwo>` : ""}
-          <ram:CityName>${x(co.city)}</ram:CityName>
+          ${tagIf("PostcodeCode", co.postal_code)}
+          ${tagIf("LineOne", co.address_line1)}
+          ${tagIf("LineTwo", co.address_line2)}
+          ${tagIf("CityName", co.city)}
           <ram:CountryID>${x(iso2Country(co.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
         <!-- v8.60.4 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
@@ -835,10 +849,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           return "";
         })()}
         <ram:PostalTradeAddress>
-          <ram:PostcodeCode>${x(cs.postal_code)}</ram:PostcodeCode>
-          <ram:LineOne>${x(cs.address_line1)}</ram:LineOne>
-          ${cs.address_line2 ? `<ram:LineTwo>${x(cs.address_line2)}</ram:LineTwo>` : ""}
-          <ram:CityName>${x(cs.city)}</ram:CityName>
+          ${tagIf("PostcodeCode", cs.postal_code)}
+          ${tagIf("LineOne", cs.address_line1)}
+          ${tagIf("LineTwo", cs.address_line2)}
+          ${tagIf("CityName", cs.city)}
           <ram:CountryID>${x(iso2Country(cs.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
         <!-- v8.60.4 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
