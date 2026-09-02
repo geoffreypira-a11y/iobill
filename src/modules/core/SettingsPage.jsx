@@ -7,6 +7,7 @@ import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
 import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePush } from "../../lib/push.js";
 import { runRemindersNow } from "../../lib/reminders.js";
+import { sourceAppLabel } from "../../lib/sourceApps.js";
 import { EmailTrackingModal, EmailStatusBadge } from "../../components/EmailTrackingModal.jsx";
 
 const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security", "tickets"];
@@ -104,9 +105,7 @@ function ProfileTab({ token, company, setCompany }) {
     [company.external_managed_fields]
   );
   const isExternal = sourceApp !== "iobill" && managedFields.size > 0;
-  const sourceLabel = sourceApp === "iocar" ? "IO CAR"
-                    : sourceApp === "iobtp" ? "IO BTP"
-                    : sourceApp.toUpperCase();
+  const sourceLabel = sourceAppLabel(sourceApp) || String(sourceApp).toUpperCase();
 
   function update(k, v) {
     // Si champ géré par source externe et valeur changée, on demande confirmation
@@ -419,10 +418,7 @@ function BrandingTab({ token, company, setCompany }) {
     [company.external_managed_fields]
   );
   const isExternal = sourceApp !== "iobill" && managedFields.size > 0;
-  const sourceLabel = sourceApp === "iocar" ? "IO CAR"
-    : sourceApp === "iobtp" ? "IO BTP"
-    : sourceApp === "ioinstitute" ? "IO INSTITUTE"
-    : sourceApp.toUpperCase();
+  const sourceLabel = sourceAppLabel(sourceApp) || String(sourceApp).toUpperCase();
 
   // Au montage : charger une URL signée du logo existant pour preview
   useEffect(() => {
@@ -797,9 +793,7 @@ function BillingTab({ token, company, setCompany }) {
               (IOCAR, IOBTP...), on affiche "Pro · IO CAR" au lieu de
               "Pro · 14,90 €/mois", car ces users ne payent pas Stripe directement. */}
           {(() => {
-            const SOURCE_LABELS = { iocar: "IO CAR", iobtp: "IO BTP", ioinstitute: "IO INSTITUTE" };
-            const sourceApp = company.source_app;
-            const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
+            const sourceLabel = sourceAppLabel(company.source_app);
             if (sourceLabel) return `Pro · ${sourceLabel}`;
             if (company.sub_status === "active") return "Pro · 14,90 € HT/mois";
             if (trial) return "Essai gratuit";

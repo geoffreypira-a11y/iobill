@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
+import { sourceAppLabel, sourceAppEmoji } from "../../lib/sourceApps.js";
 import { useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
@@ -484,13 +485,5 @@ function safeLocal(k) {
   try { return localStorage.getItem(k); } catch { return null; }
 }
 
-// v8.43 — Helpers pour les apps sources (CRM mono-source)
-function sourceAppLabel(src) {
-  const map = { iocar: "IO CAR", iobtp: "IO BTP", ioinstitute: "IO INSTITUTE" };
-  return map[src] || src;
-}
-
-function sourceAppEmoji(src) {
-  const map = { iocar: "🚗", iobtp: "🏗", ioinstitute: "🎓" };
-  return map[src] || "🔗";
-}
+// v8.60 — Les helpers d'apps sources vivent désormais dans lib/sourceApps.js,
+// pour qu'ajouter une app métier ne demande plus de retrouver cinq copies.

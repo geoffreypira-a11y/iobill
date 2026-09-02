@@ -2172,6 +2172,42 @@ async function upsertClient(companyId, cli, opts = {}) {
     );
   }
 
+  // v8.60 — Repli sur le TÉLÉPHONE, après le SIRET et l'email.
+  //
+  // Les clients d'un salon de beauté n'ont ni SIRET ni, le plus souvent,
+  // d'email : sans ce repli, chaque facture poussée créait un nouveau client.
+  // Ce chemin n'est atteint que si l'app source n'a pas fourni d'external_id —
+  // IOCAR en fournit toujours, son flux ne passe donc jamais ici.
+  //
+  // Deux passes : égalité stricte d'abord (cas normal, la source renvoie la
+  // même chaîne), puis comparaison sur les seuls chiffres pour rapprocher
+  // "06 12 34 56 78" et "+33612345678".
+  if (!found && cli.phone) {
+    const raw = String(cli.phone).trim();
+    if (raw) {
+      found = await sbAdmin.selectOne(
+        "clients",
+        `company_id=eq.${companyId}&phone=eq.${encodeURIComponent(raw)}`
+      );
+
+      if (!found) {
+        const digitsOf = (v) => String(v || "").replace(/\D/g, "").replace(/^0+/, "").replace(/^33/, "");
+        const target = digitsOf(raw);
+        // Un numéro français utile fait au moins 9 chiffres une fois normalisé.
+        // En dessous, le risque de faux rapprochement dépasse le bénéfice.
+        if (target.length >= 9) {
+          const candidates = await sbAdmin.select("clients", {
+            filter: `company_id=eq.${companyId}&phone=not.is.null`,
+            select: "id,phone",
+            limit: 500
+          });
+          const hit = (candidates || []).find((c) => digitsOf(c.phone) === target);
+          if (hit) found = await sbAdmin.selectOne("clients", `id=eq.${hit.id}`);
+        }
+      }
+    }
+  }
+
   if (found) {
     // Si on est dans le flux external mais qu'on retrouve un client legacy
     // sans external_id, on l'enrôle (= on lui attribue l'external_id pour le matching futur)

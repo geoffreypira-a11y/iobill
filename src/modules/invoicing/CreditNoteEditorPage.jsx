@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
+import { sourceAppLabel } from "../../lib/sourceApps.js";
 import { Icon } from "../../components/Icon.jsx";
 import { TotalsBlock, calcLine } from "../../components/LineEditor.jsx";
 import { fmtEUR, fmtDate, todayISO } from "../../lib/helpers.js";
@@ -50,9 +51,8 @@ export function CreditNoteEditorPage({ token, company }) {
   // ou suppression côté UI IOBILL — la source de vérité est côté app métier.
   const isExternalCreditNote = !!(creditNote?.external_source
     && creditNote.external_source !== "iobill");
-  const externalSourceLabel = creditNote?.external_source === "iocar" ? "IO CAR"
-    : creditNote?.external_source === "iobtp" ? "IO BTP"
-    : String(creditNote?.external_source || "").toUpperCase();
+  const externalSourceLabel = sourceAppLabel(creditNote?.external_source)
+    || String(creditNote?.external_source || "").toUpperCase();
   const isReadonly = creditNote && (creditNote.status === "issued" || isExternalCreditNote);
 
   function showToast(message, type = "success") {
