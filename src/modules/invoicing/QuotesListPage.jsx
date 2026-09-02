@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
+import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
 import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate, daysUntil } from "../../lib/helpers.js";
@@ -19,6 +20,8 @@ export function QuotesListPage({ token, company }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // v8.53 — Tri par colonne, date d'émission décroissante par défaut.
+  const { sort, toggleSort } = useTableSort("iobill:quotes:sort", { key: "issue_date", dir: "desc" });
 
   // Modale d'édition : null = fermée, "new" = création, objet quote = édition
   const [editModal, setEditModal] = useState(null);
@@ -173,10 +176,21 @@ export function QuotesListPage({ token, company }) {
         hasMultipleVersions: versions.length > 1
       });
     }
-    // v8.78 — Tri par ordre d'édition (created_at desc), comme les factures.
-    result.sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at));
-    return result;
-  }, [filtered]);
+    // v8.53 — Tri par la colonne choisie, appliqué à la version la plus
+    // récente de chaque groupe (c'est elle qui est affichée sur la ligne).
+    const valueOf = (g, key) => {
+      const q = g.latest;
+      switch (key) {
+        case "number":     return q.number || "";
+        case "client":     return snapshotDisplayName(q.client_snapshot).toLowerCase();
+        case "expires_at": return q.expires_at || "";
+        case "amount":     return q.total_ttc_cents ?? 0;
+        case "status":     return QUOTE_STATUSES[isQuoteExpired(q) ? "expired" : q.status]?.order ?? 99;
+        default:           return q.issue_date || "";
+      }
+    };
+    return sortRows(result, sort, valueOf, (g) => g.latest.number || "");
+  }, [filtered, sort]);
 
   function toggleExpand(rootId) {
     setExpandedRoots((prev) => {
@@ -606,12 +620,12 @@ export function QuotesListPage({ token, company }) {
             <thead>
               <tr>
                 <th style={{ width: 30 }}></th>
-                <th>N°</th>
-                <th>Client</th>
-                <th>Émis le</th>
-                <th>Validité</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
+                <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Émis le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Validité" sortKey="expires_at" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Actions</th>
               </tr>
             </thead>

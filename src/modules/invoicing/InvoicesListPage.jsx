@@ -15,6 +15,7 @@ import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 import { NotifBadge } from "../../components/NotifBadge.jsx";
 import { useSignalCounts } from "../../lib/useSignalCounts.js";
 import { EmailTrackingModal } from "../../components/EmailTrackingModal.jsx";
+import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -32,28 +33,7 @@ export function InvoicesListPage({ token, company }) {
   // v8.52 — Tri des colonnes. Par défaut la date d'émission décroissante :
   // le numéro ne reflète pas la chronologie quand on a ressaisi d'anciennes
   // factures. Le choix est mémorisé d'une session à l'autre.
-  const [sort, setSort] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("iobill:invoices:sort") || "null");
-      if (saved && saved.key) return saved;
-    } catch {}
-    return { key: "issue_date", dir: "desc" };
-  });
-
-  function toggleSort(key) {
-    setSort((prev) => {
-      // Un nouveau critère démarre décroissant (le plus récent / le plus gros
-      // en premier), sauf le client qui se lit mieux de A à Z.
-      const next = prev.key === key
-        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
-        : { key, dir: key === "client" ? "asc" : "desc" };
-      try { localStorage.setItem("iobill:invoices:sort", JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }
-
-  // v8.27.5 — signalements ouverts du cabinet sur chaque facture
-  const { byId: signalsByInvoiceId } = useSignalCounts(token, company?.id, "invoice");
+  const { sort, toggleSort } = useTableSort("iobill:invoices:sort", { key: "issue_date", dir: "desc" });
 
   const [editModal, setEditModal] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -219,31 +199,18 @@ export function InvoicesListPage({ token, company }) {
       return matchS && matchF;
     });
 
-    const sign = sort.dir === "asc" ? 1 : -1;
-    const valueOf = (inv) => {
-      switch (sort.key) {
-        case "number":    return inv.number || "";
-        case "client":    return snapshotDisplayName(inv.client_snapshot).toLowerCase();
-        case "due_date":  return inv.due_date || "";
-        case "amount":    return inv.grand_total_cents ?? inv.total_ttc_cents ?? 0;
-        case "status":    return INVOICE_STATUSES[effectiveStatus(inv)]?.order ?? 99;
-        case "issue_date":
-        default:          return inv.issue_date || "";
+    const valueOf = (inv, key) => {
+      switch (key) {
+        case "number":   return inv.number || "";
+        case "client":   return snapshotDisplayName(inv.client_snapshot).toLowerCase();
+        case "due_date": return inv.due_date || "";
+        case "amount":   return inv.grand_total_cents ?? inv.total_ttc_cents ?? 0;
+        case "status":   return INVOICE_STATUSES[effectiveStatus(inv)]?.order ?? 99;
+        default:         return inv.issue_date || "";
       }
     };
 
-    return [...rows].sort((a, b) => {
-      const va = valueOf(a);
-      const vb = valueOf(b);
-      let cmp;
-      if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
-      else cmp = String(va).localeCompare(String(vb), "fr", { numeric: true });
-      // À date égale, on départage par numéro pour un ordre stable et lisible.
-      if (cmp === 0 && sort.key !== "number") {
-        cmp = String(a.number || "").localeCompare(String(b.number || ""), "fr", { numeric: true });
-      }
-      return cmp * sign;
-    });
+    return sortRows(rows, sort, valueOf, (inv) => inv.number || "");
   }, [invoices, search, statusFilter, sort]);
 
   const counts = useMemo(() => {
@@ -1235,30 +1202,6 @@ export function InvoicesListPage({ token, company }) {
   );
 }
 
-// v8.52 — En-tête de colonne cliquable pour trier la liste.
-function SortableTh({ label, sortKey, sort, onSort, align }) {
-  const active = sort.key === sortKey;
-  return (
-    <th
-      onClick={() => onSort(sortKey)}
-      title={`Trier par ${label.toLowerCase()}`}
-      style={{
-        cursor: "pointer",
-        userSelect: "none",
-        textAlign: align || undefined,
-        whiteSpace: "nowrap",
-        color: active ? "var(--gold)" : undefined
-      }}
-    >
-      {label}
-      <span style={{ marginLeft: 5, opacity: active ? 1 : 0.25, fontSize: 10 }}>
-        {active ? (sort.dir === "asc" ? "▲" : "▼") : "▼"}
-      </span>
-    </th>
-  );
-}
-
-// ─── Composant MenuItem reutilisable ───
 function MenuItemInv({ children, onClick, style = {} }) {
   const [hover, setHover] = React.useState(false);
   return (
