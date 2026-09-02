@@ -2094,29 +2094,44 @@ async function findUserByEmail(email) {
   //
   // Fix : on récupère la réponse, on ITERE, et on retourne uniquement le
   // user dont l'email correspond EXACTEMENT (case-insensitive).
-  const r = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(cleanEmail)}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` }
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
+  //
+  // v8.62 — Fix pagination : on scanne aussi les pages 2+ jusqu'à trouver
+  // l'user OU épuiser la liste (Supabase pagine par défaut 50 users/page,
+  // et le filtre ?email est ignoré → sans pagination on rate tous les
+  // users après le 50e). Boucle bornée à 40 pages (=2000 users) par prudence.
+  const PER_PAGE = 1000; // max autorisé par Supabase Auth Admin
+  const MAX_PAGES = 40;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const r = await fetch(
+      `${url}/auth/v1/admin/users?email=${encodeURIComponent(cleanEmail)}&page=${page}&per_page=${PER_PAGE}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (!r.ok) return null;
+    const j = await r.json();
 
-  // Cas 1 : réponse paginée { users: [...], aud, ... }
-  if (Array.isArray(j?.users)) {
-    for (const u of j.users) {
-      if (u?.email && String(u.email).trim().toLowerCase() === cleanEmail) {
-        return u.id;
+    // Cas 1 : réponse paginée { users: [...], aud, ... }
+    if (Array.isArray(j?.users)) {
+      for (const u of j.users) {
+        if (u?.email && String(u.email).trim().toLowerCase() === cleanEmail) {
+          return u.id;
+        }
       }
+      // Page vide ou dernière page → arrêt de la pagination
+      if (j.users.length < PER_PAGE) {
+        console.warn(`[findUserByEmail] scanné ${page} page(s) sans match strict pour ${cleanEmail}`);
+        return null;
+      }
+      // Sinon on tente la page suivante
+      continue;
     }
-    // Aucun match strict → l'endpoint a renvoyé la liste globale sans respecter le filtre
-    console.warn(`[findUserByEmail] ${j.users.length} user(s) retourné(s) par l'API admin mais AUCUN ne matche ${cleanEmail} — considéré comme absent`);
+
+    // Cas 2 : réponse directe { id, email, ... } (ancien format)
+    if (j?.id && String(j.email || "").trim().toLowerCase() === cleanEmail) {
+      return j.id;
+    }
     return null;
   }
-
-  // Cas 2 : réponse directe { id, email, ... } (ancien format)
-  if (j?.id && String(j.email || "").trim().toLowerCase() === cleanEmail) {
-    return j.id;
-  }
-
+  console.warn(`[findUserByEmail] pagination épuisée (${MAX_PAGES} pages) sans trouver ${cleanEmail}`);
   return null;
 }
 
