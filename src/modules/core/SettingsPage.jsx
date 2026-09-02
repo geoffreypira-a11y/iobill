@@ -7,15 +7,20 @@ import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
 import { pushSupported, pushPermission, isPushSubscribed, enablePush, disablePush } from "../../lib/push.js";
 import { runRemindersNow } from "../../lib/reminders.js";
-import { sourceAppLabel } from "../../lib/sourceApps.js";
+import { sourceAppLabel, sourceAppEmoji } from "../../lib/sourceApps.js";
 import { EmailTrackingModal, EmailStatusBadge } from "../../components/EmailTrackingModal.jsx";
 
 const VALID_TABS = ["profile", "modules", "notifications", "billing", "inbox", "pdp", "sms", "security", "tickets"];
 
-// v8.37 — Helper : ajoute un badge "🚗 SOURCE" à côté du label d'un champ
-// quand ce champ est géré par une app source externe (IOCAR, IOBTP...)
-function fieldLabel(baseLabel, fieldKey, managedFieldsSet, sourceLabel) {
+// v8.37 — Helper : ajoute un badge "<icône> SOURCE" à côté du label d'un champ
+// quand ce champ est géré par une app source externe (IOCAR, IOBTP, IOBEAUTY...)
+//
+// v8.61 — Prend la CLÉ de l'app source (`iocar`, `iobeauty`...) et non plus son
+// libellé, pour en déduire aussi le pictogramme : la voiture s'affichait pour
+// toutes les apps, y compris IOBEAUTY.
+function fieldLabel(baseLabel, fieldKey, managedFieldsSet, sourceApp) {
   if (!managedFieldsSet || !managedFieldsSet.has(fieldKey)) return baseLabel;
+  const sourceLabel = sourceAppLabel(sourceApp) || String(sourceApp || "").toUpperCase();
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
       {baseLabel}
@@ -28,7 +33,7 @@ function fieldLabel(baseLabel, fieldKey, managedFieldsSet, sourceLabel) {
         fontWeight: 700,
         letterSpacing: 0.5
       }}>
-        🚗 {sourceLabel}
+        {sourceAppEmoji(sourceApp)} {sourceLabel}
       </span>
     </span>
   );
@@ -157,7 +162,7 @@ function ProfileTab({ token, company, setCompany }) {
           border: "1px solid rgba(212,168,67,0.25)"
         }}>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-            <div style={{ fontSize: 20 }}>🚗</div>
+            <div style={{ fontSize: 20 }}>{sourceAppEmoji(sourceApp)}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>
                 Compte synchronisé depuis {sourceLabel}
@@ -186,28 +191,28 @@ function ProfileTab({ token, company, setCompany }) {
 
         <SectionTitle>Identité</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label={fieldLabel("Raison sociale *", "legal_name", managedFields, sourceLabel)} value={data.legal_name} onChange={(v) => update("legal_name", v)} />
-        <Field label={fieldLabel("Nom commercial", "trade_name", managedFields, sourceLabel)} value={data.trade_name} onChange={(v) => update("trade_name", v)} />
+        <Field label={fieldLabel("Raison sociale *", "legal_name", managedFields, sourceApp)} value={data.legal_name} onChange={(v) => update("legal_name", v)} />
+        <Field label={fieldLabel("Nom commercial", "trade_name", managedFields, sourceApp)} value={data.trade_name} onChange={(v) => update("trade_name", v)} />
         <Field label="Forme juridique" value={data.legal_form} onChange={(v) => update("legal_form", v)} />
         <Field label="Code APE" value={data.ape_code} onChange={(v) => update("ape_code", v)} />
-        <Field label={fieldLabel("SIRET", "siret", managedFields, sourceLabel)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
+        <Field label={fieldLabel("SIRET", "siret", managedFields, sourceApp)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
         <Field label="N° RCS" value={data.rcs} onChange={(v) => update("rcs", v)} />
-        <Field label={fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceLabel)} value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
+        <Field label={fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceApp)} value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Adresse</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label={fieldLabel("Adresse", "address_line1", managedFields, sourceLabel)} value={data.address_line1} onChange={(v) => update("address_line1", v)} full />
+        <Field label={fieldLabel("Adresse", "address_line1", managedFields, sourceApp)} value={data.address_line1} onChange={(v) => update("address_line1", v)} full />
         <Field label="Complément" value={data.address_line2} onChange={(v) => update("address_line2", v)} full />
-        <Field label={fieldLabel("Code postal", "postal_code", managedFields, sourceLabel)} value={data.postal_code} onChange={(v) => update("postal_code", v)} />
-        <Field label={fieldLabel("Ville", "city", managedFields, sourceLabel)} value={data.city} onChange={(v) => update("city", v)} />
+        <Field label={fieldLabel("Code postal", "postal_code", managedFields, sourceApp)} value={data.postal_code} onChange={(v) => update("postal_code", v)} />
+        <Field label={fieldLabel("Ville", "city", managedFields, sourceApp)} value={data.city} onChange={(v) => update("city", v)} />
         <Field label="Pays" value={data.country} onChange={(v) => update("country", (v || "").toUpperCase())} />
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Contact</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label={fieldLabel("Email", "email", managedFields, sourceLabel)} value={data.email} onChange={(v) => update("email", v)} />
-        <Field label={fieldLabel("Téléphone", "phone", managedFields, sourceLabel)} value={data.phone} onChange={(v) => update("phone", v)} />
+        <Field label={fieldLabel("Email", "email", managedFields, sourceApp)} value={data.email} onChange={(v) => update("email", v)} />
+        <Field label={fieldLabel("Téléphone", "phone", managedFields, sourceApp)} value={data.phone} onChange={(v) => update("phone", v)} />
         <Field label="Site web" value={data.website} onChange={(v) => update("website", v)} />
       </div>
 
@@ -409,7 +414,7 @@ function BrandingTab({ token, company, setCompany }) {
   const fileRef = useRef(null);
 
   // v8.49.8 — Détection du "logo managed par une app source externe"
-  // pour afficher le badge "🚗 IO CAR" à côté de "Logo actuel".
+  // pour afficher le badge "<icône> IO CAR" à côté de "Logo actuel".
   // Les vars étaient définies dans ProfileTab et pas accessibles ici
   // → causait un ReferenceError et un écran blanc React sur /settings.
   const sourceApp = company.source_app || "iobill";
@@ -627,7 +632,7 @@ function BrandingTab({ token, company, setCompany }) {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 10, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 8 }}>
             {data.logo_url ? "Logo actuel" : "Aucun logo défini"}
-            {/* v8.49.8 — Badge "🚗 IO CAR" quand le logo est géré par une app source
+            {/* v8.49.8 — Badge "<icône> IO CAR" quand le logo est géré par une app source
                 externe (IOCAR, futur IOBTP, etc.). Cohérent avec les badges déjà
                 présents à côté des champs texte (Raison sociale, SIRET...). */}
             {data.logo_url && isExternal && managedFields.has("logo_url") && (
@@ -640,7 +645,7 @@ function BrandingTab({ token, company, setCompany }) {
                 fontWeight: 700,
                 letterSpacing: 0.5
               }}>
-                🚗 {sourceLabel}
+                {sourceAppEmoji(sourceApp)} {sourceLabel}
               </span>
             )}
           </div>

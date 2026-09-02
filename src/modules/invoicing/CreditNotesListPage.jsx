@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
-import { sourceAppLabel } from "../../lib/sourceApps.js";
+import { sourceAppLabel, sourceAppEmoji } from "../../lib/sourceApps.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
@@ -175,7 +175,7 @@ export function CreditNotesListPage({ token, company }) {
             <tbody>
               {filtered.map((c) => {
                 const badge = creditNoteStatusBadge(c.status);
-                // v8.49.10 — Badge "🚗 IO CAR" sur les avoirs venus d'une app source externe.
+                // v8.49.10 — Badge "<icône> IO CAR" sur les avoirs venus d'une app source externe.
                 // Cohérent avec l'affichage des factures externes dans InvoicesListPage.
                 const isExternal = !!c.external_source && c.external_source !== "iobill";
                 const sourceLabel = sourceAppLabel(c.external_source)
@@ -195,7 +195,7 @@ export function CreditNotesListPage({ token, company }) {
                           fontWeight: 700,
                           letterSpacing: 0.5
                         }}>
-                          🚗 {sourceLabel}
+                          {sourceAppEmoji(c.external_source)} {sourceLabel}
                         </span>
                       )}
                     </td>
