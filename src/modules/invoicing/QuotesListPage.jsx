@@ -245,10 +245,15 @@ export function QuotesListPage({ token, company }) {
     )) return;
     setActionLoading(`markSent-${q.id}`);
     try {
-      const updated = await sb.update(token, "quotes", `id=eq.${q.id}`, {
+      // Repli si la colonne sent_at n'existe pas encore (migration v8.50) :
+      // le statut prime, c'est lui qui rend le devis visible côté client.
+      let updated = await sb.update(token, "quotes", `id=eq.${q.id}`, {
         status: "sent",
         sent_at: new Date().toISOString()
       });
+      if (!updated || !updated[0]) {
+        updated = await sb.update(token, "quotes", `id=eq.${q.id}`, { status: "sent" });
+      }
       if (!updated || !updated[0]) throw new Error("Erreur lors du changement de statut");
       await refreshQuotes();
       showToast("Devis marqué comme envoyé — il apparaît dans l'espace client");

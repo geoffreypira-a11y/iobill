@@ -164,17 +164,9 @@ async function handleShare(req, res) {
   // n'apparaît jamais dans l'espace client.
   let statusChanged = null;
   if (scope === "quote" && resource?.status === "draft") {
-    await sbAdmin.update("quotes", `id=eq.${resource_id}`, {
-      status: "sent",
-      sent_at: new Date().toISOString()
-    });
-    statusChanged = "sent";
+    if (await markResourceSent("quotes", resource_id)) statusChanged = "sent";
   } else if (scope === "invoice" && resource?.status === "issued") {
-    await sbAdmin.update("invoices", `id=eq.${resource_id}`, {
-      status: "sent",
-      sent_at: new Date().toISOString()
-    });
-    statusChanged = "sent";
+    if (await markResourceSent("invoices", resource_id)) statusChanged = "sent";
   }
 
   // URL publique a partager
@@ -190,6 +182,20 @@ async function handleShare(req, res) {
     expires_at: expiresAt,
     status_changed: statusChanged
   });
+}
+
+// v8.50 — `sent_at` n'existe sur quotes/invoices qu'à partir de la migration
+// v8.50. Sans elle, PostgREST rejetait la requête ENTIÈRE (status compris) et
+// le document restait en brouillon sans que rien ne le signale. On retente
+// donc sur le seul `status`, qui conditionne la visibilité côté client.
+async function markResourceSent(table, id) {
+  const now = new Date().toISOString();
+  let out = await sbAdmin.update(table, `id=eq.${id}`, { status: "sent", sent_at: now });
+  if (!out) {
+    console.warn(`[public/share] ${table}.sent_at absent — repli sur status seul`);
+    out = await sbAdmin.update(table, `id=eq.${id}`, { status: "sent" });
+  }
+  return !!out;
 }
 
 function generateToken(length) {

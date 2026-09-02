@@ -306,16 +306,11 @@ export default async function handler(req, res) {
 
   // 8) Marquer le document comme envoye
   // Note : public_token n'est PAS stocke sur quote/invoice, il est dans la table public_tokens
+  let statusUpdated = null;
   if (document_type === "quote" && ["draft"].includes(doc.status)) {
-    await sbAdmin.update("quotes", `id=eq.${doc.id}`, {
-      status: "sent",
-      sent_at: new Date().toISOString()
-    });
+    statusUpdated = await markAsSent("quotes", doc.id);
   } else if (document_type === "invoice" && doc.status === "issued") {
-    await sbAdmin.update("invoices", `id=eq.${doc.id}`, {
-      status: "sent",
-      sent_at: new Date().toISOString()
-    });
+    statusUpdated = await markAsSent("invoices", doc.id);
   } else if (document_type === "reminder") {
     await sbAdmin.update("invoices", `id=eq.${doc.id}`, {
       last_reminder_sent_at: new Date().toISOString(),
@@ -329,12 +324,29 @@ export default async function handler(req, res) {
     email_log_id: sendResult.log_id,
     recipient: allRecipients.join(", "),
     recipients: allRecipients,
+    status_updated: statusUpdated,
     pdf_attached: !!pdfBase64,
     public_url: publicUrl
   });
 }
 
 // ─── Helpers ──────────────────────────────────────────────
+
+// v8.50 — Marque un document comme envoyé.
+// `sent_at` n'existait pas sur quotes/invoices avant la migration v8.50 :
+// PostgREST rejetait alors la requête ENTIÈRE (status compris) et le document
+// restait en brouillon sans que rien ne le signale. On retente donc sur le
+// seul `status`, qui est ce qui conditionne la visibilité côté client.
+async function markAsSent(table, id) {
+  const now = new Date().toISOString();
+  let out = await sbAdmin.update(table, `id=eq.${id}`, { status: "sent", sent_at: now });
+  if (!out) {
+    console.warn(`[send-document] ${table}.sent_at absent — repli sur status seul`);
+    out = await sbAdmin.update(table, `id=eq.${id}`, { status: "sent" });
+  }
+  if (!out) console.error(`[send-document] impossible de passer ${table}/${id} en "sent"`);
+  return !!out;
+}
 
 function defaultIntro(type, doc, issuerName) {
   const recipient = doc.client_snapshot?.contact_person
