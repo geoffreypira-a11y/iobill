@@ -15,13 +15,20 @@ export function FirmDashboardPage({ token, user, firm }) {
   const [clients, setClients] = useState([]);
   const [signals, setSignals] = useState([]);
   const [messages, setMessages] = useState([]);
+  // v8.57 — Demandes de rattachement en attente. Le dashboard ne chargeait que
+  // les clients ACCEPTÉS : une demande initiée par un client n'apparaissait
+  // nulle part, sauf à penser à ouvrir l'onglet « En attente » de Mes clients.
+  const [pending, setPending] = useState([]);
+  const [acting, setActing] = useState(null);
+
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!token || !firm?.id) return;
     let alive = true;
     (async () => {
       try {
-        const [links, sigs, msgs] = await Promise.all([
+        const [links, sigs, msgs, pendings] = await Promise.all([
           sb.select(token, "firm_client_links", {
             filter: `firm_id=eq.${firm.id}&accepted_at=not.is.null&revoked_at=is.null`,
             select: "id,company_id,accepted_at,invited_email",
@@ -39,6 +46,12 @@ export function FirmDashboardPage({ token, user, firm }) {
             select: "id,company_id,author_side,content,created_at,read_by_firm",
             order: "created_at.desc",
             limit: 10
+          }),
+          sb.select(token, "firm_client_links", {
+            filter: `firm_id=eq.${firm.id}&status=eq.pending`,
+            select: "id,company_id,invited_email,invited_siret,initiated_by,message_invite,created_at",
+            order: "created_at.desc",
+            limit: 20
           })
         ]);
         if (!alive) return;
@@ -75,13 +88,43 @@ export function FirmDashboardPage({ token, user, firm }) {
         setClients(clientsList);
         setSignals(sigs || []);
         setMessages(msgs || []);
+        setPending((pendings || []).map((l) => ({
+          ...l,
+          name: companiesMap[l.id]?.name || l.invited_email || "Société sans nom"
+        })));
       } catch (e) {
         console.warn("[FirmDashboard] error:", e?.message);
       }
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [token, firm?.id]);
+  }, [token, firm?.id, reloadKey]);
+
+  // Accepter ou refuser une demande sans quitter le tableau de bord.
+  async function respondToRequest(linkId, action) {
+    const labels = {
+      accept: "Accepter cette demande et accéder à la comptabilité de ce client ?",
+      refuse: "Refuser cette demande ?"
+    };
+    if (!confirm(labels[action])) return;
+    setActing(linkId);
+    try {
+      const r = await fetch("/api/firm-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, payload: { link_id: linkId } })
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        alert(d.error || "Échec de l'opération");
+      } else {
+        setReloadKey((k) => k + 1);
+      }
+    } catch (e) {
+      alert("Erreur réseau");
+    }
+    setActing(null);
+  }
 
   const todayStr = new Date().toLocaleDateString("fr-FR", {
     weekday: "long",
@@ -119,6 +162,68 @@ export function FirmDashboardPage({ token, user, firm }) {
           </Link>
         </div>
       </div>
+
+      {/* v8.57 — Demandes de rattachement en attente.
+          Placé AVANT les KPI : c'est la seule chose qui appelle une action
+          immédiate, et rien ne la signalait jusqu'ici. */}
+      {pending.length > 0 && (
+        <div className="card card-pad" style={{
+          marginBottom: 22,
+          borderLeft: "3px solid var(--gold)",
+          background: "rgba(212,168,67,0.06)"
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+            ⏳ {pending.length} demande{pending.length > 1 ? "s" : ""} de rattachement en attente
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 14 }}>
+            Tant que vous n'avez pas accepté, vous n'avez accès à aucun document de ces sociétés.
+          </div>
+
+          {pending.map((p) => (
+            <div key={p.id} style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              gap: 12, flexWrap: "wrap",
+              padding: "10px 0", borderTop: "1px solid var(--border)"
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {p.invited_siret ? `SIRET ${p.invited_siret} · ` : ""}
+                  {p.initiated_by === "client"
+                    ? "Ce client vous a sollicité"
+                    : "Invitation envoyée par le cabinet"}
+                </div>
+                {p.message_invite && (
+                  <div style={{ fontSize: 11.5, color: "var(--muted2)", marginTop: 4, fontStyle: "italic" }}>
+                    « {p.message_invite} »
+                  </div>
+                )}
+              </div>
+
+              {/* On ne propose d'accepter que ce que le client a demandé.
+                  Une invitation partie du cabinet attend SA réponse à lui. */}
+              {p.initiated_by === "client" ? (
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button className="btn btn-primary" style={{ fontSize: 12 }}
+                    disabled={acting === p.id}
+                    onClick={() => respondToRequest(p.id, "accept")}>
+                    {acting === p.id ? "..." : "Accepter"}
+                  </button>
+                  <button className="btn btn-ghost" style={{ fontSize: 12 }}
+                    disabled={acting === p.id}
+                    onClick={() => respondToRequest(p.id, "refuse")}>
+                    Refuser
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>
+                  En attente de la réponse du client
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* KPIs — 3 cartes : Signalements, Échéances, Messages */}
       <div className="kpi-grid">
