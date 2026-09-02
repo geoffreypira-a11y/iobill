@@ -51,7 +51,14 @@ export function FirmOnboardingPage({ token, user, onCreated }) {
       });
 
       if (!created || created.length === 0) {
-        setErr("Erreur de création du cabinet (réponse vide)");
+        // v8.56 — Un index unique interdit désormais deux cabinets sur le même
+        // SIREN : un double-envoi du formulaire avait créé 8 homonymes, et les
+        // demandes clients partaient ensuite vers l'un d'eux au hasard.
+        const siretGiven = (form.siret || "").replace(/\s+/g, "");
+        setErr(siretGiven
+          ? "Erreur de création. Un cabinet existe peut-être déjà avec ce SIRET — "
+            + "vérifiez auprès de vos associés avant d'en créer un second."
+          : "Erreur de création du cabinet (réponse vide)");
         setSaving(false);
         return;
       }
