@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
-import { sourceAppLabel } from "../../lib/sourceApps.js";
+import { sourceAppLabel, sourceAppEmoji } from "../../lib/sourceApps.js";
 import { Icon } from "../../components/Icon.jsx";
 import { TotalsBlock, calcLine } from "../../components/LineEditor.jsx";
 import { fmtEUR, fmtDate, todayISO } from "../../lib/helpers.js";
@@ -53,6 +53,7 @@ export function CreditNoteEditorPage({ token, company }) {
     && creditNote.external_source !== "iobill");
   const externalSourceLabel = sourceAppLabel(creditNote?.external_source)
     || String(creditNote?.external_source || "").toUpperCase();
+  const externalSourceEmoji = sourceAppEmoji(creditNote?.external_source);
   const isReadonly = creditNote && (creditNote.status === "issued" || isExternalCreditNote);
 
   function showToast(message, type = "success") {
@@ -519,7 +520,7 @@ export function CreditNoteEditorPage({ token, company }) {
           gap: 10,
           alignItems: "flex-start"
         }}>
-          <div style={{ fontSize: 18 }}>🚗</div>
+          <div style={{ fontSize: 18 }}>{externalSourceEmoji}</div>
           <div style={{ fontSize: 12, lineHeight: 1.4 }}>
             <div style={{ fontWeight: 700, marginBottom: 3, color: "var(--gold, #d4a843)" }}>
               Avoir géré depuis {externalSourceLabel}
@@ -537,7 +538,7 @@ export function CreditNoteEditorPage({ token, company }) {
           <div className="page-title">{isNew ? "NOUVEL AVOIR" : (creditNote?.number || "AVOIR")}</div>
           <div className="page-sub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span className={"badge " + badge.cls}>{badge.label}</span>
-            {/* v8.49.13 — Badge visuel "🚗 IO CAR" pour avoirs externes */}
+            {/* v8.49.13 — Badge visuel "<icône> IO CAR" pour avoirs externes */}
             {isExternalCreditNote && (
               <span style={{
                 fontSize: 10,
@@ -548,7 +549,7 @@ export function CreditNoteEditorPage({ token, company }) {
                 fontWeight: 700,
                 letterSpacing: 0.5
               }}>
-                🚗 {externalSourceLabel}
+                {externalSourceEmoji} {externalSourceLabel}
               </span>
             )}
             {sourceInvoice && (

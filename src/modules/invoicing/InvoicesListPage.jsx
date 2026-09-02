@@ -16,7 +16,7 @@ import { NotifBadge } from "../../components/NotifBadge.jsx";
 import { useSignalCounts } from "../../lib/useSignalCounts.js";
 import { EmailTrackingModal } from "../../components/EmailTrackingModal.jsx";
 import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
-import { sourceAppLabel } from "../../lib/sourceApps.js";
+import { sourceAppLabel, sourceAppEmoji } from "../../lib/sourceApps.js";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -821,7 +821,7 @@ export function InvoicesListPage({ token, company }) {
                             verticalAlign: "middle"
                           }}
                         >
-                          🚗 {sourceLabel}
+                          {sourceAppEmoji(inv.external_source)} {sourceLabel}
                         </span>
                       )}
                       {signalsByInvoiceId[inv.id] && (
