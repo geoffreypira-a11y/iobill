@@ -352,6 +352,28 @@ Attention : les documents **déjà émis** gardent l'email figé dans leur
 `client_snapshot` au moment de l'émission. Modifier la fiche client ne change
 donc que les documents émis ensuite.
 
+### 8.3.quinquies Quand un document devient visible dans l'espace client (v8.49)
+
+L'espace client (`/p/portal/<token>`) ne montre que les documents réellement
+transmis :
+
+| Type | Statuts affichés |
+|------|------------------|
+| Factures | `issued`, `sent`, `partial`, `paid`, `overdue` |
+| Devis | `sent`, `signed`, `refused`, `converted` |
+
+Un devis en **brouillon** n'apparaît donc pas — c'est voulu, un brouillon peut
+être incomplet ou en cours de modification. Un devis quitte le brouillon de
+deux façons, désormais équivalentes :
+
+1. **Envoyer par email** (bouton « Envoyer ») → `sent` ;
+2. **Copier le lien public** (`op=share`) → `sent` également depuis la v8.49.
+   Avant, partager un lien ne changeait pas le statut : le devis restait en
+   brouillon et n'apparaissait jamais dans l'espace client, alors même que le
+   client en avait le lien.
+
+Idem pour une facture `issued` dont on partage le lien : elle passe en `sent`.
+
 ### 8.3.ter Téléchargement des PDF depuis les liens publics (v8.48)
 
 Les colonnes `invoices.pdf_url` / `facturx_pdf_url` / `quotes.pdf_url`

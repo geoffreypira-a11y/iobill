@@ -654,7 +654,10 @@ export function InvoicesListPage({ token, company }) {
       if (!r.ok) throw new Error(j.error || "Erreur");
       if (j.public_url) {
         try { await navigator.clipboard.writeText(j.public_url); } catch {}
-        showToast("Lien copié dans le presse-papiers !");
+        if (j.status_changed === "sent") await refreshInvoices();
+        showToast(j.status_changed === "sent"
+          ? "Lien copié — la facture passe en « Envoyée »"
+          : "Lien copié dans le presse-papiers !");
       }
     } catch (e) {
       showToast(e.message, "error");

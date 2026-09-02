@@ -126,15 +126,16 @@ async function handleShare(req, res) {
   if (!resource_id) return json(res, 400, { error: "resource_id required" });
 
   // Verifier que la resource appartient bien a la company
+  let resource = null;
   if (scope === "quote") {
-    const q = await sbAdmin.selectOne("quotes", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!q) return json(res, 404, { error: "Quote not found" });
+    resource = await sbAdmin.selectOne("quotes", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Quote not found" });
   } else if (scope === "invoice") {
-    const i = await sbAdmin.selectOne("invoices", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!i) return json(res, 404, { error: "Invoice not found" });
+    resource = await sbAdmin.selectOne("invoices", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Invoice not found" });
   } else if (scope === "portal") {
-    const c = await sbAdmin.selectOne("clients", `id=eq.${resource_id}&company_id=eq.${company.id}`);
-    if (!c) return json(res, 404, { error: "Client not found" });
+    resource = await sbAdmin.selectOne("clients", `id=eq.${resource_id}&company_id=eq.${company.id}`);
+    if (!resource) return json(res, 404, { error: "Client not found" });
   }
 
   // Generer token URL-safe
@@ -157,6 +158,25 @@ async function handleShare(req, res) {
     return json(res, 500, { error: "Token creation failed" });
   }
 
+  // v8.49 — Partager le lien d'un document, c'est le transmettre au client :
+  // le document passe donc en "envoyé", exactement comme un envoi par email.
+  // Sans ça un devis partagé par lien restait en brouillon, et un brouillon
+  // n'apparaît jamais dans l'espace client.
+  let statusChanged = null;
+  if (scope === "quote" && resource?.status === "draft") {
+    await sbAdmin.update("quotes", `id=eq.${resource_id}`, {
+      status: "sent",
+      sent_at: new Date().toISOString()
+    });
+    statusChanged = "sent";
+  } else if (scope === "invoice" && resource?.status === "issued") {
+    await sbAdmin.update("invoices", `id=eq.${resource_id}`, {
+      status: "sent",
+      sent_at: new Date().toISOString()
+    });
+    statusChanged = "sent";
+  }
+
   // URL publique a partager
   const baseUrl = req.headers["x-forwarded-host"]
     ? `https://${req.headers["x-forwarded-host"]}`
@@ -167,7 +187,8 @@ async function handleShare(req, res) {
     ok: true,
     token,
     public_url: baseUrl + path,
-    expires_at: expiresAt
+    expires_at: expiresAt,
+    status_changed: statusChanged
   });
 }
 
