@@ -352,6 +352,29 @@ Attention : les documents **déjà émis** gardent l'email figé dans leur
 `client_snapshot` au moment de l'émission. Modifier la fiche client ne change
 donc que les documents émis ensuite.
 
+### 8.3.octies Inbox achats — le domaine de l'alias doit être celui de Resend (v8.52)
+
+**Symptôme** : l'adresse d'inbox achats affichée dans l'application ne reçoit
+rien. Aucune erreur, aucun achat créé.
+
+**Cause** : `generate_inbox_alias()` (v11) fabriquait les alias en
+`@inbox.iobill.fr`, héritage de l'ancienne architecture Cloudflare Email
+Routing → `/api/inbox-purchase`. Depuis la v8.87 la réception passe par
+**Resend Receiving**, sur le domaine déclaré dans Resend → Domains → Receiving
+(`inbox.iobill.online`). Le domaine `iobill.fr` n'est pas déclaré dans le
+compte Resend : un email envoyé à l'adresse affichée n'atteint jamais le
+webhook. Et `/api/inbox-purchase` n'existe plus — le worker Cloudflare
+(`cloudflare/email-worker.js`, conservé pour référence seulement) posterait
+sur une URL en 404.
+
+**Correctif** : `migration_v8_52_inbox_domaine.sql` réécrit les alias existants
+et le trigger sur `@inbox.iobill.online`. La partie locale est conservée : le
+webhook matche dessus (`inbox-handler.js`), donc aucun rattachement n'est perdu.
+
+> **Règle** : le domaine des alias en base et le domaine « Receiving » de Resend
+> doivent rester identiques. Si vous changez l'un, refaites passer la migration
+> avec le nouveau domaine.
+
 ### 8.3.septies Numéro de facture attribué à l'émission (v8.51)
 
 **Symptôme** : créer une facture, la supprimer sans l'émettre, en recréer une —
@@ -844,6 +867,7 @@ Test webhook : POST sur `/api/pdp-webhook` avec `{ "transmission_id": "...", "st
 - [ ] `migration_v8_48_email_log.sql` exécutée (journal des envois)
 - [ ] `migration_v8_50_sent_at.sql` exécutée (sent_at sur quotes + invoices)
 - [ ] `migration_v8_51_numero_a_emission.sql` exécutée (numéro à l'émission)
+- [ ] `migration_v8_52_inbox_domaine.sql` exécutée (alias inbox alignés sur Resend)
 - [ ] Webhook Resend `email_events` créé + RESEND_EVENTS_WEBHOOK_SECRET posé
 - [ ] SPF / DKIM / DMARC verts dans Resend → Domains
 - [ ] Sentry/monitoring (optionnel mais recommandé)

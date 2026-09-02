@@ -1,4 +1,14 @@
-// IO BILL - Cloudflare Email Worker
+// ⚠️ OBSOLÈTE depuis la v8.87 — CONSERVÉ POUR RÉFÉRENCE UNIQUEMENT.
+//
+// Ce worker forwardait les emails de *@inbox.iobill.fr vers /api/inbox-purchase,
+// endpoint qui n'existe plus. La réception passe désormais par Resend Receiving
+// (domaine inbox.iobill.online) et le webhook /api/public?op=inbox_webhook,
+// traité par api/_lib/inbox-handler.js.
+//
+// Ne pas redéployer ce worker : il enverrait les factures fournisseur vers une
+// URL en 404, et les emails seraient perdus en silence.
+//
+// IO BILL - Cloudflare Email Worker (legacy)
 // Forwarde les emails entrants sur *@inbox.iobill.fr vers /api/inbox-purchase
 //
 // DEPLOIEMENT :
