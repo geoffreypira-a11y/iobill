@@ -562,6 +562,47 @@ function mapUnitCode(raw) {
   return mapped || "C62";
 }
 
+// v8.63 — BT-40 / BT-55 : le code pays d'une adresse DOIT être un code
+// ISO 3166-1 alpha-2. Le champ « Pays » des réglages est en saisie libre :
+// une société ayant tapé « FRANCE » produisait
+// <ram:CountryID>FRANCE</ram:CountryID>, refusé par le XSD (la valeur est
+// contrainte à la liste de codes ISO) et par la règle EN16931 BR-09.
+// La facture partait donc invalide sans que rien ne le signale côté IOBILL.
+//
+// On normalise ici, à l'émission, plutôt qu'en base : le pays n'est utilisé
+// nulle part ailleurs que dans ce XML (il n'apparaît pas sur le PDF lisible),
+// et corriger au point d'usage rattrape aussi les données déjà saisies.
+const COUNTRY_NAME_TO_ISO2 = {
+  FRANCE: "FR", FRANCAISE: "FR", "FRANCE METROPOLITAINE": "FR",
+  BELGIQUE: "BE", BELGIUM: "BE", BELGIE: "BE",
+  SUISSE: "CH", SWITZERLAND: "CH", SCHWEIZ: "CH",
+  LUXEMBOURG: "LU",
+  ALLEMAGNE: "DE", GERMANY: "DE", DEUTSCHLAND: "DE",
+  ESPAGNE: "ES", SPAIN: "ES", ESPANA: "ES",
+  ITALIE: "IT", ITALY: "IT", ITALIA: "IT",
+  "PAYS-BAS": "NL", "PAYS BAS": "NL", NETHERLANDS: "NL", NEDERLAND: "NL",
+  PORTUGAL: "PT",
+  "ROYAUME-UNI": "GB", "ROYAUME UNI": "GB", "UNITED KINGDOM": "GB", ANGLETERRE: "GB",
+  IRLANDE: "IE", IRELAND: "IE",
+  AUTRICHE: "AT", AUSTRIA: "AT",
+  MONACO: "MC", ANDORRE: "AD", ANDORRA: "AD",
+  CANADA: "CA", "ETATS-UNIS": "US", "ETATS UNIS": "US", "UNITED STATES": "US", USA: "US",
+  MAROC: "MA", MOROCCO: "MA", TUNISIE: "TN", TUNISIA: "TN", ALGERIE: "DZ", ALGERIA: "DZ"
+};
+
+function iso2Country(v, fallback = "FR") {
+  const raw = String(v == null ? "" : v).trim();
+  if (!raw) return fallback;
+  // Accents et ponctuation retirés : « ALGÉRIE » doit trouver « ALGERIE ».
+  const key = raw.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/^[A-Z]{2}$/.test(key)) return key;        // déjà un code ISO2
+  if (COUNTRY_NAME_TO_ISO2[key]) return COUNTRY_NAME_TO_ISO2[key];
+  // Un libellé inconnu ne doit surtout pas passer tel quel dans le XML :
+  // mieux vaut le pays par défaut, qui produit une facture valide, qu'une
+  // valeur libre qui la fait rejeter en bloc par le PDP.
+  return fallback;
+}
+
 function buildFacturxXml({ doc, lines, company, cfg }) {
   const cs = doc.client_snapshot || {};
   const co = doc.company_snapshot || company;
@@ -758,7 +799,7 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:LineOne>${x(co.address_line1)}</ram:LineOne>
           ${co.address_line2 ? `<ram:LineTwo>${x(co.address_line2)}</ram:LineTwo>` : ""}
           <ram:CityName>${x(co.city)}</ram:CityName>
-          <ram:CountryID>${x(co.country || "FR")}</ram:CountryID>
+          <ram:CountryID>${x(iso2Country(co.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
         <!-- v8.60.4 — BR-FR-13/BT-34 : URIUniversalCommunication vendeur.
              Restauration du patch v8.55 écrasé par ZIP consolidé postérieur.
@@ -798,7 +839,7 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           <ram:LineOne>${x(cs.address_line1)}</ram:LineOne>
           ${cs.address_line2 ? `<ram:LineTwo>${x(cs.address_line2)}</ram:LineTwo>` : ""}
           <ram:CityName>${x(cs.city)}</ram:CityName>
-          <ram:CountryID>${x(cs.country || "FR")}</ram:CountryID>
+          <ram:CountryID>${x(iso2Country(cs.country))}</ram:CountryID>
         </ram:PostalTradeAddress>
         <!-- v8.60.4 — BR-FR-12/BT-49 : URIUniversalCommunication acheteur.
              Restauration du patch v8.55 écrasé par ZIP consolidé postérieur.

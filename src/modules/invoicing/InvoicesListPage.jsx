@@ -252,6 +252,36 @@ export function InvoicesListPage({ token, company }) {
     showToast(`Facture ${savedInvoice.number} enregistrée`);
   }
 
+  // v8.63 — Régénère le PDF/A-3 et son XML Factur-X d'une facture déjà émise.
+  //
+  // Le contenu légal ne change pas : numéro, dates, montants et snapshots sont
+  // immuables en base sur une facture émise (trigger protect_issued_invoice).
+  // Seuls le PDF et le XML embarqué sont réécrits, avec le générateur courant.
+  // C'est ce qui permet de rattraper une facture émise avec un XML invalide
+  // sans créer d'avoir ni toucher à la numérotation.
+  async function regenerateFacturx(inv) {
+    if (!confirm(
+      `Régénérer le PDF Factur-X de ${inv.number} ?\n\n`
+      + "Le numéro, les dates et les montants ne changent pas : seul le fichier "
+      + "est reconstruit avec la version actuelle du générateur."
+    )) return;
+    setActionLoading(`regen-${inv.id}`);
+    try {
+      const r = await fetch("/api/generate-facturx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ document_type: "invoice", document_id: inv.id })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
+      await refreshInvoices();
+      showToast(`Factur-X de ${inv.number} régénéré`);
+    } catch (e) {
+      showToast(`Échec de la régénération : ${e.message || e}`, "error");
+    }
+    setActionLoading(null);
+  }
+
   async function issueInvoice(inv) {
     setActionLoading(`issue-${inv.id}`);
     try {
@@ -1125,6 +1155,17 @@ export function InvoicesListPage({ token, company }) {
               🔗 Copier le lien public
             </MenuItemInv>
           )}
+          {/* v8.63 — Régénération du Factur-X d'une facture émise. Sans ça, une
+              facture émise avec un XML invalide restait invalide pour toujours :
+              on ne peut ni la rééditer ni la réémettre. */}
+          {!openMenu.canEdit && (
+            <MenuItemInv
+              onClick={() => { regenerateFacturx(openMenu.invoice); setOpenMenu(null); }}
+              title="Reconstruit le PDF et son XML avec la version actuelle du générateur. Contenu légal inchangé."
+            >
+              ♻️ Régénérer le Factur-X
+            </MenuItemInv>
+          )}
           {/* v8.57.9 — Marquer encaissée (B2B).
               Visible uniquement si :
                 - facture transmise (pdp_transmission_id NOT NULL)
@@ -1208,11 +1249,12 @@ export function InvoicesListPage({ token, company }) {
   );
 }
 
-function MenuItemInv({ children, onClick, style = {} }) {
+function MenuItemInv({ children, onClick, style = {}, title }) {
   const [hover, setHover] = React.useState(false);
   return (
     <button
       onClick={onClick}
+      title={title}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
