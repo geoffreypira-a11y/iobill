@@ -24,10 +24,16 @@ export function useMyFirm(token, userId) {
     let alive = true;
     (async () => {
       try {
+        // v8.56 — Tri DÉTERMINISTE. `joined_at.desc` seul suffisait tant qu'on
+        // n'avait qu'une adhésion ; avec plusieurs (doublons de cabinet, ou
+        // comptable membre de deux cabinets), l'ordre devenait arbitraire et
+        // l'utilisateur pouvait atterrir dans un cabinet différent à chaque
+        // session — donc ne pas voir les demandes adressées à « son » cabinet.
+        // On départage sur firm_id, stable et toujours renseigné.
         const members = await sb.select(token, "firm_members", {
           filter: `user_id=eq.${userId}`,
           select: "firm_id,role,receive_email_notifications,joined_at",
-          order: "joined_at.desc",
+          order: "joined_at.desc.nullslast,firm_id.asc",
           limit: 1
         });
         if (!alive) return;

@@ -155,20 +155,49 @@ async function handleRequest(req, res) {
     return digits.length >= 9 ? digits.slice(0, 9) : null;
   };
 
-  async function findBySiretOrSiren(table, rawSiret, select) {
+  // v8.56 — La sélection doit être DÉTERMINISTE. Sans tri explicite, un
+  // `limit: 1` sur des doublons renvoie une ligne arbitraire : c'est ce qui
+  // faisait qu'une demande client partait vers un cabinet homonyme, invisible
+  // pour le cabinet réellement utilisé.
+  //
+  // `preferWithMembers` : parmi plusieurs candidats, on retient celui qui a au
+  // moins un utilisateur. Inviter un cabinet sans membre revient à écrire dans
+  // le vide — personne ne verra jamais la demande.
+  async function findBySiretOrSiren(table, rawSiret, select, { preferWithMembers = false } = {}) {
     const clean = String(rawSiret || "").replace(/\s/g, "");
     if (!clean) return null;
 
-    const exact = await sbSelect(table, { select, siret: `eq.${clean}`, limit: 1 });
-    if (exact && exact.length > 0) return exact[0];
+    const pick = async (filter) => {
+      const rows = await sbSelect(table, {
+        select: select.includes("id") ? select : `id,${select}`,
+        siret: filter,
+        order: "created_at.asc",
+        limit: preferWithMembers ? 20 : 1
+      });
+      if (!rows || rows.length === 0) return null;
+      if (!preferWithMembers || rows.length === 1) return rows[0];
+
+      for (const row of rows) {
+        const members = await sbSelect("firm_members", {
+          firm_id: `eq.${row.id}`,
+          select: "user_id",
+          limit: 1
+        });
+        if (members && members.length > 0) return row;
+      }
+      // Aucun candidat n'a de membre : on renvoie le plus ancien, faute de mieux.
+      return rows[0];
+    };
+
+    const exact = await pick(`eq.${clean}`);
+    if (exact) return exact;
 
     const siren = sirenOf(clean);
     if (!siren) return null;
 
     // Un SIRET commence toujours par le SIREN : le préfixe identifie donc
     // bien la même entité juridique, quel que soit l'établissement saisi.
-    const bySiren = await sbSelect(table, { select, siret: `like.${siren}*`, limit: 1 });
-    return (bySiren && bySiren.length > 0) ? bySiren[0] : null;
+    return await pick(`like.${siren}*`);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -317,7 +346,9 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
 
-    const existingFirm = await findBySiretOrSiren("accounting_firms", cleanSiret, "id,name,email,siret");
+    const existingFirm = await findBySiretOrSiren(
+      "accounting_firms", cleanSiret, "id,name,email,siret", { preferWithMembers: true }
+    );
 
     // v8.55 — Cabinet pas encore inscrit : on enregistre la demande et on
     // l'invite à créer son compte. Elle deviendra un vrai lien à son
