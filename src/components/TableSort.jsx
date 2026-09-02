@@ -39,7 +39,16 @@ export function useTableSort(storageKey, defaultSort) {
     });
   }
 
-  return { sort, toggleSort };
+  // v8.62 — Réglage direct clé + sens, pour les listes de cartes (relevés
+  // bancaires) où le tri se choisit dans un menu et non en cliquant une
+  // colonne : toggleSort ne peut pas y atteindre un sens précis.
+  function setSortDirect(key, dir) {
+    const next = { key, dir: dir === "asc" ? "asc" : "desc" };
+    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* mode privé */ }
+    setSort(next);
+  }
+
+  return { sort, toggleSort, setSortDirect };
 }
 
 /** En-tête de colonne cliquable. */

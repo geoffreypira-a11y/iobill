@@ -4,6 +4,8 @@ import { sb } from "../../lib/supabase.js";
 import { useMyFirm } from "../../components/FirmMode.jsx";
 import { useIsComptableMode } from "../../components/AdminModeToggle.jsx";
 import { fmtDate } from "../../lib/helpers.js";
+import { useTableSort, useSortedRows } from "../../components/TableSort.jsx";
+import { useListFilters, ListToolbar, NoResults } from "../../components/ListToolbar.jsx";
 
 /**
  * FirmClientsListPage — Sprint 2 v8.26
@@ -30,6 +32,10 @@ function ClientsList({ token, firm, isPreview }) {
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("accepted"); // all | pending | accepted — défaut Actifs
+  // v8.62 — Recherche, période et tri. Le filtre de statut ci-dessus reste
+  // indépendant : il répond à une autre question (« où en est la liaison ? »).
+  const filters = useListFilters();
+  const { sort, setSortDirect } = useTableSort("firm.clients.sort", { key: "date", dir: "desc" });
 
   async function load() {
     if (isPreview) {
@@ -42,7 +48,7 @@ function ClientsList({ token, firm, isPreview }) {
       filter: `firm_id=eq.${firm.id}`,
       select: "id,company_id,invited_email,invited_siret,status,initiated_by,created_at,accepted_at,refused_at,message_invite",
       order: "created_at.desc",
-      limit: 100
+      limit: 500
     });
 
     // v8.48.34 — Hydrate via action serveur pour bypass RLS
@@ -95,7 +101,26 @@ function ClientsList({ token, firm, isPreview }) {
     await callAction(linkId, "refuse", "Refuser cette demande client ?");
   }
 
-  const filtered = links.filter((l) => filter === "all" || l.status === filter);
+  // v8.62 — Date de référence d'une liaison : celle de l'événement affiché
+  // sur la carte (liée le / refusée le / invitée le), pour que le filtre de
+  // période corresponde à ce que l'utilisateur lit.
+  const linkDate = (l) =>
+    l.status === "accepted" ? (l.accepted_at || l.created_at)
+    : l.status === "refused" ? (l.refused_at || l.created_at)
+    : l.created_at;
+  const linkName = (l) => l._company_name || l.invited_email || "";
+
+  const byStatus = links.filter((l) => filter === "all" || l.status === filter);
+  const searched = byStatus.filter((l) =>
+    filters.match(l, linkDate, (x) => [x._company_name, x._company_siret, x.invited_email])
+  );
+  const filtered = useSortedRows(
+    searched,
+    sort,
+    (l, k) => (k === "name" ? linkName(l).toLowerCase() : String(linkDate(l) || "")),
+    (l) => linkName(l).toLowerCase()
+  );
+
   const pendingCount = links.filter((l) => l.status === "pending").length;
   const acceptedCount = links.filter((l) => l.status === "accepted").length;
 
@@ -144,12 +169,36 @@ function ClientsList({ token, firm, isPreview }) {
         ))}
       </div>
 
+      {/* v8.62 — Recherche + période + tri */}
+      {!loading && byStatus.length > 0 && (
+        <ListToolbar
+          filters={filters}
+          placeholder="Nom, e-mail, SIRET…"
+          shown={filtered.length}
+          total={byStatus.length}
+        >
+          <select
+            value={`${sort.key}:${sort.dir}`}
+            onChange={(e) => { const [k, d] = e.target.value.split(":"); setSortDirect(k, d); }}
+            title="Trier"
+            style={{ background: "var(--card)", border: "1px solid var(--border2)", borderRadius: 6, padding: "9px 10px", color: "var(--text)", fontSize: 13, cursor: "pointer" }}
+          >
+            <option value="date:desc">Date — plus récent</option>
+            <option value="date:asc">Date — plus ancien</option>
+            <option value="name:asc">Nom — A → Z</option>
+            <option value="name:desc">Nom — Z → A</option>
+          </select>
+        </ListToolbar>
+      )}
+
       {loading ? (
         <div className="card card-pad" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
           Chargement...
         </div>
-      ) : filtered.length === 0 ? (
+      ) : byStatus.length === 0 ? (
         <EmptyState filter={filter} onInvite={() => navigate("/firm/clients/new")} isPreview={isPreview} />
+      ) : filtered.length === 0 ? (
+        <NoResults onReset={filters.reset} />
       ) : (
         filtered.map((l) => (
           <ClientLinkCard
