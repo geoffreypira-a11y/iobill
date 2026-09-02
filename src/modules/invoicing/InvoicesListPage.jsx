@@ -29,6 +29,28 @@ export function InvoicesListPage({ token, company }) {
   const [pdpConfigured, setPdpConfigured] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // v8.52 — Tri des colonnes. Par défaut la date d'émission décroissante :
+  // le numéro ne reflète pas la chronologie quand on a ressaisi d'anciennes
+  // factures. Le choix est mémorisé d'une session à l'autre.
+  const [sort, setSort] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("iobill:invoices:sort") || "null");
+      if (saved && saved.key) return saved;
+    } catch {}
+    return { key: "issue_date", dir: "desc" };
+  });
+
+  function toggleSort(key) {
+    setSort((prev) => {
+      // Un nouveau critère démarre décroissant (le plus récent / le plus gros
+      // en premier), sauf le client qui se lit mieux de A à Z.
+      const next = prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: key === "client" ? "asc" : "desc" };
+      try { localStorage.setItem("iobill:invoices:sort", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
 
   // v8.27.5 — signalements ouverts du cabinet sur chaque facture
   const { byId: signalsByInvoiceId } = useSignalCounts(token, company?.id, "invoice");
@@ -190,13 +212,39 @@ export function InvoicesListPage({ token, company }) {
 
   const filtered = useMemo(() => {
     const s = search.toLowerCase().trim();
-    return invoices.filter((inv) => {
+    const rows = invoices.filter((inv) => {
       const name = snapshotDisplayName(inv.client_snapshot).toLowerCase();
       const matchS = !s || (inv.number || "").toLowerCase().includes(s) || name.includes(s);
       const matchF = statusFilter === "all" || effectiveStatus(inv) === statusFilter;
       return matchS && matchF;
     });
-  }, [invoices, search, statusFilter]);
+
+    const sign = sort.dir === "asc" ? 1 : -1;
+    const valueOf = (inv) => {
+      switch (sort.key) {
+        case "number":    return inv.number || "";
+        case "client":    return snapshotDisplayName(inv.client_snapshot).toLowerCase();
+        case "due_date":  return inv.due_date || "";
+        case "amount":    return inv.grand_total_cents ?? inv.total_ttc_cents ?? 0;
+        case "status":    return INVOICE_STATUSES[effectiveStatus(inv)]?.order ?? 99;
+        case "issue_date":
+        default:          return inv.issue_date || "";
+      }
+    };
+
+    return [...rows].sort((a, b) => {
+      const va = valueOf(a);
+      const vb = valueOf(b);
+      let cmp;
+      if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+      else cmp = String(va).localeCompare(String(vb), "fr", { numeric: true });
+      // À date égale, on départage par numéro pour un ordre stable et lisible.
+      if (cmp === 0 && sort.key !== "number") {
+        cmp = String(a.number || "").localeCompare(String(b.number || ""), "fr", { numeric: true });
+      }
+      return cmp * sign;
+    });
+  }, [invoices, search, statusFilter, sort]);
 
   const counts = useMemo(() => {
     const c = { all: invoices.length };
@@ -743,12 +791,12 @@ export function InvoicesListPage({ token, company }) {
           <table>
             <thead>
               <tr>
-                <th>N°</th>
-                <th>Client</th>
-                <th>Émise le</th>
-                <th>Échéance</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
+                <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Émise le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Échéance" sortKey="due_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Actions</th>
               </tr>
             </thead>
@@ -1184,6 +1232,29 @@ export function InvoicesListPage({ token, company }) {
         </div>
       )}
     </div>
+  );
+}
+
+// v8.52 — En-tête de colonne cliquable pour trier la liste.
+function SortableTh({ label, sortKey, sort, onSort, align }) {
+  const active = sort.key === sortKey;
+  return (
+    <th
+      onClick={() => onSort(sortKey)}
+      title={`Trier par ${label.toLowerCase()}`}
+      style={{
+        cursor: "pointer",
+        userSelect: "none",
+        textAlign: align || undefined,
+        whiteSpace: "nowrap",
+        color: active ? "var(--gold)" : undefined
+      }}
+    >
+      {label}
+      <span style={{ marginLeft: 5, opacity: active ? 1 : 0.25, fontSize: 10 }}>
+        {active ? (sort.dir === "asc" ? "▲" : "▼") : "▼"}
+      </span>
+    </th>
   );
 }
 
