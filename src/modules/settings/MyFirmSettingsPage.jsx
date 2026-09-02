@@ -257,7 +257,10 @@ function InviteFirmModal({ token, company, onClose, onSuccess }) {
   async function submit() {
     setErr(null);
     const cleanSiret = siret.replace(/\s/g, "");
-    if (cleanSiret.length !== 14) { setErr("Le SIRET doit contenir 14 chiffres"); return; }
+    if (cleanSiret.length !== 14 && cleanSiret.length !== 9) {
+      setErr("Saisissez un SIRET (14 chiffres) ou un SIREN (9 chiffres)");
+      return;
+    }
     if (!email.includes("@")) { setErr("Email invalide"); return; }
     setLoading(true);
     const r = await fetch("/api/firm-invitation", {
@@ -280,16 +283,16 @@ function InviteFirmModal({ token, company, onClose, onSuccess }) {
         <h3 style={{ margin: "0 0 12px 0", fontSize: 16 }}>Inviter mon cabinet comptable</h3>
         <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
           Le cabinet doit déjà avoir un compte IO BILL pour pouvoir vous gérer.
-          Demandez-lui son SIRET et son email.
+          Demandez-lui son SIRET (ou son SIREN) et son email.
         </p>
 
-        <label className="form-label">SIRET du cabinet *</label>
+        <label className="form-label">SIRET ou SIREN du cabinet *</label>
         <input
           type="text"
           className="form-input"
           value={siret}
           onChange={(e) => setSiret(e.target.value.replace(/[^\d\s]/g, "").slice(0, 17))}
-          placeholder="14 chiffres"
+          placeholder="14 chiffres (SIRET) ou 9 (SIREN)"
           style={{ fontFamily: "monospace", marginBottom: 12 }}
         />
 

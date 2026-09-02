@@ -31,10 +31,12 @@ function InviteForm({ token, firm, onBack }) {
   const [err, setErr] = useState(null);
   const [success, setSuccess] = useState(false);
 
-  // Lookup live quand SIRET = 14 chiffres
+  // v8.54 — Lookup live dès que le numéro est complet : SIREN (9) ou
+  // SIRET (14). Les deux sont acceptés à l'inscription, les deux doivent
+  // donc l'être ici.
   React.useEffect(() => {
     const clean = siret.replace(/\s/g, "");
-    if (clean.length !== 14) { setLookup(null); return; }
+    if (clean.length !== 9 && clean.length !== 14) { setLookup(null); return; }
     let alive = true;
     (async () => {
       const r = await fetch("/api/firm-invitation", {
@@ -52,7 +54,10 @@ function InviteForm({ token, firm, onBack }) {
   async function submit() {
     setErr(null);
     const cleanSiret = siret.replace(/\s/g, "");
-    if (cleanSiret.length !== 14) { setErr("Le SIRET doit contenir 14 chiffres"); return; }
+    if (cleanSiret.length !== 14 && cleanSiret.length !== 9) {
+      setErr("Saisissez un SIRET (14 chiffres) ou un SIREN (9 chiffres)");
+      return;
+    }
     if (!email.trim() || !email.includes("@")) { setErr("Email invalide"); return; }
 
     setLoading(true);
@@ -103,13 +108,13 @@ function InviteForm({ token, firm, onBack }) {
 
       <div className="card card-pad" style={{ maxWidth: 600 }}>
         <div style={{ marginBottom: 16 }}>
-          <label className="form-label">SIRET du client *</label>
+          <label className="form-label">SIRET ou SIREN du client *</label>
           <input
             type="text"
             className="form-input"
             value={siret}
             onChange={(e) => setSiret(e.target.value.replace(/[^\d\s]/g, "").slice(0, 17))}
-            placeholder="14 chiffres"
+            placeholder="14 chiffres (SIRET) ou 9 (SIREN)"
             style={{ fontFamily: "monospace", letterSpacing: 1 }}
           />
           {lookup && lookup.company && (
@@ -117,7 +122,7 @@ function InviteForm({ token, firm, onBack }) {
               ✅ Entreprise trouvée sur IO BILL : <strong>{lookup.company.legal_name}</strong>
             </div>
           )}
-          {siret.replace(/\s/g, "").length === 14 && lookup && !lookup.company && (
+          {[9, 14].includes(siret.replace(/\s/g, "").length) && lookup && !lookup.company && (
             <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(212,168,67,0.1)", borderRadius: 6, fontSize: 12, color: "var(--gold)" }}>
               ℹ Aucun compte IO BILL trouvé. Le client recevra une invitation par email pour s'inscrire.
             </div>

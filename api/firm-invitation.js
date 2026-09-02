@@ -141,26 +141,45 @@ async function handleRequest(req, res) {
   console.log(`[firm-invitation] action=${action} user=${user.email}`);
 
   // ═══════════════════════════════════════════════════════════════════
+  // v8.54 — RAPPROCHEMENT SIRET / SIREN
+  // ═══════════════════════════════════════════════════════════════════
+  // Une société s'enregistre indifféremment avec son SIREN (9 chiffres) ou
+  // son SIRET (14 chiffres) — `isSiretOrSiren` l'autorise explicitement à
+  // l'inscription. Rapprocher les deux par égalité stricte échouait donc dès
+  // que l'un avait saisi le SIRET et l'autre le SIREN, alors qu'il s'agit de
+  // la même entité : les 9 premiers chiffres d'un SIRET SONT le SIREN.
+  //
+  // On tente donc l'égalité stricte, puis on retombe sur le SIREN.
+  const sirenOf = (value) => {
+    const digits = String(value || "").replace(/\D/g, "");
+    return digits.length >= 9 ? digits.slice(0, 9) : null;
+  };
+
+  async function findBySiretOrSiren(table, rawSiret, select) {
+    const clean = String(rawSiret || "").replace(/\s/g, "");
+    if (!clean) return null;
+
+    const exact = await sbSelect(table, { select, siret: `eq.${clean}`, limit: 1 });
+    if (exact && exact.length > 0) return exact[0];
+
+    const siren = sirenOf(clean);
+    if (!siren) return null;
+
+    // Un SIRET commence toujours par le SIREN : le préfixe identifie donc
+    // bien la même entité juridique, quel que soit l'établissement saisi.
+    const bySiren = await sbSelect(table, { select, siret: `like.${siren}*`, limit: 1 });
+    return (bySiren && bySiren.length > 0) ? bySiren[0] : null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // LOOKUP
   // ═══════════════════════════════════════════════════════════════════
   if (action === "lookup") {
     const { siret } = p;
     const result = { company: null, firm: null };
     if (siret) {
-      const cleanSiret = String(siret).replace(/\s/g, "");
-      const companies = await sbSelect("companies", {
-        select: "id,legal_name,siret,user_id",
-        siret: `eq.${cleanSiret}`,
-        limit: 1
-      });
-      if (companies && companies.length > 0) result.company = companies[0];
-
-      const firms = await sbSelect("accounting_firms", {
-        select: "id,name,siret,email",
-        siret: `eq.${cleanSiret}`,
-        limit: 1
-      });
-      if (firms && firms.length > 0) result.firm = firms[0];
+      result.company = await findBySiretOrSiren("companies", siret, "id,legal_name,siret,user_id");
+      result.firm = await findBySiretOrSiren("accounting_firms", siret, "id,name,siret,email");
     }
     return json(res, 200, result);
   }
@@ -190,14 +209,8 @@ async function handleRequest(req, res) {
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
 
-    // Chercher company
-    let existingCompany = null;
-    const companies = await sbSelect("companies", {
-      select: "id,legal_name,user_id",
-      siret: `eq.${cleanSiret}`,
-      limit: 1
-    });
-    if (companies && companies.length > 0) existingCompany = companies[0];
+    // Chercher company (SIRET exact, puis SIREN)
+    const existingCompany = await findBySiretOrSiren("companies", cleanSiret, "id,legal_name,user_id");
 
     // Vérifier doublons (2 requêtes séparées au lieu de or: compliqué)
     if (existingCompany) {
@@ -211,9 +224,12 @@ async function handleRequest(req, res) {
         return json(res, 409, { error: `Invitation existe déjà (${existingByCompany[0].status})` });
       }
     } else {
+      // v8.54 — Doublon détecté au SIREN : sans ça, inviter le même client
+      // une fois au SIRET puis une fois au SIREN créait deux invitations.
+      const siren = sirenOf(cleanSiret);
       const existingBySiret = await sbSelect("firm_client_links", {
         firm_id: `eq.${firm_id}`,
-        invited_siret: `eq.${cleanSiret}`,
+        invited_siret: siren ? `like.${siren}*` : `eq.${cleanSiret}`,
         status: "in.(pending,accepted)",
         limit: 1
       });
@@ -301,17 +317,15 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
 
-    const firms = await sbSelect("accounting_firms", {
-      siret: `eq.${cleanSiret}`,
-      select: "id,name,email",
-      limit: 1
-    });
-    if (!firms || firms.length === 0) {
-      return json(res, 404, { 
-        error: "Aucun cabinet IO BILL trouvé avec ce SIRET. Le cabinet doit d'abord créer son compte sur IO BILL." 
+    const existingFirm = await findBySiretOrSiren("accounting_firms", cleanSiret, "id,name,email,siret");
+    if (!existingFirm) {
+      return json(res, 404, {
+        error: "Aucun cabinet IO BILL trouvé avec ce numéro. Vérifiez le SIRET ou le SIREN "
+          + "auprès de votre comptable — et s'il n'a pas encore de compte IO BILL, "
+          + "c'est à lui de vous inviter depuis son espace cabinet.",
+        hint: "firm_not_found"
       });
     }
-    const existingFirm = firms[0];
 
     const existing = await sbSelect("firm_client_links", {
       firm_id: `eq.${existingFirm.id}`,
