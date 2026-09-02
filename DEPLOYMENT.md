@@ -352,6 +352,37 @@ Attention : les documents **déjà émis** gardent l'email figé dans leur
 `client_snapshot` au moment de l'émission. Modifier la fiche client ne change
 donc que les documents émis ensuite.
 
+### 8.3.septies Numéro de facture attribué à l'émission (v8.51)
+
+**Symptôme** : créer une facture, la supprimer sans l'émettre, en recréer une —
+la nouvelle prend le numéro suivant. `FAC-2026-0032` est perdue alors qu'elle
+n'a jamais été émise, et la suite des factures émises comporte un trou.
+
+**Cause** : `allocate_document_number` incrémentait `companies.invoice_next_seq`
+dès l'enregistrement du **brouillon**.
+
+**Correctif** (`migration_v8_51_numero_a_emission.sql`) : un brouillon reçoit un
+numéro provisoire `BROUILLON-xxxx`, tiré d'un compteur séparé
+(`companies.draft_next_seq`) qui ne touche pas la séquence légale. Le vrai
+numéro est attribué par `api/generate-facturx.js` au passage en « émise », dans
+le **même UPDATE** que le statut — donc couvert par le trigger de chaîne de
+hashs, qui hashe `NEW.number`.
+
+Conséquences :
+
+- la numérotation suit l'ordre d'**émission**, pas l'ordre de création : deux
+  brouillons en attente, le second émis en premier reçoit le plus petit numéro
+  (c'est la chronologie qu'exige la règle fiscale) ;
+- une facture qui porte déjà un vrai numéro (créée avant la v8.51, ou numéro
+  saisi à la main via `manual_numbering`) **garde le sien** à l'émission — lui
+  en réattribuer un créerait justement un trou ;
+- les trous **déjà créés** ne sont pas rattrapés : reculer le compteur
+  entrerait en collision avec les brouillons existants qui portent déjà de
+  vrais numéros.
+
+Les devis et les avoirs continuent d'être numérotés à la création — leur
+numérotation n'est pas contrainte de la même façon.
+
 ### 8.3.sexies Colonne `sent_at` manquante — documents bloqués en brouillon (v8.50)
 
 **Symptôme** : un devis envoyé par email restait « Brouillon », une facture
@@ -812,6 +843,7 @@ Test webhook : POST sur `/api/pdp-webhook` avec `{ "transmission_id": "...", "st
 - [ ] CRON_SECRET généré et stocké
 - [ ] `migration_v8_48_email_log.sql` exécutée (journal des envois)
 - [ ] `migration_v8_50_sent_at.sql` exécutée (sent_at sur quotes + invoices)
+- [ ] `migration_v8_51_numero_a_emission.sql` exécutée (numéro à l'émission)
 - [ ] Webhook Resend `email_events` créé + RESEND_EVENTS_WEBHOOK_SECRET posé
 - [ ] SPF / DKIM / DMARC verts dans Resend → Domains
 - [ ] Sentry/monitoring (optionnel mais recommandé)

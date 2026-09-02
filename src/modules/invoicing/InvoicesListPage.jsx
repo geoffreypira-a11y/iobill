@@ -5,7 +5,7 @@ import { subscribe } from "../../lib/realtime.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
-import { INVOICE_STATUSES, invoiceStatusBadge, isInvoiceOverdue } from "./invoiceHelpers.js";
+import { INVOICE_STATUSES, invoiceStatusBadge, isInvoiceOverdue, isProvisionalNumber } from "./invoiceHelpers.js";
 import { SkeletonTable } from "../../components/Skeleton.jsx";
 import { InvoiceEditorModal } from "./InvoiceEditorModal.jsx";
 import { ConfirmModal } from "../../components/ConfirmModal.jsx";
@@ -240,16 +240,18 @@ export function InvoicesListPage({ token, company }) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ invoice_id: inv.id, issue: true })
       });
+      const issued = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `Erreur ${r.status} lors de l'emission`);
+        throw new Error(issued.error || `Erreur ${r.status} lors de l'emission`);
       }
       capture("invoice_issued", { invoice_id: inv.id });
       // Sync TVA en arrière-plan (n'attend pas la réponse pour ne pas bloquer l'UI)
       syncVatCurrentPeriod(token, company);
       await refreshInvoices();
       setPendingIssue(null);
-      showToast(`Facture ${inv.number} émise et PDF Factur-X généré !`);
+      // v8.51 — le numéro légal est attribué à l'émission : on affiche celui
+      // que le serveur vient d'attribuer, pas le provisoire encore en mémoire.
+      showToast(`Facture ${issued.number || inv.number} émise et PDF Factur-X généré !`);
     } catch (e) {
       showToast(e.message || "Erreur émission", "error");
     }
@@ -774,7 +776,14 @@ export function InvoicesListPage({ token, company }) {
                 return (
                   <tr key={inv.id}>
                     <td className="mono">
-                      {inv.number || <span style={{ color: "var(--muted)" }}>—</span>}
+                      {inv.number
+                        ? (isProvisionalNumber(inv.number)
+                            ? <span style={{ color: "var(--muted)", fontStyle: "italic" }}
+                                    title="Numéro provisoire — le numéro définitif sera attribué à l'émission">
+                                {inv.number}
+                              </span>
+                            : inv.number)
+                        : <span style={{ color: "var(--muted)" }}>—</span>}
                       {isExternal && (
                         <span
                           title={`Facture créée et gérée depuis ${sourceLabel}. Lecture seule ici.`}
@@ -1006,7 +1015,9 @@ export function InvoicesListPage({ token, company }) {
           title="Émettre cette facture ?"
           message={
             <>
-              La facture <strong>{pendingIssue.number}</strong> sera émise et verrouillée :
+              {isProvisionalNumber(pendingIssue.number)
+                ? <>Cette facture recevra son <strong>numéro définitif</strong> à l'émission, puis sera verrouillée :</>
+                : <>La facture <strong>{pendingIssue.number}</strong> sera émise et verrouillée :</>}
               elle ne pourra plus être modifiée. Un PDF Factur-X conforme sera généré automatiquement.
               <br /><br />
               <em style={{ fontSize: 11, color: "var(--muted)" }}>

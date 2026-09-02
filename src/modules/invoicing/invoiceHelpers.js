@@ -35,3 +35,12 @@ export function paymentMethodLabel(method) {
     other:         "Autre"
   }[method] || method || "—");
 }
+
+// v8.51 — Numéro provisoire de brouillon.
+// Le numéro légal n'est attribué qu'à l'émission : tant que la facture est un
+// brouillon, elle porte un `BROUILLON-xxxx` qui ne consomme pas la séquence.
+export const PROVISIONAL_PREFIX = "BROUILLON-";
+
+export function isProvisionalNumber(number) {
+  return String(number || "").startsWith(PROVISIONAL_PREFIX);
+}
