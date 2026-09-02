@@ -285,6 +285,27 @@ async function handleRequest(req, res) {
 
     if (!link) return json(res, 500, { error: "Échec création invitation (DB)" });
 
+    // v8.57 — Notification dans la cloche du client. `notifications_firm` est
+    // écrite depuis toujours mais n'est lue par AUCUN écran : côté client, seul
+    // l'email et la bannière signalaient l'invitation. On alimente donc aussi
+    // la table `notifications`, celle que lit la cloche.
+    //
+    // email_sent_at est renseigné volontairement : l'email d'invitation part
+    // juste en dessous, et le cron ne doit pas en envoyer un second.
+    if (existingCompany?.id) {
+      await sbInsert("notifications", {
+        company_id: existingCompany.id,
+        notif_type: "firm_invitation",
+        title: `${firmName} souhaite gérer votre comptabilité`,
+        body: message || "Acceptez ou refusez depuis « Mon comptable ».",
+        url: "/settings/firm-link",
+        severity: "info",
+        icon: "🤝",
+        email_sent_at: new Date().toISOString(),
+        metadata: { firm_id, firm_name: firmName }
+      });
+    }
+
     // Notification in-app si client déjà inscrit
     if (existingCompany?.user_id) {
       await sbInsert("notifications_firm", {
