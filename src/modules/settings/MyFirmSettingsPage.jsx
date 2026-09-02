@@ -8,6 +8,8 @@ import { fmtDate } from "../../lib/helpers.js";
  */
 export function MyFirmSettingsPage({ token, user, company }) {
   const [links, setLinks] = useState([]);
+  // v8.55 — Demandes vers un cabinet pas encore inscrit sur IO BILL.
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
 
@@ -45,10 +47,39 @@ export function MyFirmSettingsPage({ token, user, company }) {
       out.push({ ...l, _firm: firm });
     }
     setLinks(out);
+
+    // v8.55 — Demandes vers un cabinet pas encore inscrit sur IO BILL.
+    // Elles ne sont pas dans firm_client_links (firm_id y est NOT NULL) :
+    // elles deviendront un vrai lien quand le cabinet créera son compte.
+    if (company?.id) {
+      const reqs = await sb.select(token, "firm_invitation_requests", {
+        filter: `company_id=eq.${company.id}&status=eq.pending`,
+        select: "*",
+        order: "created_at.desc",
+        limit: 20
+      });
+      setRequests(Array.isArray(reqs) ? reqs : []);
+    }
+
     setLoading(false);
   }
 
   useEffect(() => { load(); }, [token, user?.email, company?.id]);
+
+  async function cancelRequest(requestId) {
+    if (!confirm("Annuler cette demande ?")) return;
+    const r = await fetch("/api/firm-invitation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: "cancel_request", payload: { request_id: requestId } })
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || "Échec de l'annulation");
+      return;
+    }
+    load();
+  }
 
   async function action(linkId, act) {
     const labels = { accept: "Accepter ce cabinet ?", refuse: "Refuser cette invitation ?", revoke: "Rompre la liaison avec ce cabinet ?" };
@@ -94,6 +125,32 @@ export function MyFirmSettingsPage({ token, user, company }) {
           </div>
           {pendingFromFirm.map((l) => (
             <PendingCard key={l.id} link={l} onAccept={() => action(l.id, "accept")} onRefuse={() => action(l.id, "refuse")} />
+          ))}
+        </div>
+      )}
+
+      {requests.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={sectionTitleStyle}>✉️ Demandes en attente d'inscription</h3>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+            Ces cabinets n'ont pas encore de compte IO BILL. Nous les avons invités
+            à en créer un : votre demande leur sera présentée automatiquement dès
+            leur inscription.
+          </div>
+          {requests.map((r) => (
+            <div key={r.id} className="card card-pad" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  SIRET {r.invited_siret}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {r.invited_email} · Demande envoyée le {fmtDate(r.created_at)}
+                </div>
+              </div>
+              <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => cancelRequest(r.id)}>
+                Annuler
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -257,7 +314,10 @@ function InviteFirmModal({ token, company, onClose, onSuccess }) {
   async function submit() {
     setErr(null);
     const cleanSiret = siret.replace(/\s/g, "");
-    if (cleanSiret.length !== 14) { setErr("Le SIRET doit contenir 14 chiffres"); return; }
+    if (cleanSiret.length !== 14 && cleanSiret.length !== 9) {
+      setErr("Saisissez un SIRET (14 chiffres) ou un SIREN (9 chiffres)");
+      return;
+    }
     if (!email.includes("@")) { setErr("Email invalide"); return; }
     setLoading(true);
     const r = await fetch("/api/firm-invitation", {
@@ -271,6 +331,10 @@ function InviteFirmModal({ token, company, onClose, onSuccess }) {
     const data = await r.json();
     setLoading(false);
     if (!r.ok) { setErr(data.error || "Échec invitation"); return; }
+    // v8.55 — Cabinet pas encore inscrit : la demande est enregistrée et lui
+    // sera présentée à son inscription. On le dit explicitement, sinon
+    // l'utilisateur croit que rien ne s'est passé.
+    if (data.pending_firm_signup && data.message) alert(data.message);
     onSuccess();
   }
 
@@ -279,17 +343,18 @@ function InviteFirmModal({ token, company, onClose, onSuccess }) {
       <div className="card card-pad" style={modalBox} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ margin: "0 0 12px 0", fontSize: 16 }}>Inviter mon cabinet comptable</h3>
         <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
-          Le cabinet doit déjà avoir un compte IO BILL pour pouvoir vous gérer.
-          Demandez-lui son SIRET et son email.
+          Demandez à votre comptable son SIRET (ou son SIREN) et son email.
+          S'il n'a pas encore de compte IO BILL, nous l'inviterons à en créer un
+          et votre demande lui sera rattachée automatiquement.
         </p>
 
-        <label className="form-label">SIRET du cabinet *</label>
+        <label className="form-label">SIRET ou SIREN du cabinet *</label>
         <input
           type="text"
           className="form-input"
           value={siret}
           onChange={(e) => setSiret(e.target.value.replace(/[^\d\s]/g, "").slice(0, 17))}
-          placeholder="14 chiffres"
+          placeholder="14 chiffres (SIRET) ou 9 (SIREN)"
           style={{ fontFamily: "monospace", marginBottom: 12 }}
         />
 

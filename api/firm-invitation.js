@@ -141,26 +141,45 @@ async function handleRequest(req, res) {
   console.log(`[firm-invitation] action=${action} user=${user.email}`);
 
   // ═══════════════════════════════════════════════════════════════════
+  // v8.54 — RAPPROCHEMENT SIRET / SIREN
+  // ═══════════════════════════════════════════════════════════════════
+  // Une société s'enregistre indifféremment avec son SIREN (9 chiffres) ou
+  // son SIRET (14 chiffres) — `isSiretOrSiren` l'autorise explicitement à
+  // l'inscription. Rapprocher les deux par égalité stricte échouait donc dès
+  // que l'un avait saisi le SIRET et l'autre le SIREN, alors qu'il s'agit de
+  // la même entité : les 9 premiers chiffres d'un SIRET SONT le SIREN.
+  //
+  // On tente donc l'égalité stricte, puis on retombe sur le SIREN.
+  const sirenOf = (value) => {
+    const digits = String(value || "").replace(/\D/g, "");
+    return digits.length >= 9 ? digits.slice(0, 9) : null;
+  };
+
+  async function findBySiretOrSiren(table, rawSiret, select) {
+    const clean = String(rawSiret || "").replace(/\s/g, "");
+    if (!clean) return null;
+
+    const exact = await sbSelect(table, { select, siret: `eq.${clean}`, limit: 1 });
+    if (exact && exact.length > 0) return exact[0];
+
+    const siren = sirenOf(clean);
+    if (!siren) return null;
+
+    // Un SIRET commence toujours par le SIREN : le préfixe identifie donc
+    // bien la même entité juridique, quel que soit l'établissement saisi.
+    const bySiren = await sbSelect(table, { select, siret: `like.${siren}*`, limit: 1 });
+    return (bySiren && bySiren.length > 0) ? bySiren[0] : null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // LOOKUP
   // ═══════════════════════════════════════════════════════════════════
   if (action === "lookup") {
     const { siret } = p;
     const result = { company: null, firm: null };
     if (siret) {
-      const cleanSiret = String(siret).replace(/\s/g, "");
-      const companies = await sbSelect("companies", {
-        select: "id,legal_name,siret,user_id",
-        siret: `eq.${cleanSiret}`,
-        limit: 1
-      });
-      if (companies && companies.length > 0) result.company = companies[0];
-
-      const firms = await sbSelect("accounting_firms", {
-        select: "id,name,siret,email",
-        siret: `eq.${cleanSiret}`,
-        limit: 1
-      });
-      if (firms && firms.length > 0) result.firm = firms[0];
+      result.company = await findBySiretOrSiren("companies", siret, "id,legal_name,siret,user_id");
+      result.firm = await findBySiretOrSiren("accounting_firms", siret, "id,name,siret,email");
     }
     return json(res, 200, result);
   }
@@ -190,14 +209,8 @@ async function handleRequest(req, res) {
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
 
-    // Chercher company
-    let existingCompany = null;
-    const companies = await sbSelect("companies", {
-      select: "id,legal_name,user_id",
-      siret: `eq.${cleanSiret}`,
-      limit: 1
-    });
-    if (companies && companies.length > 0) existingCompany = companies[0];
+    // Chercher company (SIRET exact, puis SIREN)
+    const existingCompany = await findBySiretOrSiren("companies", cleanSiret, "id,legal_name,user_id");
 
     // Vérifier doublons (2 requêtes séparées au lieu de or: compliqué)
     if (existingCompany) {
@@ -211,9 +224,12 @@ async function handleRequest(req, res) {
         return json(res, 409, { error: `Invitation existe déjà (${existingByCompany[0].status})` });
       }
     } else {
+      // v8.54 — Doublon détecté au SIREN : sans ça, inviter le même client
+      // une fois au SIRET puis une fois au SIREN créait deux invitations.
+      const siren = sirenOf(cleanSiret);
       const existingBySiret = await sbSelect("firm_client_links", {
         firm_id: `eq.${firm_id}`,
-        invited_siret: `eq.${cleanSiret}`,
+        invited_siret: siren ? `like.${siren}*` : `eq.${cleanSiret}`,
         status: "in.(pending,accepted)",
         limit: 1
       });
@@ -301,17 +317,74 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     const cleanSiret = String(siret).replace(/\s/g, "");
     const cleanEmail = String(email).trim().toLowerCase();
 
-    const firms = await sbSelect("accounting_firms", {
-      siret: `eq.${cleanSiret}`,
-      select: "id,name,email",
-      limit: 1
-    });
-    if (!firms || firms.length === 0) {
-      return json(res, 404, { 
-        error: "Aucun cabinet IO BILL trouvé avec ce SIRET. Le cabinet doit d'abord créer son compte sur IO BILL." 
+    const existingFirm = await findBySiretOrSiren("accounting_firms", cleanSiret, "id,name,email,siret");
+
+    // v8.55 — Cabinet pas encore inscrit : on enregistre la demande et on
+    // l'invite à créer son compte. Elle deviendra un vrai lien à son
+    // inscription (trigger attach_pending_firm_requests).
+    //
+    // Sans ça, seul le sens cabinet → client fonctionnait : firm_client_links
+    // impose un firm_id NOT NULL, on ne peut donc pas y stocker une invitation
+    // vers un cabinet qui n'existe pas.
+    if (!existingFirm) {
+      const siren = sirenOf(cleanSiret);
+
+      const alreadyRequested = await sbSelect("firm_invitation_requests", {
+        company_id: `eq.${company_id}`,
+        status: "eq.pending",
+        select: "id,invited_siret",
+        limit: 20
+      });
+      const duplicate = (alreadyRequested || []).some(
+        (r) => sirenOf(r.invited_siret) === siren
+      );
+      if (duplicate) {
+        return json(res, 409, {
+          error: "Vous avez déjà une demande en attente pour ce cabinet."
+        });
+      }
+
+      const request = await sbInsert("firm_invitation_requests", {
+        company_id,
+        invited_siret: cleanSiret,
+        invited_email: cleanEmail,
+        message: (message || "").slice(0, 500),
+        status: "pending"
+      });
+      if (!request) {
+        return json(res, 500, {
+          error: "Échec d'enregistrement de la demande. Si la migration v8.55 n'a pas "
+            + "été exécutée, lancez migration_v8_55_demandes_cabinet.sql dans Supabase."
+        });
+      }
+
+      await sendEmail({
+        to: cleanEmail,
+        subject: `${clientCompany.legal_name} souhaite vous confier sa comptabilité sur IO BILL`,
+        html: `<div style="font-family: -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
+<h2 style="color: #d4a843;">🦉 IO BILL · Demande de rattachement</h2>
+<p>Bonjour,</p>
+<p><strong>${clientCompany.legal_name}</strong>${clientCompany.siret ? ` (SIRET ${clientCompany.siret})` : ""} souhaite vous rattacher comme cabinet comptable sur IO BILL.</p>
+${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12px; margin: 16px 0; color: #555;">${String(message).replace(/</g, "&lt;")}</blockquote>` : ""}
+<p>Votre cabinet n'a pas encore de compte IO BILL. Créez-le avec le SIRET
+<strong>${cleanSiret}</strong> : la demande de ce client vous attendra
+automatiquement dans votre espace cabinet.</p>
+<p style="text-align: center; margin: 28px 0;">
+<a href="${APP_URL}/firm/onboarding" style="background: #d4a843; color: #0b0c10; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600;">Créer mon espace cabinet</a>
+</p>
+<p style="font-size: 12px; color: #888;">Le mode Comptable est gratuit pour consulter les documents de vos clients.</p>
+<p style="font-size: 11px; color: #aaa;">— IO BILL · app.iobill.online</p>
+</div>`
+      });
+
+      return json(res, 200, {
+        ok: true,
+        pending_firm_signup: true,
+        request: Array.isArray(request) ? request[0] : request,
+        message: "Ce cabinet n'a pas encore de compte IO BILL. Nous lui avons envoyé "
+          + "une invitation : votre demande sera automatiquement rattachée dès son inscription."
       });
     }
-    const existingFirm = firms[0];
 
     const existing = await sbSelect("firm_client_links", {
       firm_id: `eq.${existingFirm.id}`,
@@ -373,6 +446,44 @@ ${message ? `<blockquote style="border-left: 3px solid #d4a843; padding-left: 12
     });
 
     return json(res, 200, { ok: true, link: link[0] });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CANCEL REQUEST — annuler une demande vers un cabinet non inscrit
+  // ═══════════════════════════════════════════════════════════════════
+  if (action === "cancel_request") {
+    const { request_id } = p;
+    if (!request_id) return json(res, 400, { error: "request_id requis" });
+
+    const rows = await sbSelect("firm_invitation_requests", {
+      id: `eq.${request_id}`,
+      select: "id,company_id,status",
+      limit: 1
+    });
+    const request = rows?.[0];
+    if (!request) return json(res, 404, { error: "Demande introuvable" });
+
+    // La demande doit appartenir à une company de l'utilisateur.
+    const owned = await sbSelect("companies", {
+      id: `eq.${request.company_id}`,
+      user_id: `eq.${user.id}`,
+      select: "id",
+      limit: 1
+    });
+    if (!owned || owned.length === 0) {
+      return json(res, 403, { error: "Cette demande ne vous appartient pas" });
+    }
+    if (request.status !== "pending") {
+      return json(res, 400, { error: `Demande déjà ${request.status}` });
+    }
+
+    const updated = await sbUpdate("firm_invitation_requests", `id=eq.${request_id}`, {
+      status: "canceled",
+      canceled_at: new Date().toISOString()
+    });
+    if (!updated) return json(res, 500, { error: "Échec de l'annulation" });
+
+    return json(res, 200, { ok: true });
   }
 
   // ═══════════════════════════════════════════════════════════════════
