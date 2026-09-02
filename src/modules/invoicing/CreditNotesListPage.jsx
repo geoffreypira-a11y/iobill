@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
+import { sourceAppLabel } from "../../lib/sourceApps.js";
 import { Icon } from "../../components/Icon.jsx";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
 import { snapshotDisplayName } from "../../lib/snapshots.js";
@@ -177,9 +178,8 @@ export function CreditNotesListPage({ token, company }) {
                 // v8.49.10 — Badge "🚗 IO CAR" sur les avoirs venus d'une app source externe.
                 // Cohérent avec l'affichage des factures externes dans InvoicesListPage.
                 const isExternal = !!c.external_source && c.external_source !== "iobill";
-                const sourceLabel = c.external_source === "iocar" ? "IO CAR"
-                                  : c.external_source === "iobtp" ? "IO BTP"
-                                  : String(c.external_source || "").toUpperCase();
+                const sourceLabel = sourceAppLabel(c.external_source)
+                                  || String(c.external_source || "").toUpperCase();
                 return (
                   <tr key={c.id} onClick={() => navigate(`/credit-notes/${c.id}`)} style={{ cursor: "pointer" }}>
                     <td className="mono">

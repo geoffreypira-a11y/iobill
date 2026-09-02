@@ -16,6 +16,7 @@ import { NotifBadge } from "../../components/NotifBadge.jsx";
 import { useSignalCounts } from "../../lib/useSignalCounts.js";
 import { EmailTrackingModal } from "../../components/EmailTrackingModal.jsx";
 import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
+import { sourceAppLabel } from "../../lib/sourceApps.js";
 
 export function InvoicesListPage({ token, company }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -781,9 +782,8 @@ export function InvoicesListPage({ token, company }) {
                 // sont en LECTURE SEULE côté IOBILL. Les modifs se font dans
                 // l'app source pour garantir la cohérence.
                 const isExternal = !!inv.external_source && inv.external_source !== "iobill";
-                const sourceLabel = inv.external_source === "iocar" ? "IO CAR"
-                                  : inv.external_source === "iobtp" ? "IO BTP"
-                                  : String(inv.external_source || "").toUpperCase();
+                const sourceLabel = sourceAppLabel(inv.external_source)
+                                  || String(inv.external_source || "").toUpperCase();
 
                 const canEdit = !isExternal && inv.status === "draft";
                 const canIssue = !isExternal && inv.status === "draft";

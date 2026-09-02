@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { sourceAppLabel } from "../lib/sourceApps.js";
 import { NavLink, useNavigate } from "react-router-dom";
 import { LogoFull } from "./Logo.jsx";
 import { Icon } from "./Icon.jsx";
@@ -333,19 +334,14 @@ export function Sidebar({ token, company, user, onSignOut }) {
               <div className="userbox-info">
                 <div className="userbox-name">{company?.legal_name || user?.email || "—"}</div>
                 <div className="userbox-plan">
-                  {/* v8.49.8 — Si le compte est lié à une app métier (IOCAR, IOBTP…),
-                      on affiche "Pro · IO CAR" au lieu du prix, car ces users ne payent
-                      pas 14,90 € : leur accès IOBILL est inclus dans leur abonnement à
-                      l'app source (IOCAR, IOBTP...). Extensible : suffit d'ajouter des
-                      entrées au mapping SOURCE_LABELS pour de futures apps. */}
+                  {/* v8.49.8 — Si le compte est lié à une app métier (IOCAR, IOBTP,
+                      IOBEAUTY…), on affiche "Pro · IO CAR" au lieu du prix : ces users
+                      ne payent pas 14,90 €, leur accès IOBILL est inclus dans leur
+                      abonnement à l'app source.
+                      v8.60 — Le mapping vit dans lib/sourceApps.js : ajouter une app
+                      métier s'y fait en une ligne, pour toute l'application. */}
                   {(() => {
-                    const SOURCE_LABELS = {
-                      iocar: "IO CAR",
-                      iobtp: "IO BTP",
-                      ioinstitute: "IO INSTITUTE"
-                    };
-                    const sourceApp = company?.source_app;
-                    const sourceLabel = sourceApp && sourceApp !== "iobill" ? SOURCE_LABELS[sourceApp] : null;
+                    const sourceLabel = sourceAppLabel(company?.source_app);
                     if (sourceLabel) return `Pro · ${sourceLabel}`;
                     if (company?.sub_status === "active") return "Pro · 14,90€";
                     if (company?.sub_status === "trialing") return "Essai gratuit";
