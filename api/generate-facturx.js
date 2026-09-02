@@ -310,6 +310,24 @@ async function handleRequest(req, res) {
           });
         }
         Object.assign(doc, updated[0]);
+
+        // v8.59 — Émettre une facture au nom d'un client le fait sortir du
+        // stade prospect : c'est le moment où la relation devient commerciale.
+        // On ne touche ni aux clients VIP ni à ceux déjà marqués « client »,
+        // pour ne pas écraser une qualification saisie à la main.
+        // Best-effort : une erreur ici ne doit pas faire échouer l'émission.
+        if (doc.client_id) {
+          try {
+            const cli = await sbAdmin.selectOne(
+              "clients", `id=eq.${doc.client_id}&company_id=eq.${company.id}`, "id,status"
+            );
+            if (cli && ["prospect", "quote_sent", "negotiation", "inactive"].includes(cli.status)) {
+              await sbAdmin.update("clients", `id=eq.${cli.id}`, { status: "customer" });
+            }
+          } catch (e) {
+            console.warn("[generate-facturx] promotion client impossible:", e?.message);
+          }
+        }
       } catch (e) {
         return json(res, 500, { error: "Erreur SQL émission : " + (e.message || "inconnue") });
       }

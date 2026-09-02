@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
 import { useNavigate } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
@@ -16,6 +17,11 @@ export function ClientsListPage({ token, company, setCompany }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // v8.59 — Filtre Société / Particulier. Une association déclarée est une
+  // personne morale : elle se range donc du côté « Société ».
+  const [typeFilter, setTypeFilter] = useState("all"); // all | company | individual
+  // Tri par défaut : nom croissant — un répertoire de clients se lit de A à Z.
+  const { sort, toggleSort } = useTableSort("iobill:clients:sort", { key: "name", dir: "asc" });
   const [view, setView] = useState(() => sanitizeView(company?.ui_prefs?.crm_view) || sanitizeView(safeLocal(VIEW_KEY)) || "cards");
   const [editing, setEditing] = useState(null);  // null | "add" | client
   const [confirmDel, setConfirmDel] = useState(null);
@@ -62,7 +68,7 @@ export function ClientsListPage({ token, company, setCompany }) {
   // Filtre + recherche
   const filtered = useMemo(() => {
     const s = search.toLowerCase().trim();
-    return clients.filter((c) => {
+    const rows = clients.filter((c) => {
       const matchS = !s || (
         (c.legal_name || "").toLowerCase().includes(s) ||
         (c.first_name || "").toLowerCase().includes(s) ||
@@ -71,15 +77,31 @@ export function ClientsListPage({ token, company, setCompany }) {
         (c.phone || "").toLowerCase().includes(s)
       );
       const matchF = statusFilter === "all" || c.status === statusFilter;
-      return matchS && matchF;
+      const matchT = typeFilter === "all" || (c.client_type || "company") === typeFilter;
+      return matchS && matchF && matchT;
     });
-  }, [clients, search, statusFilter]);
+
+    // Le tri s'applique aussi à la vue capsules, pour que les deux vues
+    // présentent les clients dans le même ordre.
+    const valueOf = (c, key) => {
+      switch (key) {
+        case "email":   return (c.email || "").toLowerCase();
+        case "status":  return CLIENT_STATUTS[c.status]?.order ?? 99;
+        case "unpaid":  return stats[c.id]?.unpaid_cents ?? 0;
+        case "score":   return ["fast", "normal", "slow", "risky"].indexOf(c.payment_score || "normal");
+        default:        return displayName(c).toLowerCase();
+      }
+    };
+    return sortRows(rows, sort, valueOf, (c) => displayName(c).toLowerCase());
+  }, [clients, search, statusFilter, typeFilter, sort, stats]);
 
   // Stats globales pour le sub-header
   const counts = useMemo(() => {
     const c = { all: clients.length };
     Object.keys(CLIENT_STATUTS).forEach((k) => { c[k] = 0; });
     clients.forEach((cl) => { c[cl.status] = (c[cl.status] || 0) + 1; });
+    c.company = clients.filter((cl) => (cl.client_type || "company") === "company").length;
+    c.individual = clients.filter((cl) => cl.client_type === "individual").length;
     return c;
   }, [clients]);
 
@@ -160,6 +182,23 @@ export function ClientsListPage({ token, company, setCompany }) {
               ) : null
             ))}
         </div>
+        {/* v8.59 — Filtre par nature juridique. Masqué s'il n'y a qu'un seul
+            type de clients : un onglet qui ne filtre rien n'aide personne. */}
+        {counts.company > 0 && counts.individual > 0 && (
+          <div className="tabs" style={{ margin: 0 }}>
+            <button className={"tab" + (typeFilter === "all" ? " active" : "")}
+              onClick={() => setTypeFilter("all")}>Tous types</button>
+            <button className={"tab" + (typeFilter === "company" ? " active" : "")}
+              onClick={() => setTypeFilter("company")} title="Sociétés, associations et autres personnes morales">
+              🏢 Sociétés ({counts.company})
+            </button>
+            <button className={"tab" + (typeFilter === "individual" ? " active" : "")}
+              onClick={() => setTypeFilter("individual")}>
+              👤 Particuliers ({counts.individual})
+            </button>
+          </div>
+        )}
+
         <div style={{ marginLeft: "auto" }}>
           <div className="tabs" style={{ margin: 0 }}>
             <button className={"tab" + (view === "cards" ? " active" : "")} onClick={() => setViewPersisted("cards")} title="Vue capsules">⊞</button>
@@ -173,9 +212,9 @@ export function ClientsListPage({ token, company, setCompany }) {
         <SkeletonTable rows={6} cols={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          isFiltered={search || statusFilter !== "all"}
+          isFiltered={search || statusFilter !== "all" || typeFilter !== "all"}
           onCreate={() => setEditing("add")}
-          onClear={() => { setSearch(""); setStatusFilter("all"); }}
+          onClear={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); }}
         />
       ) : view === "cards" ? (
         <ClientsCards
@@ -188,6 +227,8 @@ export function ClientsListPage({ token, company, setCompany }) {
       ) : (
         <ClientsTable
           clients={filtered}
+          sort={sort}
+          onSort={toggleSort}
           stats={stats}
           onOpen={(c) => navigate(`/clients/${c.id}`)}
           onEdit={(c) => setEditing(c)}
@@ -299,17 +340,17 @@ function ClientsCards({ clients, stats, onOpen, onEdit, onDelete }) {
 }
 
 /* ─── Vue liste ────────────────────────────────────────────── */
-function ClientsTable({ clients, stats, onOpen, onEdit, onDelete }) {
+function ClientsTable({ clients, stats, onOpen, onEdit, onDelete, sort, onSort }) {
   return (
     <div className="card" style={{ overflow: "hidden" }}>
       <table>
         <thead>
           <tr>
-            <th>Client</th>
-            <th>Email</th>
-            <th>Statut</th>
-            <th style={{ textAlign: "right" }}>Encours</th>
-            <th>Score</th>
+            <SortableTh label="Client" sortKey="name" sort={sort} onSort={onSort} />
+            <SortableTh label="Email" sortKey="email" sort={sort} onSort={onSort} />
+            <SortableTh label="Statut" sortKey="status" sort={sort} onSort={onSort} />
+            <SortableTh label="Encours" sortKey="unpaid" sort={sort} onSort={onSort} align="right" />
+            <SortableTh label="Score" sortKey="score" sort={sort} onSort={onSort} />
             <th></th>
           </tr>
         </thead>
