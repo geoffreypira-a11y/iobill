@@ -69,6 +69,39 @@ DELETE FROM public.accounting_firms
 DROP TABLE _firms_a_supprimer;
 
 -- ───────────────────────────────────────────────────────────
+-- 1bis) Garde-fou : doublons NON automatiquement résolubles
+-- ───────────────────────────────────────────────────────────
+-- Si deux cabinets d'un même SIREN portent TOUS LES DEUX des clients, le
+-- nettoyage ci-dessus n'en supprime aucun — et l'index unique de l'étape 2
+-- échouerait, laissant la migration à mi-chemin. On s'arrête ici avec un
+-- message explicite : ces cas demandent une FUSION, décrite dans le README de
+-- la migration, et non une suppression.
+DO $$
+DECLARE
+  v_sirens TEXT;
+BEGIN
+  SELECT string_agg(siren, ', ') INTO v_sirens
+    FROM (
+      SELECT LEFT(REGEXP_REPLACE(siret, '\D', '', 'g'), 9) AS siren
+        FROM public.accounting_firms
+       WHERE siret IS NOT NULL
+         AND LENGTH(REGEXP_REPLACE(siret, '\D', '', 'g')) >= 9
+       GROUP BY 1
+      HAVING COUNT(*) > 1
+    ) d;
+
+  IF v_sirens IS NOT NULL THEN
+    RAISE EXCEPTION
+      'Doublons de cabinet restants sur le(s) SIREN suivant(s) : %. '
+      'Plusieurs de ces cabinets portent des clients : il faut les FUSIONNER '
+      '(déplacer firm_client_links, firm_members, firm_signals, firm_messages, '
+      'firm_threads, firm_client_reminders, firm_invitation_requests, '
+      'notifications_firm et support_tickets vers le cabinet conservé) avant de '
+      'relancer cette migration.', v_sirens;
+  END IF;
+END $$;
+
+-- ───────────────────────────────────────────────────────────
 -- 2) Prévention — un seul cabinet par SIREN
 -- ───────────────────────────────────────────────────────────
 -- L'unicité porte sur le SIREN (9 chiffres) et non sur le SIRET : un cabinet
