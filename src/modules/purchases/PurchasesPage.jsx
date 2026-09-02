@@ -7,6 +7,7 @@ import { fmtEUR, fmtDate, todayISO, toCents, fromCents, uid } from "../../lib/he
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 import { PaInboxSection } from "./PaInboxSection.jsx";
+import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
 
 const PURCHASE_STATUTS = {
   pending:   { label: "En attente",        cls: "badge-muted",  icon: "📥" },
@@ -44,6 +45,7 @@ export function PurchasesPage({ token, company }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active"); // "active" | "all" | <status>
+  const { sort, toggleSort } = useTableSort("iobill:purchases:sort", { key: "issue_date", dir: "desc" });
   const [openMenu, setOpenMenu] = useState(null); // id row pour le menu kebab
   const [menuPos, setMenuPos] = useState(null);
   const [actionLoading, setActionLoading] = useState(null); // id en cours d'action
@@ -99,16 +101,34 @@ export function PurchasesPage({ token, company }) {
     setTimeout(() => setToast(null), 2500);
   }
 
-  // ── Filtrage ──
-  const filtered = useMemo(() => purchases.filter((p) => {
+  // ── Filtrage + tri ──
+  const filtered = useMemo(() => {
     const s = search.toLowerCase().trim();
-    const matchS = !s || (p.vendor_name || "").toLowerCase().includes(s) || (p.number || "").toLowerCase().includes(s);
-    let matchF = true;
-    if (statusFilter === "all") matchF = true;
-    else if (statusFilter === "active") matchF = ["pending", "validated", "partial"].includes(p.status);
-    else matchF = p.status === statusFilter;
-    return matchS && matchF;
-  }), [purchases, search, statusFilter]);
+    const rows = purchases.filter((p) => {
+      const matchS = !s || (p.vendor_name || "").toLowerCase().includes(s) || (p.number || "").toLowerCase().includes(s);
+      let matchF = true;
+      if (statusFilter === "all") matchF = true;
+      else if (statusFilter === "active") matchF = ["pending", "validated", "partial"].includes(p.status);
+      else matchF = p.status === statusFilter;
+      return matchS && matchF;
+    });
+
+    // v8.53 — Tri par colonne, date de facture décroissante par défaut.
+    const statusOrder = Object.keys(PURCHASE_STATUTS);
+    const valueOf = (p, key) => {
+      switch (key) {
+        case "vendor":   return (p.vendor_name || "").toLowerCase();
+        case "number":   return p.number || "";
+        case "category": return (p.accounting_code || p.category || "").toLowerCase();
+        case "ht":       return p.subtotal_ht_cents ?? 0;
+        case "vat":      return p.vat_total_cents ?? 0;
+        case "ttc":      return p.total_ttc_cents ?? 0;
+        case "status":   return statusOrder.indexOf(p.status);
+        default:         return p.issue_date || "";
+      }
+    };
+    return sortRows(rows, sort, valueOf, (p) => p.vendor_name || "");
+  }, [purchases, search, statusFilter, sort]);
 
   // ── Stats header ──
   const totalHT = useMemo(() => purchases
@@ -330,14 +350,14 @@ export function PurchasesPage({ token, company }) {
           <table>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Fournisseur</th>
-                <th>N° doc</th>
-                <th>Catégorie</th>
-                <th style={{ textAlign: "right" }}>HT</th>
-                <th style={{ textAlign: "right" }}>TVA</th>
-                <th style={{ textAlign: "right" }}>TTC</th>
-                <th>Statut</th>
+                <SortableTh label="Date" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Fournisseur" sortKey="vendor" sort={sort} onSort={toggleSort} />
+                <SortableTh label="N° doc" sortKey="number" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Catégorie" sortKey="category" sort={sort} onSort={toggleSort} />
+                <SortableTh label="HT" sortKey="ht" sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TVA" sortKey="vat" sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TTC" sortKey="ttc" sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
