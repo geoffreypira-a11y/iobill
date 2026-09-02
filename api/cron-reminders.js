@@ -28,7 +28,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { sbAdmin, json, authenticate } from "./_lib/supabase-admin.js";
-import { sendTrackedEmail, htmlToText, logEmail } from "./_lib/email-log.js";
+import { sendTrackedEmail, htmlToText, logEmail, parseRecipients } from "./_lib/email-log.js";
 import { notifyAdmin } from "./_lib/monitor.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -466,7 +466,9 @@ async function sendReminderEmail(inv, company, subject, message, source, templat
     .replace(/.*<([^>]+)>.*/, "$1")
     .trim();
 
-  const recipientEmail = inv.client_snapshot?.email;
+  // v8.49 — plusieurs destinataires possibles ("compta@x.fr ; direction@x.fr")
+  const { to: recipientEmail, cc: ccEmails, all: allRecipients } =
+    parseRecipients(inv.client_snapshot?.email);
   const supplierName = inv.company_snapshot?.legal_name || company?.legal_name || "IO BILL";
 
   // Pas d'email sur la fiche client → on trace le motif au lieu d'échouer en
@@ -480,7 +482,7 @@ async function sendReminderEmail(inv, company, subject, message, source, templat
       document_number: inv.number,
       subject,
       status: "skipped",
-      error: "missing_recipient_email — aucune adresse email sur la fiche client",
+      error: "missing_recipient_email — aucune adresse email valide sur la fiche client",
       reminder_template: template,
       trigger_source: source
     });
@@ -509,6 +511,7 @@ async function sendReminderEmail(inv, company, subject, message, source, templat
   const payload = {
     from: `${supplierName.replace(/[<>"\\]/g, "").trim()} <${FROM_EMAIL}>`,
     to: [recipientEmail],
+    ...(ccEmails.length ? { cc: ccEmails } : {}),
     subject,
     html,
     // Partie texte : indispensable pour ne pas tomber en spam.
@@ -531,7 +534,7 @@ async function sendReminderEmail(inv, company, subject, message, source, templat
     trigger_source: source
   });
 
-  return { ok: out.ok, error: out.error, recipient: recipientEmail };
+  return { ok: out.ok, error: out.error, recipient: allRecipients.join(", ") };
 }
 
 function formatEUR(cents) {

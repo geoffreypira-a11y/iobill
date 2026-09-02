@@ -41,6 +41,22 @@ const STATUS_RANK = {
 };
 
 /**
+ * v8.49 — Un champ email de fiche client peut contenir PLUSIEURS adresses,
+ * séparées par ";" , "," ou un retour à la ligne.
+ * La première est le destinataire principal (to), les suivantes sont mises
+ * en copie (cc).
+ * @returns {{to: string|null, cc: string[], all: string[]}}
+ */
+export function parseRecipients(raw) {
+  const isValid = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  const all = String(raw || "")
+    .split(/[;,\n]/)
+    .map((e) => e.trim())
+    .filter((e) => e && isValid(e));
+  return { to: all[0] || null, cc: all.slice(1), all };
+}
+
+/**
  * Insère une ligne dans email_log. Ne throw JAMAIS : la traçabilité ne doit
  * pas empêcher un envoi de partir (ni faire échouer la requête si la
  * migration v8.48 n'est pas encore appliquée).
@@ -79,7 +95,10 @@ export async function sendTrackedEmail(payload, meta = {}) {
     reminder_template: meta.reminder_template || null,
     trigger_source: meta.trigger_source || null,
     channel: "email",
-    recipient: Array.isArray(payload?.to) ? payload.to[0] : payload?.to || null,
+    recipient: [
+      ...(Array.isArray(payload?.to) ? payload.to : [payload?.to].filter(Boolean)),
+      ...(Array.isArray(payload?.cc) ? payload.cc : [])
+    ].join(", ") || null,
     subject: payload?.subject || null,
     meta: meta.extra || null
   };
@@ -258,5 +277,37 @@ export async function handleEmailEventsWebhook(req, res) {
   }
 
   await sbAdmin.update("email_log", `id=eq.${row.id}`, patch);
+
+  // v8.49 — Retour actif en cas de non-distribution : l'émetteur doit être
+  // prévenu dans l'app, sans avoir à consulter le journal. Une seule notif par
+  // email (le webhook peut rejouer un événement).
+  // patch.status n'est renseigné que si le statut PROGRESSE réellement :
+  // un même événement rejoué par Resend ne redéclenche donc pas de notif.
+  if ((evt.type === "email.bounced" || evt.type === "email.complained")
+      && row.company_id && patch.status) {
+    const quoi = row.document_number
+      ? `${row.kind === "reminder" ? "La relance de la facture" : "Le document"} ${row.document_number}`
+      : "Un email";
+    await sbAdmin.rpc("create_notification", {
+      p_company_id: row.company_id,
+      p_notif_type: "email_bounced",
+      p_title: evt.type === "email.bounced" ? "Email non distribué" : "Email signalé comme spam",
+      p_body: `${quoi} n'est pas parvenu à ${row.recipient || "son destinataire"}. `
+        + (evt.type === "email.bounced"
+          ? "Vérifiez l'adresse email sur la fiche client."
+          : "Le destinataire l'a marqué comme indésirable."),
+      p_url: row.document_type === "invoice" ? "/invoices"
+        : row.document_type === "quote" ? "/quotes" : "/settings",
+      p_severity: "warning",
+      p_icon: evt.type === "email.bounced" ? "⛔" : "🚫",
+      p_metadata: {
+        email_log_id: row.id,
+        recipient: row.recipient,
+        document_number: row.document_number,
+        reason: patch.error
+      }
+    }).catch(() => {});
+  }
+
   return reply(200, { ok: true, status: patch.status || row.status });
 }

@@ -8,8 +8,9 @@ import { snapshotDisplayName } from "../../lib/snapshots.js";
 // On passe TOUJOURS par l'API : elle resigne l'URL Storage à chaque clic.
 // Les URLs signées stockées en base expirent au bout d'une heure — le client
 // récupérait alors un fichier de 110 octets contenant {"error":"InvalidJWT"}.
-function publicPdfHref(token, type, id) {
-  return `/api/public?op=pdf&token=${encodeURIComponent(token)}&type=${type}&doc=${id}`;
+function publicPdfHref(token, type, id, { download = false } = {}) {
+  return `/api/public?op=pdf&token=${encodeURIComponent(token)}&type=${type}&doc=${id}`
+    + (download ? "&dl=1" : "");
 }
 
 export function PublicQuotePage() {
@@ -196,9 +197,14 @@ export function PublicQuotePage() {
         {/* Actions */}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
           {q.pdf_url && (
-            <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
-              📄 Télécharger en PDF
-            </a>
+            <>
+              <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
+                📄 Ouvrir le PDF
+              </a>
+              <a href={publicPdfHref(token, "quote", q.id, { download: true })} className="btn btn-ghost">
+                ⬇️ Télécharger
+              </a>
+            </>
           )}
           {canSign && !actionResult && (
             <>
@@ -435,9 +441,14 @@ export function PublicInvoicePage() {
             </a>
           )}
           {(inv.facturx_pdf_url || inv.pdf_url) && (
-            <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
-              📄 Télécharger Factur-X
-            </a>
+            <>
+              <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost" target="_blank" rel="noopener noreferrer">
+                📄 Ouvrir la facture
+              </a>
+              <a href={publicPdfHref(token, "invoice", inv.id, { download: true })} className="btn btn-ghost">
+                ⬇️ Télécharger
+              </a>
+            </>
           )}
         </div>
 
@@ -559,9 +570,14 @@ export function PublicPortalPage() {
                           </a>
                         )}
                         {(inv.facturx_pdf_url || inv.pdf_url) && (
-                          <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }}>
-                            📄
-                          </a>
+                          <>
+                            <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }} title="Ouvrir le PDF">
+                              📄 Ouvrir
+                            </a>
+                            <a href={publicPdfHref(token, "invoice", inv.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
+                              ⬇️
+                            </a>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -572,12 +588,18 @@ export function PublicPortalPage() {
           )}
         </div>
 
-        {/* Devis */}
-        {quotes.length > 0 && (
-          <div className="card card-pad">
-            <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>
-              Devis
+        {/* Devis — section toujours affichée : sans elle, un client sans devis
+            voyait « DEVIS 0 » sans savoir où les trouver. */}
+        <div className="card card-pad">
+          <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>
+            Devis
+          </div>
+          {quotes.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--muted)", padding: 12 }}>
+              Aucun devis en cours. Les devis qui vous sont adressés apparaîtront ici,
+              consultables et signables en ligne.
             </div>
+          ) : (
             <table>
               <thead>
                 <tr>
@@ -598,16 +620,28 @@ export function PublicPortalPage() {
                     <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
                     <td><QuoteStatusBadge status={q.status} /></td>
                     <td style={{ textAlign: "right" }}>
+                      {q.public_url && (
+                        <a href={q.public_url} className="btn btn-primary btn-xs" style={{ marginRight: 6 }}>
+                          {["sent", "draft"].includes(q.status) ? "Consulter / Signer" : "Consulter"}
+                        </a>
+                      )}
                       {q.pdf_url && (
-                        <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer">📄</a>
+                        <>
+                          <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" title="Ouvrir le PDF">
+                            📄 Ouvrir
+                          </a>
+                          <a href={publicPdfHref(token, "quote", q.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
+                            ⬇️
+                          </a>
+                        </>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
+          )}
+        </div>
 
         <div style={{ marginTop: 40, textAlign: "center", fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }}>
           Pour toute question, contactez {company.email || company.legal_name}<br />

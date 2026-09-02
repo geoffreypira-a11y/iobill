@@ -207,6 +207,9 @@ async function handlePublicPdf(req, res) {
   const token = q.token;
   const docId = q.doc;
   const type = q.type || "invoice";
+  // v8.49 — par défaut le PDF s'OUVRE dans le navigateur (visionneuse native,
+  // y compris sur mobile). `dl=1` force le téléchargement.
+  const forceDownload = q.dl === "1" || q.dl === "true";
 
   if (!token || !docId) return json(res, 400, { error: "token et doc requis" });
   if (!PDF_TABLES[type]) return json(res, 400, { error: "type invalide" });
@@ -246,7 +249,7 @@ async function handlePublicPdf(req, res) {
   }
 
   const filename = `${PDF_LABEL[type]}-${String(doc.number || "document").replace(/[^a-zA-Z0-9._-]/g, "_")}.pdf`;
-  const fresh = await signStorageUrl(bucket, path, 300, filename);
+  const fresh = await signStorageUrl(bucket, path, 300, forceDownload ? filename : null);
   if (!fresh) {
     return json(res, 404, {
       error: "Le PDF de ce document est introuvable. Contactez votre prestataire pour qu'il le régénère."
@@ -409,16 +412,67 @@ async function handleFetch(req, res) {
       })
     ]);
     if (!client) return json(res, 404, { error: "Client not found" });
+
+    // v8.49 — Les devis doivent être CONSULTABLES depuis l'espace client
+    // (et acceptables en ligne), pas seulement téléchargeables en PDF.
+    // On attache donc à chaque devis son lien public, en réutilisant le token
+    // existant quand il y en a un de valide.
+    const portalBase = req.headers["x-forwarded-host"]
+      ? `https://${req.headers["x-forwarded-host"]}`
+      : (process.env.PUBLIC_BASE_URL || "https://app.iobill.online");
+
+    const quotesWithLinks = [];
+    for (const qt of (quotes || []).slice(0, 50)) {
+      const qToken = await ensurePublicToken(company_id, "quote", qt.id);
+      quotesWithLinks.push({
+        ...qt,
+        public_url: qToken ? `${portalBase}/p/quote/${qToken}` : null
+      });
+    }
+
     return json(res, 200, {
       scope: "portal",
       company,
       client,
       invoices: invoices || [],
-      quotes: quotes || []
+      quotes: quotesWithLinks
     });
   }
 
   return json(res, 400, { error: "Unknown scope" });
+}
+
+// v8.49 — Retourne un token public valide pour une ressource, en créant un
+// nouveau token seulement si aucun token utilisable n'existe déjà.
+async function ensurePublicToken(companyId, scope, resourceId, expiresInDays = 90) {
+  try {
+    const existing = await sbAdmin.select("public_tokens", {
+      filter: `scope=eq.${scope}&resource_id=eq.${resourceId}&company_id=eq.${companyId}`,
+      order: "created_at.desc",
+      limit: 5,
+      select: "token,expires_at,revoked_at,max_uses,use_count"
+    });
+    for (const t of existing || []) {
+      const notExpired = !t.expires_at || new Date(t.expires_at) > new Date();
+      const notRevoked = !t.revoked_at;
+      const usesLeft = t.max_uses == null || (t.use_count || 0) < t.max_uses;
+      if (notExpired && notRevoked && usesLeft) return t.token;
+    }
+
+    const token = generateToken(32);
+    const created = await sbAdmin.insert("public_tokens", {
+      token,
+      company_id: companyId,
+      scope,
+      resource_id: resourceId,
+      expires_at: new Date(Date.now() + expiresInDays * 86400000).toISOString(),
+      max_uses: null
+    });
+    return created && (Array.isArray(created) ? created[0] : created) ? token : null;
+  } catch (e) {
+    console.warn("[public] ensurePublicToken", e?.message);
+    return null;
+  }
 }
 
 function safeParse(s) {

@@ -335,6 +335,23 @@ Par ordre de fréquence :
 4. **Domaine non vérifié chez Resend** → journal `failed` avec l'erreur
    Resend 403/422 exacte.
 
+### 8.3.quater Envoi à plusieurs destinataires (v8.49)
+
+Le champ **Email** d'une fiche client accepte plusieurs adresses séparées par
+un point-virgule (ou une virgule) :
+
+```
+compta@client.fr ; direction@client.fr
+```
+
+La première adresse reçoit le document (`to`), les suivantes sont mises en
+copie (`cc`) — pour les factures, devis, avoirs **et** les relances. Aucune
+migration n'est nécessaire : le parsing est fait à l'envoi.
+
+Attention : les documents **déjà émis** gardent l'email figé dans leur
+`client_snapshot` au moment de l'émission. Modifier la fiche client ne change
+donc que les documents émis ensuite.
+
 ### 8.3.ter Téléchargement des PDF depuis les liens publics (v8.48)
 
 Les colonnes `invoices.pdf_url` / `facturx_pdf_url` / `quotes.pdf_url`
@@ -348,7 +365,10 @@ Ces pages passent désormais par :
 
 ```
 GET /api/public?op=pdf&token=<token public>&doc=<uuid>&type=invoice|quote|credit_note
-→ 302 vers une URL Storage resignée (5 min), nom de fichier forcé
+→ 302 vers une URL Storage resignée (5 min)
+
+  sans paramètre  → le PDF s'OUVRE dans le navigateur (visionneuse native)
+  &dl=1           → téléchargement forcé, nom de fichier propre
 ```
 
 L'endpoint vérifie que le document est bien couvert par le token (pour un

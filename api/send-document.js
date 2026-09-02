@@ -4,7 +4,7 @@
 // - Branding de l'emetteur en grand, IO BILL en petit footer
 
 import { authenticate, sbAdmin, json, signStorageUrl, parseStorageUrl } from "./_lib/supabase-admin.js";
-import { sendTrackedEmail, htmlToText } from "./_lib/email-log.js";
+import { sendTrackedEmail, htmlToText, parseRecipients } from "./_lib/email-log.js";
 import { randomBytes } from "node:crypto";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -49,17 +49,19 @@ export default async function handler(req, res) {
   const doc = await sbAdmin.selectOne(table, `id=eq.${document_id}&company_id=eq.${company.id}`);
   if (!doc) return json(res, 404, { error: "Document introuvable" });
 
-  // 2) Destinataire (override > client_snapshot.email)
-  const recipientEmail = override_recipient || doc.client_snapshot?.email || null;
+  // 2) Destinataires (override > client_snapshot.email)
+  // v8.49 — le champ peut contenir plusieurs adresses séparées par ";" ou "," :
+  // la première reçoit le document, les autres sont mises en copie.
+  const rawRecipients = override_recipient || doc.client_snapshot?.email || null;
+  const { to: recipientEmail, cc: ccEmails, all: allRecipients } = parseRecipients(rawRecipients);
 
   if (!recipientEmail) {
     return json(res, 400, {
-      error: "Aucune adresse email pour le destinataire. Ajoutez un email au client ou indiquez une adresse pour cet envoi.",
-      hint: "missing_recipient_email"
+      error: rawRecipients
+        ? "Format d'email destinataire invalide : " + rawRecipients
+        : "Aucune adresse email pour le destinataire. Ajoutez un email au client ou indiquez une adresse pour cet envoi.",
+      hint: rawRecipients ? "invalid_recipient_email" : "missing_recipient_email"
     });
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
-    return json(res, 400, { error: "Format d'email destinataire invalide : " + recipientEmail });
   }
 
   // 3) Generer ou recuperer le PDF
@@ -258,6 +260,7 @@ export default async function handler(req, res) {
   const resendPayload = {
     from: fromHeader,
     to: [recipientEmail],
+    ...(ccEmails.length ? { cc: ccEmails } : {}),
     subject,
     html,
     // v8.48 — partie texte : un email 100 % HTML est un signal de spam
@@ -286,7 +289,7 @@ export default async function handler(req, res) {
     document_id,
     document_number: doc.number || null,
     trigger_source: "manual",
-    extra: { pdf_attached: !!pdfBase64 }
+    extra: { pdf_attached: !!pdfBase64, recipients: allRecipients }
   });
 
   if (!sendResult.ok) {
@@ -324,7 +327,8 @@ export default async function handler(req, res) {
     ok: true,
     resend_id: resendData.id,
     email_log_id: sendResult.log_id,
-    recipient: recipientEmail,
+    recipient: allRecipients.join(", "),
+    recipients: allRecipients,
     pdf_attached: !!pdfBase64,
     public_url: publicUrl
   });

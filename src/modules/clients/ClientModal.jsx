@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { CLIENT_STATUTS, CLIENT_SOURCES } from "./constants.js";
-import { isEmail, isSiret, isSiretOrSiren, formatSiret } from "../../lib/helpers.js";
+import { isEmailList, isSiret, isSiretOrSiren, formatSiret } from "../../lib/helpers.js";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 export function ClientModal({ token, company, client, onSave, onClose }) {
@@ -39,7 +39,11 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
     setErr("");
     if (type === "company" && !data.legal_name.trim()) { setErr("Raison sociale requise"); return; }
     if (type === "individual" && !data.last_name.trim()) { setErr("Nom requis"); return; }
-    if (data.email && !isEmail(data.email)) { setErr("Email invalide"); return; }
+    // v8.49 — plusieurs destinataires acceptés, séparés par ";" ou ","
+    if (data.email && !isEmailList(data.email)) {
+      setErr("Email invalide. Pour plusieurs destinataires, séparez les adresses par un point-virgule.");
+      return;
+    }
     if (data.siret && !isSiretOrSiren(data.siret)) {
       setErr("SIRET (14 chiffres) ou SIREN (9 chiffres) attendu");
       return;
@@ -122,7 +126,14 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
                 <Field label="Nom *" value={data.last_name} onChange={(v) => update("last_name", v)} />
               </>
             )}
-            <Field label="Email" value={data.email} onChange={(v) => update("email", v)} />
+            <Field
+              label="Email"
+              value={data.email}
+              onChange={(v) => update("email", v)}
+              placeholder="compta@client.fr ; direction@client.fr"
+              hint="Plusieurs destinataires : séparez les adresses par un point-virgule. La 1ʳᵉ reçoit le document, les suivantes sont en copie."
+              full
+            />
             <Field label="Téléphone" value={data.phone} onChange={(v) => update("phone", v)} />
           </div>
 
@@ -192,7 +203,7 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
   );
 }
 
-function Field({ label, value, onChange, type = "text", placeholder, full }) {
+function Field({ label, value, onChange, type = "text", placeholder, full, hint }) {
   return (
     <div className="form-row" style={full ? { gridColumn: "1 / -1" } : undefined}>
       <label className="form-label">{label}</label>
@@ -203,6 +214,11 @@ function Field({ label, value, onChange, type = "text", placeholder, full }) {
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
       />
+      {hint && (
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
+          {hint}
+        </div>
+      )}
     </div>
   );
 }
