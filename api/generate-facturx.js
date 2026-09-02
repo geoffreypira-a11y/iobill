@@ -273,10 +273,37 @@ async function handleRequest(req, res) {
     }
     if (doc.status === "draft") {
       try {
-        const updated = await sbAdmin.update("invoices", `id=eq.${documentId}`, {
+        // v8.51 — Le numéro LÉGAL est attribué ici, à l'émission, et non à la
+        // création du brouillon : supprimer un brouillon ne laisse donc plus
+        // de trou dans la séquence. On l'écrit dans le MÊME UPDATE que le
+        // statut, pour que la chaîne de hashs anti-fraude (trigger BEFORE
+        // UPDATE) le couvre.
+        //
+        // Une facture qui porte déjà un vrai numéro garde le sien : soit
+        // elle a été créée avant la v8.51, soit son numéro a été saisi à la
+        // main. Lui en réattribuer un créerait précisément le trou qu'on
+        // cherche à supprimer.
+        const patch = {
           status: "issued",
           issued_at: new Date().toISOString()
-        });
+        };
+
+        if (String(doc.number || "").startsWith("BROUILLON-")) {
+          const legalNumber = await sbAdmin.rpc("allocate_document_number", {
+            p_company_id: company.id,
+            p_doc_type: "invoice"
+          });
+          if (!legalNumber || typeof legalNumber !== "string") {
+            return json(res, 500, {
+              error: "Impossible d'attribuer le numéro de facture. Si la migration v8.51 "
+                + "n'a pas été exécutée, lancez migration_v8_51_numero_a_emission.sql "
+                + "dans Supabase."
+            });
+          }
+          patch.number = legalNumber;
+        }
+
+        const updated = await sbAdmin.update("invoices", `id=eq.${documentId}`, patch);
         if (!updated || !updated[0]) {
           return json(res, 500, {
             error: "Échec de l'émission. Si vous n'avez pas exécuté la migration v8.10, allez dans Supabase SQL Editor et lancez le contenu de migration_v8_10_fix_hash_chain.sql"
@@ -458,7 +485,10 @@ async function handleRequest(req, res) {
     ok: true,
     pdf_url: pdfSigned,
     xml_url: xmlSigned,
-    pdf_size: pdfBytes.length
+    pdf_size: pdfBytes.length,
+    // v8.51 — Le numéro peut avoir changé à l'émission (provisoire → légal) :
+    // le frontend en a besoin pour afficher le bon numéro sans relire la base.
+    number: doc.number
   });
 }
 

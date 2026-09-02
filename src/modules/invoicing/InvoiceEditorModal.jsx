@@ -187,13 +187,15 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
       if (isNew) {
         // v8.121 — Numéro personnalisé autorisé si transmission OFF, sinon on
         // alloue le prochain numéro légal automatiquement.
+        // v8.51 — Un brouillon reçoit un numéro PROVISOIRE. Le numéro légal
+        // est attribué à l'émission, pour que supprimer un brouillon ne
+        // laisse plus de trou dans la séquence des factures émises.
         let number;
         if (canEditNumber && numberOverride.trim()) {
           number = numberOverride.trim();
         } else {
-          number = await sb.rpc(token, "allocate_document_number", {
-            p_company_id: company.id,
-            p_doc_type: "invoice"
+          number = await sb.rpc(token, "allocate_draft_number", {
+            p_company_id: company.id
           });
         }
         payload.number = number;
@@ -368,7 +370,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
             </label>
             <input
               className="form-input mono"
-              value={canEditNumber ? numberOverride : (invoice?.number || (isNew ? "— attribué à l'enregistrement —" : ""))}
+              value={canEditNumber ? numberOverride : (invoice?.number || (isNew ? "— attribué à l'émission —" : ""))}
               onChange={(e) => setNumberOverride(e.target.value)}
               disabled={!canEditNumber}
               placeholder={isNew ? "Laisser vide = numéro auto" : ""}
