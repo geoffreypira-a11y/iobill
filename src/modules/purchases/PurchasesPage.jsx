@@ -201,10 +201,23 @@ export function PurchasesPage({ token, company }) {
       setOpenMenu(null);
       return;
     }
+    // v8.58 — getBoundingClientRect() renvoie déjà des coordonnées relatives au
+    // VIEWPORT, et `position: fixed` se positionne aussi par rapport au
+    // viewport : ajouter window.scrollY/scrollX comptait le défilement deux
+    // fois. Sur une page défilée, le menu s'ouvrait donc loin sous la ligne
+    // cliquée, souvent hors écran.
     const rect = e.currentTarget.getBoundingClientRect();
+
+    // Près du bas de l'écran, on ouvre le menu VERS LE HAUT plutôt que de le
+    // laisser déborder sous la fenêtre.
+    const ESPACE_MINI = 260;
+    const versLeHaut = window.innerHeight - rect.bottom < ESPACE_MINI;
+
     setMenuPos({
-      top: rect.bottom + window.scrollY + 4,
-      left: Math.max(12, rect.right - 200 + window.scrollX)
+      top: versLeHaut ? null : rect.bottom + 4,
+      bottom: versLeHaut ? window.innerHeight - rect.top + 4 : null,
+      // Aligné sur le bord droit du bouton, comme sur les autres listes.
+      right: Math.max(12, window.innerWidth - rect.right)
     });
     setOpenMenu(p.id);
   }
@@ -484,11 +497,15 @@ export function PurchasesPage({ token, company }) {
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               position: "fixed",
-              top: menuPos.top, left: menuPos.left,
+              ...(menuPos.top != null ? { top: menuPos.top } : {}),
+              ...(menuPos.bottom != null ? { bottom: menuPos.bottom } : {}),
+              right: menuPos.right,
               background: "var(--card)", border: "1px solid var(--border2)",
               borderRadius: 8, zIndex: 9999, minWidth: 200,
               boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
-              overflow: "hidden"
+              // Garde-fou si la liste d'actions dépasse la hauteur disponible.
+              maxHeight: "min(320px, calc(100vh - 24px))",
+              overflowY: "auto"
             }}
           >
             <KebabItem icon="✏️" label="Modifier" onClick={() => { setEditing(p); setOpenMenu(null); }} />
