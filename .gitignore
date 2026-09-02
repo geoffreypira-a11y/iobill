@@ -1,0 +1,8 @@
+# Dépendances installées localement
+node_modules/
+
+# Sortie de build Vite (regénérée par Vercel à chaque déploiement)
+dist/
+
+# Journaux npm
+npm-debug.log*
