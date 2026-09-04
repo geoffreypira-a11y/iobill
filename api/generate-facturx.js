@@ -641,6 +641,14 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
 
   const supplierName = x(co.legal_name || co.trade_name);
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
+  // v8.62 — Régime marge (art. 297 A CGI = art. 313 directive 2006/112) : les
+  // lignes exonérées sortent en catégorie TVA "E". EN16931 BR-E-10 impose un
+  // motif d'exonération (BT-120 texte + BT-121 code) et BR-CL-22 impose que le
+  // code appartienne à la LISTE CEF VATEX. Or "VATEX-FR-F" (cas AFNOR n°33)
+  // N'EST PAS dans la liste CEF → rejet 213 (BR-CL-22). Le code CEF correct
+  // pour le régime de marge « biens d'occasion » est VATEX-EU-F.
+  const MARGIN_EXEMPTION_TEXT = "Régime particulier - Biens d'occasion (art. 297 A du CGI)";
+  const MARGIN_EXEMPTION_CODE = "VATEX-EU-F";
   // v8.68 — DÉBOURS (art. 267 II 2° du CGI) : sommes avancées au nom et pour le
   // compte du client (carte grise…). Hors base TVA, mais dues par le client :
   // elles doivent donc entrer dans le montant à payer, sinon le document
@@ -703,18 +711,14 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     const zeroGroup = breakdown.find(v => !(Number(v.rate) > 0));
     if (zeroGroup) {
       zeroGroup.base_cents = Number(zeroGroup.base_cents || 0) + debourCents;
+      // Le groupe couvre alors deux natures d'opérations : le motif les cite
+      // toutes les deux, sans quoi le débours se lirait comme du régime de marge.
+      zeroGroup.exemption_text = `${zeroGroup.exemption_text || MARGIN_EXEMPTION_TEXT} ; ${DEBOURS_EXEMPTION_TEXT}`;
+      zeroGroup.exemption_code = MARGIN_EXEMPTION_CODE;
     } else {
       breakdown.push({ rate: 0, base_cents: debourCents, vat_cents: 0, exemption_text: DEBOURS_EXEMPTION_TEXT });
     }
   }
-  // v8.62 — Régime marge (art. 297 A CGI = art. 313 directive 2006/112) : les
-  // lignes exonérées sortent en catégorie TVA "E". EN16931 BR-E-10 impose un
-  // motif d'exonération (BT-120 texte + BT-121 code) et BR-CL-22 impose que le
-  // code appartienne à la LISTE CEF VATEX. Or "VATEX-FR-F" (cas AFNOR n°33)
-  // N'EST PAS dans la liste CEF → rejet 213 (BR-CL-22). Le code CEF correct
-  // pour le régime de marge « biens d'occasion » est VATEX-EU-F.
-  const MARGIN_EXEMPTION_TEXT = "Régime particulier - Biens d'occasion (art. 297 A du CGI)";
-  const MARGIN_EXEMPTION_CODE = "VATEX-EU-F";
   const vatBlocks = breakdown.map((v) => {
     const isExempt = !(Number(v.rate) > 0);
     // v8.68 — Un groupe peut porter son propre motif (débours). À défaut, le
@@ -722,7 +726,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     // n'accompagne que ce dernier : aucun code CEF ne couvre les débours, et
     // BR-E-10 se satisfait du texte seul.
     const exemptionText = v.exemption_text || MARGIN_EXEMPTION_TEXT;
-    const exemptionCode = v.exemption_text ? "" : MARGIN_EXEMPTION_CODE;
+    // Le code VATEX accompagne le régime de marge, y compris quand un débours
+    // s'y est ajouté. Un groupe purement débours n'en porte pas : aucun code CEF
+    // ne les couvre, et BR-E-10 se satisfait du texte seul.
+    const exemptionCode = v.exemption_code || (v.exemption_text ? "" : MARGIN_EXEMPTION_CODE);
     // Ordre des éléments imposé par le XSD CII (TradeTaxType) :
     // CalculatedAmount, TypeCode, ExemptionReason, BasisAmount, CategoryCode,
     // ExemptionReasonCode, RateApplicablePercent.
