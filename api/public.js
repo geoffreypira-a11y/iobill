@@ -998,6 +998,18 @@ async function handlePushInvoice(body, res) {
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
+      // v8.67 — Total débours et total à payer, désormais STOCKÉS.
+      //
+      // computeTotalsFromLines les calculait déjà, mais personne ne les
+      // écrivait : les colonnes restaient NULL sur toutes les factures poussées.
+      // Le PDF ne s'en apercevait pas — il recalcule le débours depuis le
+      // tableau `debours`. L'application, elle, lit la colonne, tombe sur NULL
+      // et se rabat sur total_ttc_cents : le débours disparaissait du reste dû,
+      // de l'encours et de la modale des règlements. Sur VEH-2026-0094, le PDF
+      // annonçait 8 293,76 € à régler et la modale 7 980,00 € — l'écart valait
+      // exactement la carte grise.
+      debour_total_cents: totals.debour_total_cents,
+      grand_total_cents: totals.grand_total_cents,
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
