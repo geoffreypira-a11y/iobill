@@ -336,19 +336,6 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       if (vm.garantie_mois && vm.garantie_mois > 0) {
         infosRight.push(`Garantie : ${vm.garantie_mois} mois`);
       }
-      // v8.65 — Véhicule REPRIS, quand l'app source le transmet.
-      // Depuis que la reprise est un règlement en nature et non plus une ligne
-      // de facture, elle n'apparaissait plus que dans l'annexe des paiements :
-      // le client ne voyait plus quel véhicule il avait cédé. On le remet donc
-      // sous les yeux, à côté du véhicule acheté.
-      const rep = vm.reprise;
-      if (rep && (rep.plate || rep.marque || rep.modele)) {
-        const repLabel = [rep.marque, rep.modele].filter(Boolean).join(" ");
-        infosLeft.push(
-          "Reprise : " + [repLabel, rep.plate].filter(Boolean).join(" · ")
-          + (rep.valeur_cents ? ` — ${formatEUR(rep.valeur_cents)}` : "")
-        );
-      }
 
       // Calcul de la hauteur dynamique du bloc
       const nbInfoLines = Math.max(infosLeft.length, infosRight.length);
@@ -841,6 +828,48 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
         const consumedLines = Math.max(1, Math.ceil((b.text.length || 0) / 110));
         drawWrapped(page, b.text, 40, y, width - 80, font, 8, COLORS.dark, 10);
         y -= 10 * consumedLines + 4;
+      }
+    }
+
+    // v8.66 — Encart « Reprise véhicule », calqué sur celui de la facture IOCAR.
+    //
+    // Depuis que la reprise est portée en règlement en nature et non plus en
+    // ligne de facture, le véhicule cédé ne figurait plus que dans l'annexe des
+    // paiements, en page 2. Le client ne retrouvait ni sa plaque ni son modèle
+    // sur la facture elle-même.
+    const rep = (doc.vehicle_meta && typeof doc.vehicle_meta === "object")
+      ? doc.vehicle_meta.reprise : null;
+    if (rep && (rep.plate || rep.marque || rep.modele)) {
+      const repLabel = [rep.marque, rep.modele].filter(Boolean).join(" ");
+      const rows = [];
+      if (repLabel) rows.push(`Modèle : ${repLabel}`);
+      if (rep.plate) rows.push(`Plaque : ${String(rep.plate).toUpperCase()}`);
+      if (rep.valeur_cents) {
+        rows.push(`Valeur de reprise déduite du total : ${formatEUR(rep.valeur_cents)}`);
+      }
+      const boxH = 20 + rows.length * 11;
+      // Sous la limite basse, l'encart chevaucherait les mentions légales et le
+      // bandeau de pied de page : on se replie sur une ligne compacte plutôt que
+      // d'écrire par-dessus.
+      if (y - boxH > 140) {
+        y -= 10;
+        const boxY = y - boxH + 12;
+        page.drawRectangle({
+          x: 40, y: boxY, width: width - 80, height: boxH,
+          borderColor: brandRgb, borderWidth: 0.8, color: rgb(0.99, 0.97, 0.92)
+        });
+        page.drawText("Reprise véhicule", { x: 50, y, size: 9, font: fontBold, color: COLORS.dark });
+        let ry = y - 13;
+        for (const r of rows) {
+          page.drawText(r, { x: 50, y: ry, size: 8, font, color: COLORS.grey });
+          ry -= 11;
+        }
+        y = boxY - 10;
+      } else if (y > 150) {
+        page.drawText("Reprise véhicule : " + rows.join("  ·  "), {
+          x: 40, y, size: 8, font, color: COLORS.grey
+        });
+        y -= 12;
       }
     }
   }
