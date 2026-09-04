@@ -883,13 +883,20 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
       ? doc.vehicle_meta.reprise : null;
     if (rep && (rep.plate || rep.marque || rep.modele)) {
       const repLabel = [rep.marque, rep.modele].filter(Boolean).join(" ");
-      const rows = [];
-      if (repLabel) rows.push(`Modèle : ${repLabel}`);
-      if (rep.plate) rows.push(`Plaque : ${String(rep.plate).toUpperCase()}`);
-      if (rep.valeur_cents) {
-        rows.push(`Valeur de reprise déduite du total : ${formatEUR(rep.valeur_cents)}`);
+      // Deux colonnes, comme sur la facture IOCAR : identité à gauche,
+      // identification à droite. La valeur déduite reste sur toute la largeur,
+      // c'est l'information que le client cherche en premier.
+      const colL = [];
+      const colR = [];
+      if (repLabel) colL.push(`Modèle : ${repLabel}`);
+      if (rep.annee) colL.push(`Année : ${rep.annee}`);
+      if (rep.vin) colL.push(`N° de série : ${rep.vin}`);
+      if (rep.plate) colR.push(`Plaque : ${String(rep.plate).toUpperCase()}`);
+      if (rep.kilometrage) {
+        colR.push(`Kilométrage : ${Number(rep.kilometrage).toLocaleString("fr-FR")} km`);
       }
-      const boxH = 20 + rows.length * 11;
+      const nbRows = Math.max(colL.length, colR.length);
+      const boxH = 20 + nbRows * 11 + (rep.valeur_cents ? 11 : 0);
       // Sous la limite basse, l'encart chevaucherait les mentions légales et le
       // bandeau de pied de page : on se replie sur une ligne compacte plutôt que
       // d'écrire par-dessus.
@@ -902,13 +909,20 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
         });
         page.drawText("Reprise véhicule", { x: 50, y, size: 9, font: fontBold, color: COLORS.dark });
         let ry = y - 13;
-        for (const r of rows) {
-          page.drawText(r, { x: 50, y: ry, size: 8, font, color: COLORS.grey });
+        for (let i = 0; i < nbRows; i++) {
+          if (colL[i]) page.drawText(colL[i], { x: 50, y: ry, size: 8, font, color: COLORS.grey });
+          if (colR[i]) page.drawText(colR[i], { x: width / 2, y: ry, size: 8, font, color: COLORS.grey });
           ry -= 11;
+        }
+        if (rep.valeur_cents) {
+          page.drawText(`Valeur de reprise déduite du total : ${formatEUR(rep.valeur_cents)}`,
+            { x: 50, y: ry, size: 8, font: fontBold, color: COLORS.dark });
         }
         y = boxY - 10;
       } else if (y > 150) {
-        page.drawText("Reprise véhicule : " + rows.join("  ·  "), {
+        const flat = [...colL, ...colR];
+        if (rep.valeur_cents) flat.push(`déduite du total : ${formatEUR(rep.valeur_cents)}`);
+        page.drawText("Reprise véhicule : " + flat.join("  ·  "), {
           x: 40, y, size: 8, font, color: COLORS.grey
         });
         y -= 12;
