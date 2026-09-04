@@ -58,13 +58,112 @@ async function logEvent(row) {
 
 /* ─── Credentials ──────────────────────────────────────────────── */
 
+/* ══════════════════════════════════════════════════════════════════
+   OAUTH2 « AUTHORIZATION CODE » — raccordement du compte d'un client
+   ══════════════════════════════════════════════════════════════════
+   Doc SUPER PDP : /documentation/4#authorization-code
+
+   IO BILL est une application OAuth unique (un seul client_id/secret,
+   en variables d'environnement). Chaque société cliente autorise cette
+   application à accéder à SON compte SUPER PDP : c'est ce consentement
+   qui remplace le mandat papier.
+
+   Les sociétés déjà branchées en `client_credentials` ne sont PAS
+   concernées : leur `auth_mode` reste à sa valeur par défaut et rien
+   dans leur chemin d'exécution ne change.                             */
+
+const OAUTH_CLIENT_ID     = process.env.SUPERPDP_OAUTH_CLIENT_ID || "";
+const OAUTH_CLIENT_SECRET = process.env.SUPERPDP_OAUTH_CLIENT_SECRET || "";
+
+/** L'URL de redirection doit être IDENTIQUE à celle déclarée dans
+    l'interface SUPER PDP, au caractère près. */
+function oauthRedirectUri() {
+  return process.env.SUPERPDP_OAUTH_REDIRECT_URI
+      || ((process.env.APP_URL || "https://app.iobill.online") + "/pa/callback");
+}
+
+function requireOauthApp() {
+  if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
+    throw fail(503, "Application OAuth non configurée : renseignez "
+      + "SUPERPDP_OAUTH_CLIENT_ID et SUPERPDP_OAUTH_CLIENT_SECRET.");
+  }
+}
+
+/** Applique un couple de jetons reçu de /oauth2/token sur la ligne. */
+function tokenPatch(tok) {
+  const ttl = Number(tok.expires_in || 1800);
+  const patch = {
+    access_token: tok.access_token,
+    token_expires_at: new Date(Date.now() + ttl * 1000).toISOString(),
+    last_auth_ok_at: new Date().toISOString(),
+    last_error: null
+  };
+  // OAuth 2.1 : le refresh_token TOURNE à chaque usage. S'il est renvoyé,
+  // l'ancien est mort — ne jamais le conserver.
+  if (tok.refresh_token) patch.refresh_token = tok.refresh_token;
+  return patch;
+}
+
+/** Renvoie une ligne pa_credentials dont l'access_token est utilisable.
+    No-op complet en mode client_credentials. */
+async function ensureAccessToken(creds) {
+  if (creds.auth_mode !== "authorization_code") return creds;
+
+  const exp = creds.token_expires_at ? Date.parse(creds.token_expires_at) : 0;
+  // Marge de 2 min : un jeton qui expire pendant l'appel ne sert à rien.
+  if (creds.access_token && exp > Date.now() + 120000) return creds;
+
+  if (!creds.refresh_token) {
+    throw fail(400, "Compte non raccordé à la plateforme agréée. "
+      + "Relancez le raccordement depuis Réglages → Plateforme Agréée.");
+  }
+  requireOauthApp();
+
+  const { impl, cfg } = getProvider(creds);
+  let tok;
+  try {
+    tok = await impl.oauthRefresh(cfg, {
+      refreshToken: creds.refresh_token,
+      clientId: OAUTH_CLIENT_ID,
+      clientSecret: OAUTH_CLIENT_SECRET
+    });
+  } catch (e) {
+    // Une exécution concurrente a pu consommer le refresh_token juste avant
+    // (rotation OAuth 2.1). On relit : si elle a écrit un jeton frais, il fait foi.
+    const fresh = await sbAdmin.selectOne("pa_credentials", "company_id=eq." + creds.company_id);
+    const freshExp = fresh?.token_expires_at ? Date.parse(fresh.token_expires_at) : 0;
+    if (fresh?.access_token && freshExp > Date.now() + 60000) return fresh;
+
+    await sbAdmin.update("pa_credentials", "company_id=eq." + creds.company_id,
+      { last_error: "Rafraîchissement OAuth2 échoué : " + e.message });
+    throw fail(401, "Raccordement expiré ou révoqué. Relancez le raccordement "
+      + "depuis Réglages → Plateforme Agréée.");
+  }
+
+  const patch = tokenPatch(tok);
+  // Écriture GARDÉE sur l'ancien refresh_token : si une autre exécution a
+  // déjà tourné, on n'écrase pas son jeton par le nôtre.
+  const guard = "company_id=eq." + creds.company_id
+              + "&refresh_token=eq." + encodeURIComponent(creds.refresh_token);
+  const rows = await sbAdmin.update("pa_credentials", guard, patch);
+  if (!rows || rows.length === 0) {
+    const fresh = await sbAdmin.selectOne("pa_credentials", "company_id=eq." + creds.company_id);
+    if (fresh?.access_token) return fresh;
+  }
+  return { ...creds, ...patch };
+}
+
 async function loadCreds(companyId, { requireEnabled = true } = {}) {
   const rows = await strictSelect("pa_credentials", "company_id=eq." + companyId + "&select=*&limit=1");
   const c = rows[0];
   if (!c) throw fail(400, "Plateforme agréée non configurée pour cette entreprise");
   if (requireEnabled && !c.enabled) throw fail(400, "Plateforme agréée désactivée");
-  if (requireEnabled && !c.client_id) throw fail(400, "client_id manquant");
-  return c;
+  // En OAuth2 « authorization_code » il n'y a pas de client_id par société :
+  // c'est l'application IO BILL qui porte l'identité, et le jeton la société.
+  if (requireEnabled && c.auth_mode !== "authorization_code" && !c.client_id) {
+    throw fail(400, "client_id manquant");
+  }
+  return ensureAccessToken(c);
 }
 
 /** Config sans aucun secret — c'est ce que voit le front. */
@@ -91,6 +190,14 @@ function publicCfg(c, companyId) {
     has_client_secret: !!c.client_secret,
     has_webhook_secret: !!c.webhook_secret,
     client_id: c.client_id || null,
+    // v8.130 — Raccordement OAuth2 (aucun jeton n'est exposé au front).
+    auth_mode: c.auth_mode || "client_credentials",
+    oauth_linked: !!(c.auth_mode === "authorization_code" && c.refresh_token),
+    oauth_linked_at: c.oauth_linked_at || null,
+    company_verification_status: c.company_verification_status || null,
+    user_identity_verification_status: c.user_identity_verification_status || null,
+    directory_identifier: c.directory_identifier || null,
+    directory_status: c.directory_status || null,
     last_error: c.last_error,
     last_auth_ok_at: c.last_auth_ok_at,
     cursor_id: c.cursor_id,
@@ -1010,12 +1117,276 @@ export async function paPurchasePaid(company, payload) {
 
 
 
+/* ══════════════════════════════════════════════════════════════════
+   RACCORDEMENT D'UNE SOCIÉTÉ (OAuth2 + annuaire)
+   ══════════════════════════════════════════════════════════════════ */
+
+/** SIREN à 9 chiffres extrait du SIRET stocké sur la société. */
+function sirenOf(company) {
+  const raw = String(company?.siret || "").replace(/\D/g, "");
+  if (raw.length === 14) return raw.slice(0, 9);
+  if (raw.length === 9) return raw;
+  return null;
+}
+
+/** Étape 1 — renvoie l'URL du tunnel SUPER PDP à ouvrir dans le navigateur. */
+export async function paOauthStart(company, payload = {}) {
+  requireOauthApp();
+
+  const siren = sirenOf(company);
+  if (!siren) {
+    throw fail(400, "SIRET de la société manquant ou invalide : "
+      + "renseignez-le dans Réglages avant de vous raccorder.");
+  }
+
+  const existing = await sbAdmin.selectOne("pa_credentials", "company_id=eq." + company.id);
+  const environment = payload.environment
+    || existing?.environment
+    || "production";
+
+  // `state` : anti-CSRF ET porteur du lien vers la société, puisque le
+  // callback arrive du navigateur sans jeton d'application.
+  const state = crypto.randomUUID().replace(/-/g, "")
+              + crypto.randomUUID().replace(/-/g, "");
+
+  await upsert("pa_credentials", [{
+    company_id: company.id,
+    provider: "superpdp",
+    environment,
+    auth_mode: "authorization_code",
+    oauth_state: state,
+    oauth_state_at: new Date().toISOString(),
+    self_service_allowed: existing ? existing.self_service_allowed : false,
+    enabled: existing ? existing.enabled : false,
+    updated_by: "oauth"
+  }], "company_id");
+
+  const { impl, cfg } = getProvider({
+    company_id: company.id, provider: "superpdp", environment
+  });
+
+  // `receive` force l'inscription à l'annuaire pendant le tunnel : sans ligne
+  // d'annuaire, la société ne peut RECEVOIR aucune facture. C'est le rôle
+  // d'IO BILL (émission ET réception), donc on ne laisse pas le choix.
+  const sendAndReceive = ["any", "send", "receive"].includes(payload.send_and_receive)
+    ? payload.send_and_receive
+    : "receive";
+
+  const url = impl.oauthAuthorizeUrl(cfg, {
+    clientId: OAUTH_CLIENT_ID,
+    redirectUri: oauthRedirectUri(),
+    state,
+    loginHint: payload.email || company.email || null,
+    companyNumber: siren,
+    companyNumberScheme: environment === "production" ? "fr_siren" : "sandbox",
+    directoryEntryIdentifier: siren,
+    sendAndReceive
+  });
+
+  await logEvent({
+    company_id: company.id, direction: "admin", provider: "superpdp",
+    event_type: "oauth.start", status: "ok",
+    message: "Tunnel de raccordement ouvert (" + environment + ", " + sendAndReceive + ")"
+  });
+
+  return { ok: true, url, environment, redirect_uri: oauthRedirectUri() };
+}
+
+/** Étape 2 — appelée par le navigateur au retour du tunnel (non authentifié :
+    c'est le `state` qui prouve l'origine et désigne la société). */
+export async function paOauthCallback({ code, state, error, errorDescription }) {
+  if (error) {
+    return { ok: false, message: "Raccordement refusé : " + (errorDescription || error) };
+  }
+  if (!code || !state) return { ok: false, message: "Réponse incomplète de la plateforme." };
+
+  const row = await sbAdmin.selectOne("pa_credentials", "oauth_state=eq." + encodeURIComponent(state));
+  if (!row) return { ok: false, message: "Demande de raccordement inconnue ou déjà utilisée." };
+
+  const age = Date.now() - Date.parse(row.oauth_state_at || 0);
+  if (!(age >= 0) || age > 3600_000) {
+    await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id,
+      { oauth_state: null, oauth_state_at: null });
+    return { ok: false, message: "Demande expirée. Relancez le raccordement." };
+  }
+
+  requireOauthApp();
+  const { impl, cfg } = getProvider(row);
+
+  let tok;
+  try {
+    tok = await impl.oauthExchangeCode(cfg, {
+      code,
+      clientId: OAUTH_CLIENT_ID,
+      clientSecret: OAUTH_CLIENT_SECRET,
+      redirectUri: oauthRedirectUri()
+    });
+  } catch (e) {
+    await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id,
+      { oauth_state: null, oauth_state_at: null, last_error: "Échange OAuth2 échoué : " + e.message });
+    return { ok: false, message: "Échange du code échoué : " + e.message };
+  }
+
+  const patch = {
+    ...tokenPatch(tok),
+    auth_mode: "authorization_code",
+    oauth_state: null,
+    oauth_state_at: null,
+    oauth_linked_at: new Date().toISOString(),
+    enabled: true
+  };
+  await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id, patch);
+
+  // Best-effort : on remonte immédiatement l'identité et l'état de vérification.
+  try {
+    const live = { ...row, ...patch };
+    const p = getProvider(live);
+    const [me, sess] = await Promise.all([
+      p.impl.me(p.cfg).catch(() => null),
+      p.impl.session(p.cfg).catch(() => null)
+    ]);
+    const extra = {};
+    if (me?.id) extra.pa_company_id = String(me.id);
+    if (sess?.company_verification_status) extra.company_verification_status = sess.company_verification_status;
+    if (sess?.user_identity_verification_status) extra.user_identity_verification_status = sess.user_identity_verification_status;
+    if (Object.keys(extra).length) {
+      await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id, extra);
+    }
+  } catch (_) { /* le statut sera relu depuis l'écran de réglages */ }
+
+  await logEvent({
+    company_id: row.company_id, direction: "admin", provider: "superpdp",
+    event_type: "oauth.linked", status: "ok", message: "Compte raccordé par OAuth2"
+  });
+
+  return { ok: true, company_id: row.company_id };
+}
+
+/** État vivant du raccordement : vérification KYC/KYB + lignes d'annuaire. */
+export async function paOauthStatus(company) {
+  const creds = await loadCreds(company.id, { requireEnabled: false });
+  if (creds.auth_mode !== "authorization_code") {
+    return { ok: true, auth_mode: creds.auth_mode, linked: false };
+  }
+  if (!creds.access_token) {
+    return { ok: true, auth_mode: creds.auth_mode, linked: false };
+  }
+
+  const fresh = await ensureAccessToken(creds);
+  const { impl, cfg } = getProvider(fresh);
+
+  let session = null, entries = null, sessionError = null;
+  try {
+    session = await impl.session(cfg);
+  } catch (e) { sessionError = e.message; }
+
+  // Tant que la KYB n'est pas `verified`, toutes les autres routes renvoient 403.
+  if (session && session.company_verification_status === "verified") {
+    try { entries = await impl.listDirectoryEntries(cfg); }
+    catch (e) { sessionError = sessionError || e.message; }
+  }
+
+  if (session) {
+    await sbAdmin.update("pa_credentials", "company_id=eq." + company.id, {
+      company_verification_status: session.company_verification_status || null,
+      user_identity_verification_status: session.user_identity_verification_status || null
+    });
+  }
+
+  return {
+    ok: true,
+    auth_mode: "authorization_code",
+    linked: true,
+    linked_at: fresh.oauth_linked_at,
+    environment: fresh.environment,
+    session,
+    directory_entries: entries,
+    error: sessionError
+  };
+}
+
+/** Inscrit la société à l'annuaire (utile si le tunnel a été fait en mode
+    `any` ou `send`, ou pour ajouter une adresse SIRET). */
+export async function paDirectoryCreate(company, payload = {}) {
+  const creds = await loadCreds(company.id);
+  const { impl, cfg } = getProvider(creds);
+
+  const identifier = String(payload.identifier || sirenOf(company) || "").trim();
+  if (!identifier) throw fail(400, "Identifiant d'annuaire manquant (SIREN attendu).");
+
+  const directory = payload.directory === "peppol" ? "peppol" : "ppf";
+  const entry = await impl.createDirectoryEntry(cfg, {
+    directory,
+    identifier,
+    effectiveDate: payload.effective_date || null
+  });
+
+  await sbAdmin.update("pa_credentials", "company_id=eq." + company.id, {
+    directory_identifier: entry?.identifier || identifier,
+    directory_status: entry?.status || "pending"
+  });
+  await logEvent({
+    company_id: company.id, direction: "admin", provider: creds.provider,
+    event_type: "directory.created", status: "ok",
+    message: directory + " · " + identifier + " · " + (entry?.status || "pending")
+  });
+  return { ok: true, entry };
+}
+
+/** Régime de TVA : il commande le RYTHME d'agrégation de l'e-reporting PPF. */
+export async function paVatRegimeSave(company, payload = {}) {
+  const valid = ["monthly", "quarterly", "simplified", "vat_exemption"];
+  if (!valid.includes(payload.vat_regime)) {
+    throw fail(400, "Régime de TVA invalide. Attendu : " + valid.join(", "));
+  }
+  const creds = await loadCreds(company.id);
+  const { impl, cfg } = getProvider(creds);
+  const out = await impl.updateVatRegime(cfg, {
+    vatRegime: payload.vat_regime,
+    hasVatOnDebits: payload.has_vat_on_debits === undefined ? null : !!payload.has_vat_on_debits
+  });
+  await logEvent({
+    company_id: company.id, direction: "admin", provider: creds.provider,
+    event_type: "company.vat_regime", status: "ok", message: payload.vat_regime
+  });
+  return { ok: true, company: out };
+}
+
+/** Débranche la société : révoque le refresh_token puis efface les jetons. */
+export async function paOauthUnlink(company) {
+  const creds = await loadCreds(company.id, { requireEnabled: false });
+  if (creds.auth_mode === "authorization_code" && creds.refresh_token && OAUTH_CLIENT_ID) {
+    const { impl, cfg } = getProvider(creds);
+    try {
+      await impl.oauthRevoke(cfg, {
+        token: creds.refresh_token,
+        clientId: OAUTH_CLIENT_ID,
+        clientSecret: OAUTH_CLIENT_SECRET
+      });
+    } catch (_) { /* la révocation est best-effort, l'effacement local prime */ }
+  }
+  await sbAdmin.update("pa_credentials", "company_id=eq." + company.id, {
+    access_token: null, refresh_token: null, token_expires_at: null,
+    oauth_state: null, oauth_state_at: null, oauth_linked_at: null,
+    company_verification_status: null, user_identity_verification_status: null,
+    enabled: false
+  });
+  await logEvent({
+    company_id: company.id, direction: "admin", provider: creds.provider,
+    event_type: "oauth.unlinked", status: "ok", message: "Compte débranché"
+  });
+  return { ok: true };
+}
+
 export const PA_SUBSCRIBER_ACTIONS = new Set([
   "pa_config", "pa_config_save", "pa_request_change",
   "pa_validate", "pa_send", "pa_status",
   "pa_inbox_sync", "pa_inbox_ack", "pa_inbox_convert", "pa_inbox_file",
   "pa_purchase_paid",
-  "pa_invoice_encaisser"   // v8.57 — fr:212 côté vendeur
+  "pa_invoice_encaisser",  // v8.57 — fr:212 côté vendeur
+  // v8.130 — Raccordement OAuth2 du compte client + annuaire PPF
+  "pa_oauth_start", "pa_oauth_status", "pa_oauth_unlink",
+  "pa_directory_create", "pa_vat_regime"
 ]);
 
 export const PA_ADMIN_ACTIONS = new Set([
@@ -1037,6 +1408,11 @@ export async function handlePaAction({ action, payload, user, company, isAdmin }
     case "pa_inbox_file":      return paInboxFile(company, payload || {});
     case "pa_purchase_paid":   return paPurchasePaid(company, payload || {});
     case "pa_invoice_encaisser": return paInvoiceEncaisser(company, payload || {});
+    case "pa_oauth_start":     return paOauthStart(company, payload || {});
+    case "pa_oauth_status":    return paOauthStatus(company);
+    case "pa_oauth_unlink":    return paOauthUnlink(company);
+    case "pa_directory_create":return paDirectoryCreate(company, payload || {});
+    case "pa_vat_regime":      return paVatRegimeSave(company, payload || {});
   }
   if (!isAdmin) throw fail(403, "Accès refusé (admin uniquement)");
   switch (action) {

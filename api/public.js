@@ -49,6 +49,33 @@ export default async function handler(req, res) {
     }
   }
 
+  // ─── RETOUR DU TUNNEL OAUTH2 PLATEFORME AGRÉÉE (v8.130) ───────────
+  // Le navigateur du client revient ici après avoir donné son consentement
+  // sur SUPER PDP. Aucune authentification applicative n'est possible à ce
+  // stade : c'est le paramètre `state`, tiré au sort et stocké en base au
+  // départ du tunnel, qui prouve l'origine et désigne la société.
+  // URL déclarée côté SUPER PDP : {APP_URL}/pa/callback (réécrite ici).
+  if (op === "pa_oauth_callback") {
+    const q = req.query || {};
+    const back = (process.env.APP_URL || "https://app.iobill.online") + "/settings?tab=pdp";
+    let out;
+    try {
+      const pa = await import("./_lib/pa-actions.js");
+      out = await pa.paOauthCallback({
+        code: q.code, state: q.state,
+        error: q.error, errorDescription: q.error_description
+      });
+    } catch (e) {
+      console.error("[public/pa_oauth_callback]", e?.stack || e?.message);
+      out = { ok: false, message: e?.message || "Erreur pendant le raccordement" };
+    }
+    const url = out.ok
+      ? back + "&pa_link=ok"
+      : back + "&pa_link=err&pa_msg=" + encodeURIComponent(String(out.message || "").slice(0, 200));
+    res.writeHead(302, { Location: url });
+    return res.end();
+  }
+
   // v8.87 — Webhook Resend Inbound (Inbox OCR achats). Corps brut requis
   // (signature Svix) → traité AVANT la réhydratation du body ci-dessous.
   if (op === "inbox_webhook") {
@@ -96,7 +123,7 @@ export default async function handler(req, res) {
   if (op === "share") return handleShare(req, res);
   if (op === "fetch") return handleFetch(req, res);
   if (op === "external") return handleExternal(req, res);
-  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=pdf, ?op=external, ?op=pa_webhook or ?op=email_events" });
+  return json(res, 400, { error: "Unknown op. Use ?op=share, ?op=fetch, ?op=pdf, ?op=external, ?op=pa_webhook, ?op=pa_oauth_callback or ?op=email_events" });
 }
 
 function inferOp(req) {
