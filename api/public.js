@@ -998,19 +998,26 @@ async function handlePushInvoice(body, res) {
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
-      // v8.68 — RETRAIT de debour_total_cents et grand_total_cents.
+      // v8.69 — Total des débours. UNE SEULE colonne à écrire, jamais deux.
       //
-      // La v8.67 les ajoutait ici pour corriger le reste dû de l'application,
-      // qui ignorait les débours. Résultat immédiat en production : « Échec
-      // push issued IOBILL » sur la première facture émise ensuite. Un seul
-      // champ inconnu fait échouer l'écriture entière — le même piège que la
-      // colonne sent_at en v8.48.
+      //   debour_total_cents   NEVER    défaut 0
+      //   grand_total_cents    ALWAYS   = COALESCE(total_ttc_cents,0)
+      //                                 + COALESCE(debour_total_cents,0)
       //
-      // J'avais déduit l'existence de ces colonnes du fait que
-      // firm-invitation.js et FirmClientFichePage.jsx les sélectionnent en
-      // PostgREST. Déduire n'est pas vérifier : on ne réécrira ces deux champs
-      // qu'après un ALTER TABLE explicite, ou après avoir constaté leur
-      // présence dans information_schema.
+      // grand_total_cents est calculée par PostgreSQL. La v8.67 tentait d'y
+      // écrire : Postgres rejette alors l'insertion ENTIÈRE, et la facture
+      // n'était plus créée du tout — « Échec push issued IOBILL » en
+      // production. Ne jamais l'inclure dans un payload d'écriture.
+      //
+      // Le vrai défaut était ailleurs : debour_total_cents n'était jamais
+      // rempli, restait à 0, et la colonne calculée valait donc le TTC nu.
+      // Le débours disparaissait du reste dû, de l'encours et de la modale
+      // des règlements — seize endroits lisent grand_total_cents. Le PDF y
+      // échappait parce qu'il recalcule le débours depuis le tableau JSON.
+      //
+      // En renseignant ce seul champ, la colonne calculée se met à jour toute
+      // seule et les seize lectures deviennent justes d'un coup.
+      debour_total_cents: totals.debour_total_cents,
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
