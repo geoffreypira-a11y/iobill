@@ -641,6 +641,23 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
 
   const supplierName = x(co.legal_name || co.trade_name);
   const buyerName = x(cs.legal_name || `${cs.first_name || ""} ${cs.last_name || ""}`.trim() || "Client");
+  // v8.68 — DÉBOURS (art. 267 II 2° du CGI) : sommes avancées au nom et pour le
+  // compte du client (carte grise…). Hors base TVA, mais dues par le client :
+  // elles doivent donc entrer dans le montant à payer, sinon le document
+  // transmis réclame moins que la facture remise au client (constaté sur
+  // VEH-2026-0097 : 7 980,00 € transmis contre 8 113,76 € dus).
+  //
+  // Modélisation EN 16931 : charge au niveau document (BG-21) rattachée à une
+  // catégorie de TVA exonérée, plus le groupe de ventilation correspondant.
+  // La catégorie « O » (hors champ) serait la plus juste, mais BR-O-11 interdit
+  // de la mêler à d'autres catégories : sur une facture portant aussi des
+  // lignes à 20 %, elle ferait rejeter le document. On retient donc « E » avec
+  // le motif d'exonération en clair (BT-120), que BR-E-10 accepte sans code.
+  const debourCents = Math.max(0, Math.round(Number(doc.debour_total_cents || 0)));
+  const DEBOURS_REASON = "Débours - art. 267 II 2° du CGI";
+  const DEBOURS_EXEMPTION_TEXT =
+    "Débours - sommes avancées au nom et pour le compte du client (art. 267 II 2° du CGI)";
+
   // v8.48.21 — Fix BR-CO-14 : reconstruit vat_breakdown depuis les lignes
   // si vide, sinon Σ(TVA par catégorie) ≠ TVA totale et la validation échoue.
   // v8.48.23 — Fix BR-CO-17 : les vraies colonnes de document_lines sont
@@ -676,6 +693,20 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
       breakdown[breakdown.length - 1].vat_cents += (totalC - sumC);
     }
   }
+  // v8.68 — Les débours rejoignent la ventilation TVA en catégorie E, base =
+  // montant avancé, TVA = 0 (BR-E-9). Deux groupes de même catégorie et même
+  // taux étant interdits, on fusionne avec un éventuel groupe à 0 % déjà
+  // présent — le régime de marge, typiquement. La copie évite de modifier
+  // le vat_breakdown stocké sur le document.
+  if (debourCents > 0) {
+    breakdown = breakdown.map(v => ({ ...v }));
+    const zeroGroup = breakdown.find(v => !(Number(v.rate) > 0));
+    if (zeroGroup) {
+      zeroGroup.base_cents = Number(zeroGroup.base_cents || 0) + debourCents;
+    } else {
+      breakdown.push({ rate: 0, base_cents: debourCents, vat_cents: 0, exemption_text: DEBOURS_EXEMPTION_TEXT });
+    }
+  }
   // v8.62 — Régime marge (art. 297 A CGI = art. 313 directive 2006/112) : les
   // lignes exonérées sortent en catégorie TVA "E". EN16931 BR-E-10 impose un
   // motif d'exonération (BT-120 texte + BT-121 code) et BR-CL-22 impose que le
@@ -686,6 +717,12 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
   const MARGIN_EXEMPTION_CODE = "VATEX-EU-F";
   const vatBlocks = breakdown.map((v) => {
     const isExempt = !(Number(v.rate) > 0);
+    // v8.68 — Un groupe peut porter son propre motif (débours). À défaut, le
+    // motif exonéré du document reste celui du régime de marge. Le code VATEX
+    // n'accompagne que ce dernier : aucun code CEF ne couvre les débours, et
+    // BR-E-10 se satisfait du texte seul.
+    const exemptionText = v.exemption_text || MARGIN_EXEMPTION_TEXT;
+    const exemptionCode = v.exemption_text ? "" : MARGIN_EXEMPTION_CODE;
     // Ordre des éléments imposé par le XSD CII (TradeTaxType) :
     // CalculatedAmount, TypeCode, ExemptionReason, BasisAmount, CategoryCode,
     // ExemptionReasonCode, RateApplicablePercent.
@@ -693,10 +730,10 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     <ram:ApplicableTradeTax>
       <ram:CalculatedAmount>${(v.vat_cents / 100).toFixed(2)}</ram:CalculatedAmount>
       <ram:TypeCode>VAT</ram:TypeCode>${isExempt ? `
-      <ram:ExemptionReason>${x(MARGIN_EXEMPTION_TEXT)}</ram:ExemptionReason>` : ""}
+      <ram:ExemptionReason>${x(exemptionText)}</ram:ExemptionReason>` : ""}
       <ram:BasisAmount>${(v.base_cents / 100).toFixed(2)}</ram:BasisAmount>
-      <ram:CategoryCode>${isExempt ? "E" : "S"}</ram:CategoryCode>${isExempt ? `
-      <ram:ExemptionReasonCode>${MARGIN_EXEMPTION_CODE}</ram:ExemptionReasonCode>` : ""}
+      <ram:CategoryCode>${isExempt ? "E" : "S"}</ram:CategoryCode>${isExempt && exemptionCode ? `
+      <ram:ExemptionReasonCode>${exemptionCode}</ram:ExemptionReasonCode>` : ""}
       <ram:RateApplicablePercent>${Number(v.rate).toFixed(2)}</ram:RateApplicablePercent>
     </ram:ApplicableTradeTax>`;
   }).join("");
@@ -915,26 +952,37 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     </ram:ApplicableHeaderTradeDelivery>
     <ram:ApplicableHeaderTradeSettlement>
       <ram:InvoiceCurrencyCode>${cur}</ram:InvoiceCurrencyCode>
-      ${vatBlocks}
+      ${vatBlocks}${debourCents > 0 ? `
+      <ram:SpecifiedTradeAllowanceCharge>
+        <ram:ChargeIndicator><udt:Indicator>true</udt:Indicator></ram:ChargeIndicator>
+        <ram:ActualAmount>${(debourCents / 100).toFixed(2)}</ram:ActualAmount>
+        <ram:Reason>${x(DEBOURS_REASON)}</ram:Reason>
+        <ram:CategoryTradeTax>
+          <ram:TypeCode>VAT</ram:TypeCode>
+          <ram:CategoryCode>E</ram:CategoryCode>
+          <ram:RateApplicablePercent>0.00</ram:RateApplicablePercent>
+        </ram:CategoryTradeTax>
+      </ram:SpecifiedTradeAllowanceCharge>` : ""}
       <ram:SpecifiedTradePaymentTerms>
         <ram:Description>${x(doc.payment_terms || "Paiement à réception de la facture")}</ram:Description>${doc.due_date ? `
         <ram:DueDateDateTime><udt:DateTimeString format="102">${dt(doc.due_date)}</udt:DateTimeString></ram:DueDateDateTime>` : ""}
       </ram:SpecifiedTradePaymentTerms>
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-        <ram:LineTotalAmount>${(doc.subtotal_ht_cents / 100).toFixed(2)}</ram:LineTotalAmount>
-        <ram:TaxBasisTotalAmount>${(doc.subtotal_ht_cents / 100).toFixed(2)}</ram:TaxBasisTotalAmount>
+        <ram:LineTotalAmount>${(doc.subtotal_ht_cents / 100).toFixed(2)}</ram:LineTotalAmount>${debourCents > 0 ? `
+        <ram:ChargeTotalAmount>${(debourCents / 100).toFixed(2)}</ram:ChargeTotalAmount>` : ""}
+        <ram:TaxBasisTotalAmount>${((doc.subtotal_ht_cents + debourCents) / 100).toFixed(2)}</ram:TaxBasisTotalAmount>
         <ram:TaxTotalAmount currencyID="${cur}">${(doc.vat_total_cents / 100).toFixed(2)}</ram:TaxTotalAmount>
-        <ram:GrandTotalAmount>${(doc.total_ttc_cents / 100).toFixed(2)}</ram:GrandTotalAmount>
+        <ram:GrandTotalAmount>${((doc.total_ttc_cents + debourCents) / 100).toFixed(2)}</ram:GrandTotalAmount>
         ${(() => {
-          // v8.57.13 — Fix règle BR-CO-16 pour factures avec débours (art. 267 II 2° CGI)
-          // paid_cents peut inclure les débours (qui ne sont PAS dans le GrandTotal
-          // du XML Factur-X, hors base TVA). On plafonne donc TotalPrepaid à
-          // GrandTotal pour éviter DuePayable négatif qui échoue BR-CO-16.
+          // Règle BR-CO-16 : DuePayable = GrandTotal − TotalPrepaid (+ Rounding),
+          // toujours ≥ 0. Si la facture est soldée, TotalPrepaid = GrandTotal
+          // et DuePayable = 0. Le plafonnement reste par sécurité.
           //
-          // Règle BR-CO-16 : DuePayable = GrandTotal − TotalPrepaid (+ Rounding)
-          // Doit toujours être ≥ 0. Si facture soldée (paid ≥ grand_total_XML),
-          // TotalPrepaid = GrandTotal et DuePayable = 0.
-          const grandTotal = doc.total_ttc_cents;
+          // v8.68 — Le GrandTotal inclut maintenant les débours (charge document
+          // ci-dessus), donc paid_cents, qui les contenait déjà, ne le dépasse
+          // plus : c'est ce décalage que le plafond v8.57.13 masquait, au prix
+          // d'un montant dû amputé du débours.
+          const grandTotal = doc.total_ttc_cents + debourCents;
           const paidRaw = doc.paid_cents || 0;
           const prepaidCents = Math.min(paidRaw, grandTotal); // plafonné
           const dueCents = Math.max(0, grandTotal - prepaidCents);
