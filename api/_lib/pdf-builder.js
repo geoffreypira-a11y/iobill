@@ -336,6 +336,19 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
       if (vm.garantie_mois && vm.garantie_mois > 0) {
         infosRight.push(`Garantie : ${vm.garantie_mois} mois`);
       }
+      // v8.65 — Véhicule REPRIS, quand l'app source le transmet.
+      // Depuis que la reprise est un règlement en nature et non plus une ligne
+      // de facture, elle n'apparaissait plus que dans l'annexe des paiements :
+      // le client ne voyait plus quel véhicule il avait cédé. On le remet donc
+      // sous les yeux, à côté du véhicule acheté.
+      const rep = vm.reprise;
+      if (rep && (rep.plate || rep.marque || rep.modele)) {
+        const repLabel = [rep.marque, rep.modele].filter(Boolean).join(" ");
+        infosLeft.push(
+          "Reprise : " + [repLabel, rep.plate].filter(Boolean).join(" · ")
+          + (rep.valeur_cents ? ` — ${formatEUR(rep.valeur_cents)}` : "")
+        );
+      }
 
       // Calcul de la hauteur dynamique du bloc
       const nbInfoLines = Math.max(infosLeft.length, infosRight.length);
