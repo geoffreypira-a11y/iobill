@@ -372,7 +372,20 @@ async function handleRequest(req, res) {
     order: "sort_order.asc"
   });
 
-  console.log(`[generate-facturx] doc=${documentType}/${documentId} lines=${(lines || []).length} status=${doc.status}`);
+  // v8.66 — Règlements, pour ventiler « Déjà encaissé » sur le PDF.
+  // Sans eux le client lit « - 2 000,00 € » sans savoir d'où ça vient : un
+  // acompte, une reprise, un virement ? L'annexe des paiements le dit, mais
+  // en page 2 et seulement à l'export cabinet.
+  // Les avoirs n'ont pas de règlements rattachés.
+  let payments = [];
+  if (documentType === "invoice") {
+    payments = await sbAdmin.select("payments", {
+      filter: `invoice_id=eq.${documentId}`,
+      order: "paid_at.asc"
+    }) || [];
+  }
+
+  console.log(`[generate-facturx] doc=${documentType}/${documentId} lines=${(lines || []).length} payments=${payments.length} status=${doc.status}`);
 
   // 1) XML CII Factur-X
   let xml;
@@ -399,6 +412,7 @@ async function handleRequest(req, res) {
       docType: documentType,
       doc,
       lines: lines || [],
+      payments,
       company
     });
   } catch (e) {
