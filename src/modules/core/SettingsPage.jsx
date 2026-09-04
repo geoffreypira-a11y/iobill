@@ -1517,6 +1517,8 @@ function PdpTab({ token, company }) {
         À partir de septembre 2027, l'émission devient obligatoire.
       </p>
 
+      <PaLinkPanel token={token} company={company} cfg={cfg} />
+
       {readOnly && (
         <div style={{
           padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13,
@@ -1647,6 +1649,240 @@ function Info({ label, value }) {
     <div>
       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 13 }}>{value}</div>
+    </div>
+  );
+}
+
+/* ─── Raccordement du compte à la Plateforme Agréée (v8.130) ───────
+   Le client autorise IO BILL à accéder à SON compte SUPER PDP via
+   OAuth2 « Authorization Code ». C'est ce consentement qui vaut mandat,
+   et c'est pendant ce tunnel que son adresse d'annuaire est créée —
+   sans ligne d'annuaire, personne ne peut lui envoyer de facture. */
+const VAT_REGIMES = [
+  ["monthly",       "Réel normal — mensuel"],
+  ["quarterly",     "Réel normal — trimestriel"],
+  ["simplified",    "Réel simplifié"],
+  ["vat_exemption", "Franchise en base de TVA"]
+];
+
+const VERIF_LABEL = {
+  verified:     { text: "✅ Vérifié",                       color: "var(--green, #3ecf7a)" },
+  needs_review: { text: "⏳ Vérification manuelle en cours", color: "var(--gold, #d4a843)" },
+  failed:       { text: "❌ Refusé",                        color: "var(--red, #e54949)" },
+  not_verified: { text: "⚠️ Non commencé",                  color: "var(--gold, #d4a843)" }
+};
+
+function PaLinkPanel({ token, company, cfg }) {
+  const [params, setParams] = useSearchParams();
+  const [busy, setBusy] = useState(null);
+  const [msg, setMsg] = useState({ kind: null, text: "" });
+  const [status, setStatus] = useState(null);
+  const [vatRegime, setVatRegime] = useState("");
+
+  // Message de retour du tunnel (?pa_link=ok|err)
+  useEffect(() => {
+    const r = params.get("pa_link");
+    if (!r) return;
+    if (r === "ok") setMsg({ kind: "ok", text: "Compte raccordé à la plateforme agréée." });
+    else setMsg({ kind: "err", text: params.get("pa_msg") || "Le raccordement a échoué." });
+    const next = new URLSearchParams(params);
+    next.delete("pa_link"); next.delete("pa_msg");
+    setParams(next, { replace: true });
+  }, [params, setParams]);
+
+  const linked = !!cfg.oauth_linked;
+
+  async function call(action, payload) {
+    const r = await fetch("/api/admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload ? { action, payload } : { action })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Erreur");
+    return j;
+  }
+
+  async function connect() {
+    setBusy("connect"); setMsg({ kind: null, text: "" });
+    try {
+      const j = await call("pa_oauth_start", {});
+      window.location.href = j.url;
+    } catch (e) {
+      setMsg({ kind: "err", text: e.message });
+      setBusy(null);
+    }
+  }
+
+  async function refresh() {
+    setBusy("refresh"); setMsg({ kind: null, text: "" });
+    try { setStatus(await call("pa_oauth_status")); }
+    catch (e) { setMsg({ kind: "err", text: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function createEntry() {
+    setBusy("entry"); setMsg({ kind: null, text: "" });
+    try {
+      await call("pa_directory_create", {});
+      setMsg({ kind: "ok", text: "Adresse d'annuaire demandée." });
+      setStatus(await call("pa_oauth_status"));
+    } catch (e) { setMsg({ kind: "err", text: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function saveVat() {
+    if (!vatRegime) return;
+    setBusy("vat"); setMsg({ kind: null, text: "" });
+    try {
+      await call("pa_vat_regime", { vat_regime: vatRegime });
+      setMsg({ kind: "ok", text: "Régime de TVA transmis à la plateforme." });
+    } catch (e) { setMsg({ kind: "err", text: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function unlink() {
+    if (!window.confirm("Débrancher cette société de la plateforme agréée ?\n\n"
+      + "Les factures ne seront plus transmises ni reçues tant que le "
+      + "raccordement n'est pas refait.")) return;
+    setBusy("unlink"); setMsg({ kind: null, text: "" });
+    try {
+      await call("pa_oauth_unlink");
+      setMsg({ kind: "ok", text: "Société débranchée. Rechargez la page." });
+      setStatus(null);
+    } catch (e) { setMsg({ kind: "err", text: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  const entries = status?.directory_entries;
+  const kyb = status?.session?.company_verification_status || cfg.company_verification_status;
+  const kyc = status?.session?.user_identity_verification_status || cfg.user_identity_verification_status;
+
+  return (
+    <div style={{
+      border: "1px solid var(--border)", borderRadius: 10,
+      padding: 16, marginBottom: 18
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+        🔗 Raccordement du compte
+      </div>
+
+      {!linked ? (
+        <>
+          <p style={{ fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.6, margin: "0 0 12px" }}>
+            {company.siret
+              ? <>Vous allez être redirigé vers la plateforme agréée pour autoriser IO BILL
+                  à émettre et recevoir vos factures. Votre <b>adresse dans l'annuaire</b> est
+                  créée pendant ce parcours : sans elle, vos fournisseurs ne peuvent pas
+                  vous envoyer de facture.</>
+              : <span style={{ color: "var(--red, #e54949)" }}>
+                  Renseignez d'abord le SIRET de la société dans l'onglet Profil.
+                </span>}
+          </p>
+          <button className="btn btn-primary" onClick={connect}
+            disabled={busy === "connect" || !company.siret}>
+            {busy === "connect" ? "Redirection…" : "🔗 Raccorder ma société"}
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <Info label="Raccordé le" value={cfg.oauth_linked_at
+              ? new Date(cfg.oauth_linked_at).toLocaleString("fr-FR") : "—"} />
+            <Info label="Mode" value="OAuth2 (compte du client)" />
+            <Info label="Société vérifiée (KYB)"
+              value={<span style={{ color: (VERIF_LABEL[kyb] || {}).color }}>
+                {(VERIF_LABEL[kyb] || { text: "—" }).text}</span>} />
+            <Info label="Identité vérifiée (KYC)"
+              value={<span style={{ color: (VERIF_LABEL[kyc] || {}).color }}>
+                {(VERIF_LABEL[kyc] || { text: "—" }).text}</span>} />
+          </div>
+
+          {kyb && kyb !== "verified" && (
+            <div style={{
+              padding: "8px 12px", borderRadius: 6, marginBottom: 12, fontSize: 12,
+              background: "rgba(212,168,67,.10)", color: "var(--gold, #d4a843)"
+            }}>
+              Tant que la société n'est pas vérifiée, la plateforme refuse toutes
+              les opérations (émission, réception, e-reporting).
+            </div>
+          )}
+
+          {/* Annuaire */}
+          <div style={{ fontSize: 12.5, fontWeight: 600, margin: "14px 0 6px" }}>
+            📇 Adresses de réception (annuaire)
+          </div>
+          {entries === null || entries === undefined ? (
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Cliquez sur « Vérifier » pour lire l'annuaire.
+            </div>
+          ) : entries.length === 0 ? (
+            <div style={{
+              padding: "8px 12px", borderRadius: 6, fontSize: 12,
+              background: "rgba(229,73,73,.10)", color: "var(--red, #e54949)"
+            }}>
+              Aucune adresse : cette société ne peut recevoir aucune facture.
+            </div>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
+              {entries.map((e) => (
+                <li key={e.id}>
+                  <span className="mono">{e.identifier}</span>
+                  {" · "}{e.directory}
+                  {" · "}{e.status === "created" ? "✅ active"
+                        : e.status === "pending" ? "⏳ en attente" : "❌ " + (e.status_message || e.status)}
+                  {e.effective_date ? " · effet " + String(e.effective_date).slice(0, 10) : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Régime de TVA — commande le rythme d'e-reporting */}
+          <div style={{ fontSize: 12.5, fontWeight: 600, margin: "16px 0 6px" }}>
+            🧾 Régime de TVA
+          </div>
+          <p style={{ fontSize: 12, color: "var(--muted2)", margin: "0 0 8px", lineHeight: 1.5 }}>
+            Il détermine à quel rythme la plateforme agrège et transmet votre
+            e-reporting à l'administration fiscale.
+          </p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select className="form-input" style={{ maxWidth: 280 }}
+              value={vatRegime} onChange={(e) => setVatRegime(e.target.value)}>
+              <option value="">— Choisir —</option>
+              {VAT_REGIMES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+            <button className="btn" onClick={saveVat} disabled={busy === "vat" || !vatRegime}>
+              {busy === "vat" ? "Envoi…" : "Transmettre"}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+            <button className="btn" onClick={refresh} disabled={busy === "refresh"}>
+              {busy === "refresh" ? "Lecture…" : "🔄 Vérifier"}
+            </button>
+            <button className="btn" onClick={createEntry} disabled={busy === "entry"}>
+              {busy === "entry" ? "Envoi…" : "📇 Créer mon adresse d'annuaire"}
+            </button>
+            <button className="btn" onClick={unlink} disabled={busy === "unlink"}
+              style={{ marginLeft: "auto" }}>
+              {busy === "unlink" ? "…" : "Débrancher"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {status?.error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--red, #e54949)" }}>
+          ⚠️ {status.error}
+        </div>
+      )}
+      {msg.kind && (
+        <div style={{
+          marginTop: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: msg.kind === "err" ? "rgba(229,73,73,.10)" : "rgba(62,207,122,.10)",
+          color: msg.kind === "err" ? "var(--red, #e54949)" : "var(--green, #3ecf7a)"
+        }}>{msg.text}</div>
+      )}
     </div>
   );
 }
