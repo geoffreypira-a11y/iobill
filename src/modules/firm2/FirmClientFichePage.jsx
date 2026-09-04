@@ -52,6 +52,13 @@ async function appendPaymentsPage(pdfBytes, data) {
     T((_pmLabel(p.method) + (p.notes ? "  -  " + p.notes : "")).slice(0, 60), 150, y, 10, font, dark);
     T(_eur(p.amount_cents), 430, y, 10, bold, dark);
     y -= 16;
+    // v8.65 — La reference porte le detail que la colonne Moyen ne peut pas
+    // tenir : plaque et modele d'un vehicule repris, numero de cheque, libelle
+    // de virement. Une seconde ligne discrete evite de tronquer l'essentiel.
+    if (p.reference && String(p.reference).trim() && String(p.reference) !== String(p.notes || "")) {
+      T(String(p.reference).slice(0, 70), 150, y, 8, font, grey);
+      y -= 14;
+    }
   }
   if ((data.paid_cents || 0) > sum + 1) {
     T("-", 40, y, 10, font, dark);
