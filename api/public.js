@@ -998,18 +998,19 @@ async function handlePushInvoice(body, res) {
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
-      // v8.67 — Total débours et total à payer, désormais STOCKÉS.
+      // v8.68 — RETRAIT de debour_total_cents et grand_total_cents.
       //
-      // computeTotalsFromLines les calculait déjà, mais personne ne les
-      // écrivait : les colonnes restaient NULL sur toutes les factures poussées.
-      // Le PDF ne s'en apercevait pas — il recalcule le débours depuis le
-      // tableau `debours`. L'application, elle, lit la colonne, tombe sur NULL
-      // et se rabat sur total_ttc_cents : le débours disparaissait du reste dû,
-      // de l'encours et de la modale des règlements. Sur VEH-2026-0094, le PDF
-      // annonçait 8 293,76 € à régler et la modale 7 980,00 € — l'écart valait
-      // exactement la carte grise.
-      debour_total_cents: totals.debour_total_cents,
-      grand_total_cents: totals.grand_total_cents,
+      // La v8.67 les ajoutait ici pour corriger le reste dû de l'application,
+      // qui ignorait les débours. Résultat immédiat en production : « Échec
+      // push issued IOBILL » sur la première facture émise ensuite. Un seul
+      // champ inconnu fait échouer l'écriture entière — le même piège que la
+      // colonne sent_at en v8.48.
+      //
+      // J'avais déduit l'existence de ces colonnes du fait que
+      // firm-invitation.js et FirmClientFichePage.jsx les sélectionnent en
+      // PostgREST. Déduire n'est pas vérifier : on ne réécrira ces deux champs
+      // qu'après un ALTER TABLE explicite, ou après avoir constaté leur
+      // présence dans information_schema.
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
