@@ -21,7 +21,7 @@ const COLORS = {
  * @param {object} opts.company   La societe (pour fallback si snapshot manquant)
  * @returns {Promise<Uint8Array>} Les bytes du PDF
  */
-export async function buildDocumentPdf({ docType, doc, lines, company }) {
+export async function buildDocumentPdf({ docType, doc, lines, payments, company }) {
   const pdfDoc = await PDFDocument.create();
   const labels = {
     quote: { title: "DEVIS", filename: "Devis", verb: "Émis" },
@@ -670,7 +670,49 @@ export async function buildDocumentPdf({ docType, doc, lines, company }) {
     const grandTotal = doc.total_ttc_cents + debourTotalCents;
     page.drawText("Déjà encaissé", { x: totalsX, y, size: 9, font, color: COLORS.green });
     drawRight(page, "- " + formatEUR(doc.paid_cents), width - 40, y, 9, font, COLORS.green);
-    y -= 14;
+    y -= 11;
+
+    // v8.66 — Ventilation du « déjà encaissé ».
+    //
+    // Un montant global ne dit pas d'où il vient : un acompte en espèces et une
+    // reprise de véhicule s'y confondaient en un seul « - 2 000,00 € ». Le
+    // détail existait, mais en page 2 et seulement à l'export cabinet.
+    // On le ramène sous la ligne qu'il explique.
+    const paidBreakdown = (() => {
+      if (!Array.isArray(payments) || payments.length === 0) return null;
+      // Libellés porteurs de leur préposition : « dont 1 000,00 € d'acompte ».
+      const labelOf = (p) => {
+        const n = String(p.notes || "").toLowerCase();
+        if (n.includes("reprise")) return "de reprise véhicule";
+        if (n.includes("acompte")) return "d'acompte";
+        return {
+          bank_transfer: "de virement", virement: "de virement",
+          cash: "d'espèces", especes: "d'espèces",
+          check: "de chèque", cheque: "de chèque",
+          stripe: "de CB", card: "de carte", cb: "de carte"
+        }[String(p.method || "").toLowerCase()] || "de règlement";
+      };
+      const groups = new Map();
+      for (const p of payments) {
+        const c = Math.abs(Number(p.amount_cents) || 0);
+        if (c <= 0) continue;
+        const k = labelOf(p);
+        groups.set(k, (groups.get(k) || 0) + c);
+      }
+      if (groups.size === 0) return null;
+      // Une seule nature n'apprend rien de plus que la ligne au-dessus.
+      if (groups.size === 1) return null;
+      const parts = [...groups.entries()].map(([k, c]) => `${formatEUR(c)} ${k}`);
+      // Au-delà de trois natures la ligne déborderait : on résume.
+      const shown = parts.length > 3 ? parts.slice(0, 3).concat("…") : parts;
+      return "dont " + shown.join(", ");
+    })();
+
+    if (paidBreakdown) {
+      page.drawText(paidBreakdown, { x: totalsX, y, size: 7, font, color: COLORS.grey });
+      y -= 11;
+    }
+    y -= 3;
     page.drawText("Reste à régler", { x: totalsX, y, size: 10, font: fontBold, color: COLORS.dark });
     drawRight(page, formatEUR(grandTotal - doc.paid_cents), width - 40, y, 10, fontBold, COLORS.dark);
     y -= 18;
