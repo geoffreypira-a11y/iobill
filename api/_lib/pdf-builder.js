@@ -322,6 +322,10 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
       if (vm.date_mise_en_circulation) infosLeft.push(`1ère circ. : ${vm.date_mise_en_circulation}`);
       if (vm.kilometrage) infosLeft.push(`Kilométrage : ${Number(vm.kilometrage).toLocaleString("fr-FR")} km`);
       if (vm.genre) infosLeft.push(`Genre : ${vm.genre}`);
+      // v8.69 — Référence du véhicule au livre de police (« VO#0007 »),
+      // transmise par IOCAR dans vehicle_meta. Le registre étant tenu chez le
+      // garage, la facture en porte le renvoi.
+      if (vm.livre_police) infosLeft.push(`Livre de police : ${vm.livre_police}`);
       if (vm.options) infosLeft.push(`Options : ${vm.options}`);
       if (vm.vin) infosRight.push(`VIN : ${vm.vin}`);
       if (vm.carburant) infosRight.push(`Carburant : ${vm.carburant}`);
