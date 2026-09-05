@@ -9,7 +9,7 @@ import React, { useState, useEffect } from "react";
  * Cliquable → ouvre Stripe Checkout direct.
  */
 export function TrialBanner({ token, company }) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(null);
 
   if (!company || company.sub_status !== "trialing" || !company.trial_ends_at) {
     return null;
@@ -25,8 +25,8 @@ export function TrialBanner({ token, company }) {
 
   const isUrgent = daysRemaining <= 3;
 
-  async function startCheckout() {
-    setLoading(true);
+  async function startCheckout(plan) {
+    setLoading(plan);
     try {
       const r = await fetch("/api/stripe", {
         method: "POST",
@@ -34,7 +34,7 @@ export function TrialBanner({ token, company }) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ plan: "pro_monthly" })
+        body: JSON.stringify({ plan })
       });
       const j = await r.json();
       if (j?.url) window.location.href = j.url;
@@ -42,8 +42,18 @@ export function TrialBanner({ token, company }) {
     } catch {
       alert("Erreur réseau");
     }
-    setLoading(false);
+    setLoading(null);
   }
+
+  const btnBase = {
+    padding: "8px 14px",
+    color: "#1a1d22",
+    border: 0,
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+  };
 
   return (
     <div style={{
@@ -68,24 +78,34 @@ export function TrialBanner({ token, company }) {
           Souscrivez à IO BILL Pro pour ne pas perdre l'accès à vos données.
         </div>
       </div>
-      <button
-        onClick={startCheckout}
-        disabled={loading}
-        style={{
-          padding: "8px 14px",
-          background: isUrgent ? "var(--orange, #e8963d)" : "var(--gold, #d4a843)",
-          color: "#1a1d22",
-          border: 0,
-          borderRadius: 6,
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: loading ? "default" : "pointer",
-          opacity: loading ? 0.6 : 1,
-          whiteSpace: "nowrap"
-        }}
-      >
-        {loading ? "..." : "💳 Souscrire maintenant"}
-      </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          onClick={() => startCheckout("pro_monthly")}
+          disabled={loading !== null}
+          style={{
+            ...btnBase,
+            background: isUrgent ? "var(--orange, #e8963d)" : "var(--gold, #d4a843)",
+            cursor: loading ? "default" : "pointer",
+            opacity: loading && loading !== "pro_monthly" ? 0.4 : 1,
+          }}
+        >
+          {loading === "pro_monthly" ? "..." : "Mensuel"}
+        </button>
+        <button
+          onClick={() => startCheckout("pro_yearly")}
+          disabled={loading !== null}
+          style={{
+            ...btnBase,
+            background: "transparent",
+            color: isUrgent ? "var(--orange, #e8963d)" : "var(--gold, #d4a843)",
+            border: `1px solid ${isUrgent ? "var(--orange, #e8963d)" : "var(--gold, #d4a843)"}`,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading && loading !== "pro_yearly" ? 0.4 : 1,
+          }}
+        >
+          {loading === "pro_yearly" ? "..." : "Annuel (2 mois offerts)"}
+        </button>
+      </div>
     </div>
   );
 }
