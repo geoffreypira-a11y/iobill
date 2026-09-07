@@ -1147,6 +1147,17 @@ function sirenOf(company) {
 /** Étape 1 — renvoie l'URL du tunnel SUPER PDP à ouvrir dans le navigateur. */
 export async function paOauthStart(company, payload = {}) {
   const existing = await sbAdmin.selectOne("pa_credentials", "company_id=eq." + company.id);
+
+  // v8.131 — L'admin garde la main. `enabled === false` signifie « PA coupée
+  // pour cette entreprise » : ni émission, ni réception, ni raccordement.
+  // Sans ce garde-fou, l'abonné pouvait se raccorder lui-même et rouvrir la
+  // porte que l'admin venait de fermer. On ne bloque QUE sur un `false`
+  // explicite : pas de ligne du tout = rien n'a encore été décidé.
+  if (existing && existing.enabled === false) {
+    throw fail(403, "Le raccordement à la plateforme agréée est géré par IO BILL "
+      + "pour cette entreprise. Utilisez « Demander une modification ».");
+  }
+
   const environment = payload.environment
     || existing?.environment
     || "production";
@@ -1177,7 +1188,7 @@ export async function paOauthStart(company, payload = {}) {
     oauth_state: state,
     oauth_state_at: new Date().toISOString(),
     self_service_allowed: existing ? existing.self_service_allowed : false,
-    enabled: existing ? existing.enabled : false,
+    enabled: existing ? existing.enabled : true,
     updated_by: "oauth"
   }], "company_id");
 
@@ -1225,6 +1236,14 @@ export async function paOauthCallback({ code, state, error, errorDescription }) 
   const row = await sbAdmin.selectOne("pa_credentials", "oauth_state=eq." + encodeURIComponent(state));
   if (!row) return { ok: false, message: "Demande de raccordement inconnue ou déjà utilisée." };
 
+  // v8.131 — L'admin a pu couper la PA pendant que le tunnel était ouvert.
+  if (row.enabled === false) {
+    await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id,
+      { oauth_state: null, oauth_state_at: null });
+    return { ok: false, message: "Raccordement refusé : la plateforme agréée est "
+      + "désactivée pour cette entreprise." };
+  }
+
   const age = Date.now() - Date.parse(row.oauth_state_at || 0);
   if (!(age >= 0) || age > 3600_000) {
     await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id,
@@ -1254,8 +1273,9 @@ export async function paOauthCallback({ code, state, error, errorDescription }) 
     auth_mode: "authorization_code",
     oauth_state: null,
     oauth_state_at: null,
-    oauth_linked_at: new Date().toISOString(),
-    enabled: true
+    oauth_linked_at: new Date().toISOString()
+    // v8.131 — `enabled` n'est PAS touché ici : c'est un réglage admin.
+    // La ligne a été créée active par paOauthStart si elle n'existait pas.
   };
   await sbAdmin.update("pa_credentials", "company_id=eq." + row.company_id, patch);
 
