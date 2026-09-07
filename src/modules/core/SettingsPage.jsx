@@ -1692,6 +1692,10 @@ function PaLinkPanel({ token, company, cfg }) {
   }, [params, setParams]);
 
   const linked = !!cfg.oauth_linked;
+  // v8.131 — PA explicitement coupée par l'admin : l'abonné ne peut rien
+  // lancer. Sans ce garde-fou côté écran, le bouton restait cliquable et
+  // rouvrait la porte que l'admin venait de fermer (le serveur refuse aussi).
+  const locked = cfg.configured && !cfg.enabled;
 
   async function call(action, payload) {
     const r = await fetch("/api/admin", {
@@ -1768,7 +1772,13 @@ function PaLinkPanel({ token, company, cfg }) {
         🔗 Raccordement du compte
       </div>
 
-      {!linked ? (
+      {locked ? (
+        <p style={{ fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.6, margin: 0 }}>
+          🔒 La plateforme agréée est désactivée pour cette entreprise par IO BILL.
+          Ni l'émission, ni la réception, ni le raccordement ne sont possibles.
+          Utilisez « Demander une modification » ci-dessous.
+        </p>
+      ) : !linked ? (
         <>
           <p style={{ fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.6, margin: "0 0 12px" }}>
             {(company.siret || env === "sandbox")

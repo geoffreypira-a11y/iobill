@@ -221,9 +221,10 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
             </div>
 
             <div style={box}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 10 }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 10 }}>
                 <input
                   type="checkbox"
+                  style={{ marginTop: 3 }}
                   checked={cfg.enabled}
                   onChange={(e) => setCfg(c => ({
                     ...c,
@@ -233,7 +234,14 @@ export function AdminPdpModal({ company, adminCall, onClose }) {
                     transmission_enabled: e.target.checked ? c.transmission_enabled : false
                   }))}
                 />
-                Activer le PDP (réception des factures)
+                <span>
+                  Activer le PDP (réception des factures)
+                  <br />
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    Décoché = tout est coupé pour cette entreprise : émission, réception,
+                    et raccordement OAuth2. L'abonné ne peut rien lancer de lui-même.
+                  </span>
+                </span>
               </label>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 10, opacity: cfg.enabled ? 1 : 0.45 }}>
                 <input type="checkbox" checked={cfg.enabled && cfg.transmission_enabled}
