@@ -23,6 +23,10 @@ export function AdminPage({ token, company }) {
   const [companyData, setCompanyData] = useState(null);
   const [showArchiveModal, setShowArchiveModal] = useState(null); // companyId
   const [pdpCompany, setPdpCompany] = useState(null); // v8.47 — modale PDP Access
+  // v8.132 — Demandes de modification PDP en attente, toutes sociétés confondues.
+  // Elles n'étaient visibles qu'en ouvrant la modale PDP de la bonne société :
+  // autant dire jamais vues.
+  const [paRequests, setPaRequests] = useState([]);
 
   // Backup
   const [backupInfo, setBackupInfo] = useState(null);
@@ -63,7 +67,23 @@ export function AdminPage({ token, company }) {
       .catch((e) => { console.error(e); setLoading(false); });
     adminCall("backup_info").then(({ backup }) => setBackupInfo(backup)).catch(() => {});
     adminCall("tickets_count_new").then(({ count }) => setTicketsCountNew(count || 0)).catch(() => {});
+    loadPaRequests();
   }, [token, company?.is_admin]);
+
+  function loadPaRequests() {
+    adminCall("pa_admin_list")
+      .then(({ pending_requests }) => setPaRequests(pending_requests || []))
+      .catch(() => { /* la bannière disparaît, le reste de l'admin fonctionne */ });
+  }
+
+  async function resolvePaRequest(req, status) {
+    try {
+      await adminCall("pa_admin_resolve_request", { request_id: req.id, status });
+      setPaRequests(rs => rs.filter(r => r.id !== req.id));
+    } catch (e) {
+      alert("Impossible de traiter la demande : " + e.message);
+    }
+  }
 
   useEffect(() => {
     if (tab !== "tickets") return;
@@ -267,6 +287,54 @@ export function AdminPage({ token, company }) {
         </div>
       </div>
 
+      {paRequests.length > 0 && (
+        <div className="card card-pad" style={{
+          marginBottom: 18,
+          border: "1px solid rgba(212,168,67,.45)",
+          background: "rgba(212,168,67,.07)"
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--gold, #d4a843)" }}>
+            🔔 {paRequests.length} demande{paRequests.length > 1 ? "s" : ""} de modification PDP en attente
+          </div>
+          {paRequests.map((req) => {
+            const co = companies.find((c) => c.id === req.company_id);
+            return (
+              <div key={req.id} style={{
+                display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap",
+                padding: "10px 0", borderTop: "1px solid var(--border)"
+              }}>
+                <div style={{ flex: "1 1 320px", minWidth: 240 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {co?.name || co?.legal_name || co?.email || "Société inconnue"}
+                    {req.created_at && (
+                      <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 8, fontSize: 11 }}>
+                        {fmtDate(req.created_at)}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted2)", whiteSpace: "pre-wrap", marginTop: 3 }}>
+                    {req.message}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {co && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setPdpCompany(co)}>
+                      🔌 Ouvrir le PDP
+                    </button>
+                  )}
+                  <button className="btn btn-ghost btn-sm" onClick={() => resolvePaRequest(req, "done")}>
+                    ✓ Traitée
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => resolvePaRequest(req, "rejected")}>
+                    ✗ Rejeter
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="tabs" style={{ marginBottom: 18, display: "flex", gap: 8 }}>
         <button
           className={"tab" + (tab === "companies" ? " active" : "")}
@@ -415,7 +483,7 @@ export function AdminPage({ token, company }) {
         <AdminPdpModal
           company={pdpCompany}
           adminCall={adminCall}
-          onClose={() => setPdpCompany(null)}
+          onClose={() => { setPdpCompany(null); loadPaRequests(); }}
         />
       )}
     </div>
