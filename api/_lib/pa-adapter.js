@@ -12,9 +12,20 @@
 //   POST /v1.beta/invoice_events                ({invoice_id, status_code})
 //   POST /v1.beta/validation_reports            (multipart, file)
 //
+// v8.130 — Raccordement d'un compte client (OpenAPI 1.30.0.beta) :
+//   GET  /oauth2/authorize                      (tunnel de consentement)
+//   POST /oauth2/token                          (authorization_code, refresh_token)
+//   POST /oauth2/revoke                         (RFC 7009)
+//   GET  /v1.beta/oauth2_sessions/me            (état KYC / KYB)
+//   GET  /v1.beta/directory_entries             (adresses de réception)
+//   POST /v1.beta/directory_entries             (inscription annuaire PPF)
+//   PATCH /v1.beta/companies                    (régime de TVA)
+//
 // Interface commune (tout provider doit l'implémenter) :
 //   auth, sendInvoice, getInvoice, listInvoices, sendEvent,
-//   validate, fetchFile, parseWebhook
+//   validate, fetchFile, parseWebhook,
+//   oauthAuthorizeUrl, oauthExchangeCode, oauthRefresh, oauthRevoke,
+//   session, listDirectoryEntries, createDirectoryEntry, updateVatRegime
 // ════════════════════════════════════════════════════════════════════
 
 const TOKEN_CACHE = new Map();
@@ -164,6 +175,16 @@ const superpdp = {
   },
 
   async auth(cfg) {
+    // v8.130 — Mode OAuth2 « authorization_code » : le jeton appartient au
+    // compte du client, il est stocké en base et rafraîchi par pa-actions
+    // (rotation obligatoire en OAuth 2.1). L'adapter le consomme tel quel.
+    if (cfg.auth_mode === "authorization_code") {
+      if (!cfg.access_token) {
+        throw new Error("[PA] compte non raccordé : aucun access_token OAuth2");
+      }
+      return cfg.access_token;
+    }
+
     const k = cfg.company_id + ":superpdp:" + cfg.client_id;
     const c = TOKEN_CACHE.get(k);
     if (c && c.exp > nowSec() + 60) return c.token;
@@ -189,6 +210,124 @@ const superpdp = {
 
   async me(cfg) {
     return req(cfg.base_url + "/v1.beta/companies/me", { headers: await this._h(cfg) });
+  },
+
+  /* ─── OAuth2 « Authorization Code » (raccordement d'un client) ──────
+     Doc SUPER PDP : /documentation/4#authorization-code
+       authorize : GET  {base}/oauth2/authorize
+       token     : POST {base}/oauth2/token   (form-urlencoded)
+       revoke    : POST {base}/oauth2/revoke  (RFC 7009)
+     Durées : access_token 30 min, refresh_token 1 an glissant.
+     OAuth 2.1 impose la ROTATION du refresh_token à chaque usage : le
+     nouveau doit être persisté, sinon le client est déconnecté. C'est
+     pa-actions qui s'en charge (il seul a accès à la base).            */
+
+  /** URL du tunnel d'inscription/consentement, à ouvrir dans le navigateur. */
+  oauthAuthorizeUrl(cfg, {
+    clientId, redirectUri, state,
+    loginHint = null, companyNumber = null, companyNumberScheme = null,
+    directoryEntryIdentifier = null, sendAndReceive = null
+  }) {
+    const p = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      state
+    });
+    if (loginHint) p.set("login_hint", loginHint);
+    // Les deux paramètres entreprise sont INDISSOCIABLES (doc SUPER PDP).
+    if (companyNumber && companyNumberScheme) {
+      p.set("superpdp_company_number", companyNumber);
+      p.set("superpdp_company_number_scheme", companyNumberScheme);
+    }
+    if (directoryEntryIdentifier) p.set("superpdp_directory_entry_identifier", directoryEntryIdentifier);
+    if (sendAndReceive) p.set("superpdp_send_and_receive", sendAndReceive);
+    return cfg.base_url + "/oauth2/authorize?" + p.toString();
+  },
+
+  /** Échange le code d'autorisation contre un couple de jetons. */
+  async oauthExchangeCode(cfg, { code, clientId, clientSecret, redirectUri }) {
+    return req(cfg.base_url + "/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        client_secret: clientSecret
+      }).toString()
+    });
+  },
+
+  /** Rafraîchit l'access_token. Renvoie TOUJOURS un nouveau refresh_token. */
+  async oauthRefresh(cfg, { refreshToken, clientId, clientSecret }) {
+    return req(cfg.base_url + "/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret
+      }).toString()
+    });
+  },
+
+  /** RFC 7009. Révoquer le refresh_token invalide aussi ses access_token. */
+  async oauthRevoke(cfg, { token, clientId, clientSecret, hint = "refresh_token" }) {
+    const r = await fetch(cfg.base_url + "/oauth2/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token,
+        token_type_hint: hint,
+        client_id: clientId,
+        client_secret: clientSecret
+      }).toString()
+    });
+    return { ok: r.ok, status: r.status };
+  },
+
+  /** État de la session OAuth2 : KYC utilisateur + KYB société.
+      ⚠️ Tant que company_verification_status !== "verified", TOUTES les
+      autres routes renvoient 403. */
+  async session(cfg) {
+    return req(cfg.base_url + "/v1.beta/oauth2_sessions/me", { headers: await this._h(cfg) });
+  },
+
+  /* ─── Annuaire (PPF / Peppol) ─────────────────────────────────────── */
+
+  /** Adresses sur lesquelles la société peut RECEVOIR des factures. */
+  async listDirectoryEntries(cfg) {
+    const j = await req(cfg.base_url + "/v1.beta/directory_entries", { headers: await this._h(cfg) });
+    return Array.isArray(j) ? j : (j.data || j.items || []);
+  },
+
+  /** Inscrit la société à l'annuaire. Sans ça, personne ne peut lui envoyer
+      de facture. `identifier` : SIREN, SIREN_SIRET ou SIREN_SUFFIXE pour ppf ;
+      `scheme:participant` (ex. 0225:853322915) pour peppol. */
+  async createDirectoryEntry(cfg, { directory = "ppf", identifier, effectiveDate = null }) {
+    const body = { directory, identifier };
+    if (effectiveDate) body.effective_date = effectiveDate;
+    return req(cfg.base_url + "/v1.beta/directory_entries", {
+      method: "POST",
+      headers: await this._h(cfg, { "Content-Type": "application/json" }),
+      body: JSON.stringify(body)
+    });
+  },
+
+  /* ─── Régime de TVA ───────────────────────────────────────────────
+     Le RYTHME d'agrégation de l'e-reporting envoyé au PPF dépend de cette
+     valeur. Non renseignée = rythme par défaut, pas forcément le bon.     */
+  async updateVatRegime(cfg, { vatRegime, hasVatOnDebits = null }) {
+    const body = { vat_regime: vatRegime };
+    if (hasVatOnDebits !== null) body.has_vat_on_debits = !!hasVatOnDebits;
+    return req(cfg.base_url + "/v1.beta/companies", {
+      method: "PATCH",
+      headers: await this._h(cfg, { "Content-Type": "application/json" }),
+      body: JSON.stringify(body)
+    });
   },
 
   /**
@@ -455,6 +594,14 @@ const mock = {
   async sendEvent() { return { ok: true }; },
   async validate() { return { is_valid: true, profile: "mock", errors: [] }; },
   async fetchFile() { throw new Error("[PA] mock : pas de fichier"); },
+  oauthAuthorizeUrl(cfg, { state }) { return "mock://authorize?state=" + encodeURIComponent(state); },
+  async oauthExchangeCode() { return { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 1800 }; },
+  async oauthRefresh() { return { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 1800 }; },
+  async oauthRevoke() { return { ok: true, status: 200 }; },
+  async session() { return { client_id: "mock", company_verification_status: "verified", user_identity_verification_status: "verified" }; },
+  async listDirectoryEntries() { return []; },
+  async createDirectoryEntry(cfg, { identifier }) { return { id: 1, identifier, status: "created", directory: "ppf" }; },
+  async updateVatRegime(cfg, { vatRegime }) { return { vat_regime: vatRegime }; },
   async parseWebhook(cfg, raw) {
     const p = JSON.parse(raw);
     return { valid: true, event: p.event || "mock", direction: p.direction || "outbound",
@@ -478,7 +625,11 @@ export function getProvider(creds) {
       client_secret: creds.client_secret,
       webhook_secret: creds.webhook_secret,
       base_url: (creds.base_url || impl.defaultBaseUrl[env] || "").replace(/\/$/, ""),
-      environment: env
+      environment: env,
+      // v8.130 — OAuth2 authorization_code. `access_token` est posé par
+      // pa-actions.loadCreds() après rafraîchissement éventuel.
+      auth_mode: creds.auth_mode === "authorization_code" ? "authorization_code" : "client_credentials",
+      access_token: creds.access_token || null
     }
   };
 }
