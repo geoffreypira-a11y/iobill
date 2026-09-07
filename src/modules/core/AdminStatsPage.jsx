@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { fmtEUR, fmtDate } from "../../lib/helpers.js";
+import { sourceAppLabel } from "../../lib/sourceApps.js";
 
 /**
  * AdminStatsPage — Vue business owner d'IO BILL (réservé is_admin).
@@ -60,11 +61,30 @@ export function AdminStatsPage({ token, company }) {
   const monthAgo = new Date(); monthAgo.setDate(monthAgo.getDate() - 30);
   const weekFromNow = new Date(); weekFromNow.setDate(weekFromNow.getDate() + 7);
 
-  // On suppose ici que sub_status='active' = abonné mensuel.
-  // Pour l'annuel, on ne peut pas le distinguer sans interroger Stripe directement.
-  // Heuristique simple : on traite tout active comme du mensuel (estim. conservatrice).
-  // Plus tard on peut stocker stripe_price_id sur companies pour distinguer.
+  // v8.133 — `sub_status='active'` ne veut PAS dire « paie ». `set_exempt`
+  // pose active + is_exempt : une société exemptée rapporte 0 €. Elle était
+  // pourtant comptée au tarif mensuel dans le MRR.
+  //
+  // Et une société pilotée par une app métier (IOCAR, IOBEAUTY…) n'a pas
+  // d'abonnement Stripe propre : son accès IO BILL est inclus dans celui de
+  // l'app source. Elle ne rapporte donc rien non plus au titre d'IO BILL —
+  // elle se compte en « métiers actifs », pas en abonnés.
+  const isIobill = (c) => !c.source_app || c.source_app === "iobill";
+
   const active = companies.filter((c) => c.sub_status === "active" && !c._archived);
+  const exempt = active.filter((c) => isIobill(c) && c.is_exempt === true);
+  const business = active.filter((c) => !isIobill(c));
+  const paying = active.filter((c) => isIobill(c) && c.is_exempt !== true);
+
+  // Répartition des comptes métiers par app source, pour le sous-titre.
+  const businessByApp = business.reduce((acc, c) => {
+    const label = sourceAppLabel(c.source_app) || "Autre";
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+  const businessFoot = business.length === 0
+    ? "aucun"
+    : Object.entries(businessByApp).map(([k, n]) => `${k} : ${n}`).join(" · ");
   const trialing = companies.filter((c) => c.sub_status === "trialing" && !c._archived);
   const pastDue = companies.filter((c) => c.sub_status === "past_due" && !c._archived);
   const archived = companies.filter((c) => c._archived);
@@ -74,9 +94,13 @@ export function AdminStatsPage({ token, company }) {
     && new Date(c.payment_failed_at) >= monthAgo
   );
 
-  // MRR estimé (en supposant tout en mensuel)
-  const mrr = active.length * PRICE_MONTHLY;
+  // MRR : somme des équivalents mensuels, plan par plan.
+  // `sub_plan` absent (abonnements antérieurs à la colonne) → mensuel, comme avant.
+  const monthlyEquiv = (c) =>
+    c.sub_plan === "pro_yearly" ? PRICE_YEARLY_MONTHLY_EQUIV : PRICE_MONTHLY;
+  const mrr = paying.reduce((sum, c) => sum + monthlyEquiv(c), 0);
   const arr = mrr * 12;
+  const unknownPlan = paying.filter((c) => !c.sub_plan).length;
 
   // Nouvelles inscriptions ce mois
   const newThisMonth = companies.filter((c) =>
@@ -86,8 +110,11 @@ export function AdminStatsPage({ token, company }) {
   // Funnel : tous inscrits, ont démarré l'essai, ont payé, encore actifs
   const totalSignups = companies.length;
   const startedTrial = companies.filter((c) => c.subscribed_at || c.sub_status === "trialing" || c.sub_status === "active").length;
-  const converted = companies.filter((c) => c.subscribed_at).length;
-  const stillActive = active.length;
+  // Un exempté n'a jamais payé : il ne compte ni en converti, ni en retenu.
+  // Sans ça, 6 actifs pour 1 converti donnaient « rétention 600 % ».
+  const converted = companies.filter((c) =>
+    c.subscribed_at && c.is_exempt !== true && isIobill(c)).length;
+  const stillActive = paying.length;
   const trialToPaidRate = startedTrial > 0 ? (converted / startedTrial * 100) : 0;
   const retentionRate = converted > 0 ? (stillActive / converted * 100) : 0;
 
@@ -114,12 +141,12 @@ export function AdminStatsPage({ token, company }) {
     }).length;
     // Abonnés actifs à la fin du mois (estim.) : ceux qui se sont abonnés avant ou pendant ET pas annulés avant
     const activeAtEnd = companies.filter((c) => {
-      if (!c.subscribed_at) return false;
+      if (!c.subscribed_at || c.is_exempt === true || !isIobill(c)) return false;
       if (new Date(c.subscribed_at) >= nextMonth) return false;
       // Considéré actif si pas canceled (approximation)
       return c.sub_status === "active" || (c.sub_status === "canceled" && c.payment_failed_at && new Date(c.payment_failed_at) >= nextMonth);
-    }).length;
-    months.push({ label, signups: signupsCount, subs: subsCount, mrr: activeAtEnd * PRICE_MONTHLY });
+    }).reduce((sum, c) => sum + monthlyEquiv(c), 0);
+    months.push({ label, signups: signupsCount, subs: subsCount, mrr: activeAtEnd });
   }
   const maxMrr = Math.max(...months.map((m) => m.mrr), 1);
 
@@ -140,8 +167,11 @@ export function AdminStatsPage({ token, company }) {
 
       {/* ─── KPIs principaux ─── */}
       <div className="kpi-grid" style={{ marginBottom: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-        <Kpi label="MRR" value={fmtCurrency(mrr)} color="gold" foot={`${active.length} abonné${active.length > 1 ? "s" : ""} actif${active.length > 1 ? "s" : ""}`} big />
+        <Kpi label="MRR" value={fmtCurrency(mrr)} color="gold" big
+             foot={`${paying.length} abonné${paying.length > 1 ? "s" : ""} payant${paying.length > 1 ? "s" : ""}`
+               + (exempt.length > 0 ? ` · ${exempt.length} exempté${exempt.length > 1 ? "s" : ""}` : "")} />
         <Kpi label="ARR" value={fmtCurrency(arr)} foot="× 12 mois" />
+        <Kpi label="Métiers actifs" value={business.length} color="muted" foot={businessFoot} />
         <Kpi label="En essai" value={trialing.length} color="green" foot={trialsExpiringSoon.length > 0 ? `⚠ ${trialsExpiringSoon.length} expire${trialsExpiringSoon.length > 1 ? "nt" : ""} cette semaine` : "OK"} />
         <Kpi label="Impayés" value={pastDue.length} color={pastDue.length > 0 ? "red" : "muted"} foot={pastDue.length > 0 ? "à relancer" : "✓"} />
         <Kpi label="Churn 30j" value={canceled30j.length} color={canceled30j.length > 0 ? "red" : "muted"} foot={canceled30j.length === 0 ? "0 départ ce mois" : "désinscriptions"} />
@@ -243,10 +273,17 @@ export function AdminStatsPage({ token, company }) {
         ))}
       </div>
 
-      <div style={{ marginTop: 16, fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
-        MRR calculé sur l'hypothèse Pro mensuel 14,90 € HT.
-        Pour distinguer les annuels (149 € HT = 12,42 €/mois équivalent), il faudrait stocker
-        le price_id Stripe sur companies — à ajouter si la part annuelle devient significative.
+      <div style={{ marginTop: 16, fontSize: 11, color: "var(--muted)", textAlign: "center", lineHeight: 1.7 }}>
+        MRR = somme des équivalents mensuels des abonnés <strong>payants</strong> :
+        {" "}Pro mensuel {fmtCurrency(PRICE_MONTHLY)} HT,
+        {" "}Pro annuel {fmtCurrency(PRICE_YEARLY)} HT ≈ {fmtCurrency(PRICE_YEARLY_MONTHLY_EQUIV)}/mois.
+        {" "}Les sociétés exemptées et les comptes pilotés par une app métier
+        {" "}(IO CAR, IO BEAUTY…) sont exclus : ils ne paient pas d'abonnement IO BILL.
+        {unknownPlan > 0 && (
+          <><br />⚠ {unknownPlan} abonnement{unknownPlan > 1 ? "s" : ""} sans plan connu
+          {" "}(souscrit avant l'enregistrement du plan) compté{unknownPlan > 1 ? "s" : ""} en mensuel.
+          {" "}À corriger en base via <code>sub_plan</code>.</>
+        )}
       </div>
     </div>
   );

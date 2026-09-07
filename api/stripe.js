@@ -129,6 +129,10 @@ async function handleCheckout(req, res, rawBody) {
     customer: customerId,
     "line_items[0][price]": priceId,
     "line_items[0][quantity]": "1",
+    // v8.133 — Le plan retenu, pour le retrouver au webhook. Sans ça, on ne
+    // sait pas si l'abonné paie au mois ou à l'année, et le MRR compte tout
+    // le monde au tarif mensuel.
+    "metadata[plan]": plan,
     success_url: origin + "/settings?checkout=success",
     cancel_url: origin + "/settings?checkout=cancel",
     "subscription_data[metadata][company_id]": auth.company.id,
@@ -178,12 +182,20 @@ async function handleWebhook(req, res, rawBody, sig) {
         const companyId = session.metadata?.company_id
           || (await findCompanyByCustomer(session.customer))?.id;
         if (companyId) {
-          await sbAdmin.update("companies", "id=eq." + companyId, {
+          // v8.133 — `sub_plan` : 'pro_monthly' | 'pro_yearly'. Absent des
+          // métadonnées (paiement créé avant cette version) → on ne touche
+          // pas à la colonne plutôt que d'écrire une valeur fausse.
+          const paidPlan = session.metadata?.plan === "pro_yearly" ? "pro_yearly"
+            : session.metadata?.plan === "pro_monthly" ? "pro_monthly"
+            : null;
+          const subPatch = {
             stripe_subscription_id: session.subscription,
             sub_status: "active",
             subscribed_at: new Date().toISOString(),
             payment_failed_at: null
-          });
+          };
+          if (paidPlan) subPatch.sub_plan = paidPlan;
+          await sbAdmin.update("companies", "id=eq." + companyId, subPatch);
           // Email bienvenue Pro
           await sendWelcomeEmail({
             to: session.customer_email || session.customer_details?.email,
