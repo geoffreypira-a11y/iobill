@@ -72,8 +72,20 @@ async function logEvent(row) {
    concernées : leur `auth_mode` reste à sa valeur par défaut et rien
    dans leur chemin d'exécution ne change.                             */
 
-const OAUTH_CLIENT_ID     = process.env.SUPERPDP_OAUTH_CLIENT_ID || "";
-const OAUTH_CLIENT_SECRET = process.env.SUPERPDP_OAUTH_CLIENT_SECRET || "";
+/** Identifiants de l'application OAuth IO BILL.
+
+    SUPER PDP crée une application PAR ENVIRONNEMENT : celle du bac à sable
+    est gratuite, celle de production suppose une souscription à l'offre API.
+    On accepte donc un couple dédié au sandbox, avec repli sur le couple
+    principal quand il n'y en a qu'un. */
+function oauthApp(environment) {
+  const sandbox = environment !== "production";
+  const clientId = (sandbox && process.env.SUPERPDP_OAUTH_CLIENT_ID_SANDBOX)
+    || process.env.SUPERPDP_OAUTH_CLIENT_ID || "";
+  const clientSecret = (sandbox && process.env.SUPERPDP_OAUTH_CLIENT_SECRET_SANDBOX)
+    || process.env.SUPERPDP_OAUTH_CLIENT_SECRET || "";
+  return { clientId, clientSecret };
+}
 
 /** L'URL de redirection doit être IDENTIQUE à celle déclarée dans
     l'interface SUPER PDP, au caractère près. */
@@ -82,11 +94,14 @@ function oauthRedirectUri() {
       || ((process.env.APP_URL || "https://app.iobill.online") + "/pa/callback");
 }
 
-function requireOauthApp() {
-  if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
-    throw fail(503, "Application OAuth non configurée : renseignez "
-      + "SUPERPDP_OAUTH_CLIENT_ID et SUPERPDP_OAUTH_CLIENT_SECRET.");
+function requireOauthApp(environment) {
+  const app = oauthApp(environment);
+  if (!app.clientId || !app.clientSecret) {
+    throw fail(503, "Application OAuth non configurée pour l'environnement « "
+      + (environment || "sandbox") + " » : renseignez SUPERPDP_OAUTH_CLIENT_ID "
+      + "et SUPERPDP_OAUTH_CLIENT_SECRET (suffixe _SANDBOX pour le bac à sable).");
   }
+  return app;
 }
 
 /** Applique un couple de jetons reçu de /oauth2/token sur la ligne. */
@@ -117,15 +132,15 @@ async function ensureAccessToken(creds) {
     throw fail(400, "Compte non raccordé à la plateforme agréée. "
       + "Relancez le raccordement depuis Réglages → Plateforme Agréée.");
   }
-  requireOauthApp();
+  const app = requireOauthApp(creds.environment);
 
   const { impl, cfg } = getProvider(creds);
   let tok;
   try {
     tok = await impl.oauthRefresh(cfg, {
       refreshToken: creds.refresh_token,
-      clientId: OAUTH_CLIENT_ID,
-      clientSecret: OAUTH_CLIENT_SECRET
+      clientId: app.clientId,
+      clientSecret: app.clientSecret
     });
   } catch (e) {
     // Une exécution concurrente a pu consommer le refresh_token juste avant
@@ -1131,8 +1146,6 @@ function sirenOf(company) {
 
 /** Étape 1 — renvoie l'URL du tunnel SUPER PDP à ouvrir dans le navigateur. */
 export async function paOauthStart(company, payload = {}) {
-  requireOauthApp();
-
   const siren = sirenOf(company);
   if (!siren) {
     throw fail(400, "SIRET de la société manquant ou invalide : "
@@ -1161,6 +1174,7 @@ export async function paOauthStart(company, payload = {}) {
     updated_by: "oauth"
   }], "company_id");
 
+  const app = requireOauthApp(environment);
   const { impl, cfg } = getProvider({
     company_id: company.id, provider: "superpdp", environment
   });
@@ -1173,7 +1187,7 @@ export async function paOauthStart(company, payload = {}) {
     : "receive";
 
   const url = impl.oauthAuthorizeUrl(cfg, {
-    clientId: OAUTH_CLIENT_ID,
+    clientId: app.clientId,
     redirectUri: oauthRedirectUri(),
     state,
     loginHint: payload.email || company.email || null,
@@ -1210,15 +1224,15 @@ export async function paOauthCallback({ code, state, error, errorDescription }) 
     return { ok: false, message: "Demande expirée. Relancez le raccordement." };
   }
 
-  requireOauthApp();
+  const app = requireOauthApp(row.environment);
   const { impl, cfg } = getProvider(row);
 
   let tok;
   try {
     tok = await impl.oauthExchangeCode(cfg, {
       code,
-      clientId: OAUTH_CLIENT_ID,
-      clientSecret: OAUTH_CLIENT_SECRET,
+      clientId: app.clientId,
+      clientSecret: app.clientSecret,
       redirectUri: oauthRedirectUri()
     });
   } catch (e) {
@@ -1355,13 +1369,14 @@ export async function paVatRegimeSave(company, payload = {}) {
 /** Débranche la société : révoque le refresh_token puis efface les jetons. */
 export async function paOauthUnlink(company) {
   const creds = await loadCreds(company.id, { requireEnabled: false });
-  if (creds.auth_mode === "authorization_code" && creds.refresh_token && OAUTH_CLIENT_ID) {
+  const app = oauthApp(creds.environment);
+  if (creds.auth_mode === "authorization_code" && creds.refresh_token && app.clientId) {
     const { impl, cfg } = getProvider(creds);
     try {
       await impl.oauthRevoke(cfg, {
         token: creds.refresh_token,
-        clientId: OAUTH_CLIENT_ID,
-        clientSecret: OAUTH_CLIENT_SECRET
+        clientId: app.clientId,
+        clientSecret: app.clientSecret
       });
     } catch (_) { /* la révocation est best-effort, l'effacement local prime */ }
   }

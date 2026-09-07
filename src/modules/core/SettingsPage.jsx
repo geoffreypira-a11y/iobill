@@ -1678,6 +1678,7 @@ function PaLinkPanel({ token, company, cfg }) {
   const [msg, setMsg] = useState({ kind: null, text: "" });
   const [status, setStatus] = useState(null);
   const [vatRegime, setVatRegime] = useState("");
+  const [env, setEnv] = useState(cfg.environment || "production");
 
   // Message de retour du tunnel (?pa_link=ok|err)
   useEffect(() => {
@@ -1706,7 +1707,7 @@ function PaLinkPanel({ token, company, cfg }) {
   async function connect() {
     setBusy("connect"); setMsg({ kind: null, text: "" });
     try {
-      const j = await call("pa_oauth_start", {});
+      const j = await call("pa_oauth_start", { environment: env });
       window.location.href = j.url;
     } catch (e) {
       setMsg({ kind: "err", text: e.message });
@@ -1779,10 +1780,17 @@ function PaLinkPanel({ token, company, cfg }) {
                   Renseignez d'abord le SIRET de la société dans l'onglet Profil.
                 </span>}
           </p>
-          <button className="btn btn-primary" onClick={connect}
-            disabled={busy === "connect" || !company.siret}>
-            {busy === "connect" ? "Redirection…" : "🔗 Raccorder ma société"}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select className="form-input" style={{ maxWidth: 200 }}
+              value={env} onChange={(e) => setEnv(e.target.value)}>
+              <option value="production">Production</option>
+              <option value="sandbox">Bac à sable</option>
+            </select>
+            <button className="btn btn-primary" onClick={connect}
+              disabled={busy === "connect" || !company.siret}>
+              {busy === "connect" ? "Redirection…" : "🔗 Raccorder ma société"}
+            </button>
+          </div>
         </>
       ) : (
         <>
