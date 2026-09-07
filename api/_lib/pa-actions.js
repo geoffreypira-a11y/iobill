@@ -1146,16 +1146,23 @@ function sirenOf(company) {
 
 /** Étape 1 — renvoie l'URL du tunnel SUPER PDP à ouvrir dans le navigateur. */
 export async function paOauthStart(company, payload = {}) {
-  const siren = sirenOf(company);
-  if (!siren) {
-    throw fail(400, "SIRET de la société manquant ou invalide : "
-      + "renseignez-le dans Réglages avant de vous raccorder.");
-  }
-
   const existing = await sbAdmin.selectOne("pa_credentials", "company_id=eq." + company.id);
   const environment = payload.environment
     || existing?.environment
     || "production";
+
+  // En production, le SIREN est indispensable : c'est lui qui identifie la
+  // société auprès du PPF et qui devient son adresse d'annuaire.
+  // En bac à sable, SUPER PDP ne connaît que ses entreprises fictives —
+  // un SIREN réel n'y correspond à rien, donc on ne pré-remplit rien et on
+  // laisse l'utilisateur choisir la société de test dans leur tunnel.
+  const siren = sirenOf(company);
+  if (environment === "production" && !siren) {
+    throw fail(400, "SIRET de la société manquant ou invalide : "
+      + "renseignez-le dans Réglages avant de vous raccorder.");
+  }
+  const prefillNumber = payload.company_number
+    || (environment === "production" ? siren : null);
 
   // `state` : anti-CSRF ET porteur du lien vers la société, puisque le
   // callback arrive du navigateur sans jeton d'application.
@@ -1191,9 +1198,10 @@ export async function paOauthStart(company, payload = {}) {
     redirectUri: oauthRedirectUri(),
     state,
     loginHint: payload.email || company.email || null,
-    companyNumber: siren,
+    companyNumber: prefillNumber,
     companyNumberScheme: environment === "production" ? "fr_siren" : "sandbox",
-    directoryEntryIdentifier: siren,
+    // L'adresse d'annuaire pré-remplie n'a de sens qu'avec un vrai SIREN.
+    directoryEntryIdentifier: environment === "production" ? siren : null,
     sendAndReceive
   });
 

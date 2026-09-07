@@ -1771,11 +1771,13 @@ function PaLinkPanel({ token, company, cfg }) {
       {!linked ? (
         <>
           <p style={{ fontSize: 12.5, color: "var(--muted2)", lineHeight: 1.6, margin: "0 0 12px" }}>
-            {company.siret
+            {(company.siret || env === "sandbox")
               ? <>Vous allez être redirigé vers la plateforme agréée pour autoriser IO BILL
                   à émettre et recevoir vos factures. Votre <b>adresse dans l'annuaire</b> est
                   créée pendant ce parcours : sans elle, vos fournisseurs ne peuvent pas
-                  vous envoyer de facture.</>
+                  vous envoyer de facture.
+                  {env === "sandbox" && <><br /><i>Bac à sable : la société de test se
+                  choisit dans le tunnel, le SIRET réel n'est pas transmis.</i></>}</>
               : <span style={{ color: "var(--red, #e54949)" }}>
                   Renseignez d'abord le SIRET de la société dans l'onglet Profil.
                 </span>}
@@ -1787,7 +1789,7 @@ function PaLinkPanel({ token, company, cfg }) {
               <option value="sandbox">Bac à sable</option>
             </select>
             <button className="btn btn-primary" onClick={connect}
-              disabled={busy === "connect" || !company.siret}>
+              disabled={busy === "connect" || (!company.siret && env !== "sandbox")}>
               {busy === "connect" ? "Redirection…" : "🔗 Raccorder ma société"}
             </button>
           </div>
