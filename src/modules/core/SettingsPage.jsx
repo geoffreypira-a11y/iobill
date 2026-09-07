@@ -1826,25 +1826,37 @@ function PaLinkPanel({ token, company, cfg }) {
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
               Cliquez sur « Vérifier » pour lire l'annuaire.
             </div>
-          ) : entries.length === 0 ? (
-            <div style={{
-              padding: "8px 12px", borderRadius: 6, fontSize: 12,
-              background: "rgba(229,73,73,.10)", color: "var(--red, #e54949)"
-            }}>
-              Aucune adresse : cette société ne peut recevoir aucune facture.
-            </div>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
-              {entries.map((e) => (
-                <li key={e.id}>
-                  <span className="mono">{e.identifier}</span>
-                  {" · "}{e.directory}
-                  {" · "}{e.status === "created" ? "✅ active"
-                        : e.status === "pending" ? "⏳ en attente" : "❌ " + (e.status_message || e.status)}
-                  {e.effective_date ? " · effet " + String(e.effective_date).slice(0, 10) : ""}
-                </li>
-              ))}
-            </ul>
+            <>
+              {/* Une adresse « reply-to » est une adresse TECHNIQUE du réseau
+                  Peppol, destinée aux accusés liés à une facture déjà envoyée.
+                  Elle ne rend pas la société joignable : si c'est la seule,
+                  personne ne peut lui envoyer de facture. */}
+              {entries.filter((e) => !e.is_replyto).length === 0 && (
+                <div style={{
+                  padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 8,
+                  background: "rgba(229,73,73,.10)", color: "var(--red, #e54949)"
+                }}>
+                  Aucune adresse de réception : cette société ne peut recevoir aucune facture.
+                </div>
+              )}
+              {entries.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
+                  {entries.map((e) => (
+                    <li key={e.id} style={e.is_replyto ? { color: "var(--muted)" } : undefined}>
+                      <span className="mono">{e.identifier}</span>
+                      {" · "}{e.directory}
+                      {" · "}{e.status === "created" ? "✅ active"
+                            : e.status === "pending" ? "⏳ en attente" : "❌ " + (e.status_message || e.status)}
+                      {e.effective_date ? " · effet " + String(e.effective_date).slice(0, 10) : ""}
+                      {e.is_replyto && (
+                        <> — <i>adresse technique, pas une adresse de réception</i></>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
 
           {/* Régime de TVA — commande le rythme d'e-reporting */}
