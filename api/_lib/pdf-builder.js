@@ -598,6 +598,22 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
 
   // ─── Totaux ───
   const totalsX = width - 220;
+
+  // v8.70 — Remise commerciale. Elle est déjà déduite du prix des lignes : la
+  // lire après les montants nets inviterait à la retrancher une seconde fois.
+  // Elle s'affiche donc AVANT, où elle s'additionne — même présentation que la
+  // facture IOCAR. Purement documentaire : la base taxable étant déjà nette, le
+  // XML Factur-X n'en porte pas trace.
+  const remiseCents = Math.max(0, Math.round(Number(doc.vehicle_meta?.remise_ttc_cents || 0)));
+  if (remiseCents > 0) {
+    page.drawText("Sous-total TTC avant remise", { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
+    drawRight(page, formatEUR(doc.total_ttc_cents + remiseCents), width - 40, y, 9, font, COLORS.dark);
+    y -= 14;
+    page.drawText("Remise accordée", { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
+    drawRight(page, "- " + formatEUR(remiseCents), width - 40, y, 9, font, COLORS.dark);
+    y -= 14;
+  }
+
   // v8.39 — En mode marge : pas de "Total HT" ni "TVA %" séparés, juste le TTC
   if (!isMargeTva) {
     page.drawText("Total HT", { x: totalsX, y, size: 9, font, color: COLORS.grey });
