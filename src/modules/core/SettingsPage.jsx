@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
+import { SirenLookup, TvaIntraNote } from "../../components/SirenLookup.jsx";
 import { fmtDate, isSiret, formatSiret, isEmail } from "../../lib/helpers.js";
 import { useT, useLang, getLang, setLang } from "../../lib/i18n.js";
 import { resetTour } from "../../components/OnboardingTour.jsx";
@@ -112,6 +113,20 @@ function ProfileTab({ token, company, setCompany }) {
   const isExternal = sourceApp !== "iobill" && managedFields.size > 0;
   const sourceLabel = sourceAppLabel(sourceApp) || String(sourceApp).toUpperCase();
 
+  // v8.174 — Résultat de l'annuaire. On passe par update() champ par champ
+  // pour ne contourner aucun garde-fou ; l'adresse ne comble que du vide, le
+  // siège social n'étant pas forcément l'adresse de facturation.
+  function applySiren(d) {
+    update("siret", d.siret || data.siret);
+    if (d.raison_sociale) update("legal_name", d.raison_sociale);
+    if (!data.vat_number && d.tva_intra) update("vat_number", d.tva_intra);
+    if (!data.address_line1 && d.adresse) update("address_line1", d.adresse);
+    if (!data.postal_code && d.code_postal) update("postal_code", d.code_postal);
+    if (!data.city && d.ville) update("city", d.ville);
+    if (!data.country) update("country", "FR");
+    if (!data.ape_code && d.activite) update("ape_code", d.activite);
+  }
+
   function update(k, v) {
     // Si champ géré par source externe et valeur changée, on demande confirmation
     if (managedFields.has(k) && String(v ?? "") !== String(data[k] ?? "")) {
@@ -195,9 +210,27 @@ function ProfileTab({ token, company, setCompany }) {
         <Field label={fieldLabel("Nom commercial", "trade_name", managedFields, sourceApp)} value={data.trade_name} onChange={(v) => update("trade_name", v)} />
         <Field label="Forme juridique" value={data.legal_form} onChange={(v) => update("legal_form", v)} />
         <Field label="Code APE" value={data.ape_code} onChange={(v) => update("ape_code", v)} />
-        <Field label={fieldLabel("SIRET", "siret", managedFields, sourceApp)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
+        {/* v8.174 — Recherche annuaire, sauf si l'identité est pilotée depuis
+            une autre application : chaque champ géré déclencherait sa propre
+            confirmation « sera écrasé à la prochaine synchro », et cinq
+            d'affilée pour un seul clic. Là-bas c'est à la source qu'on corrige. */}
+        {isExternal ? (
+          <Field label={fieldLabel("SIRET", "siret", managedFields, sourceApp)} value={data.siret ? formatSiret(data.siret) : ""} onChange={(v) => update("siret", v.replace(/\s/g, ""))} />
+        ) : (
+          <SirenLookup
+            label="SIRET"
+            value={data.siret}
+            onChange={(v) => update("siret", v)}
+            onResult={applySiren}
+          />
+        )}
         <Field label="N° RCS" value={data.rcs} onChange={(v) => update("rcs", v)} />
-        <Field label={fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceApp)} value={data.vat_number} onChange={(v) => update("vat_number", (v || "").toUpperCase())} />
+        <div className="form-row">
+          <label className="form-label">{fieldLabel("N° TVA intracom.", "vat_number", managedFields, sourceApp)}</label>
+          <input className="form-input" value={data.vat_number || ""}
+            onChange={(e) => update("vat_number", (e.target.value || "").toUpperCase())} />
+          <TvaIntraNote siren={data.siret} value={data.vat_number} />
+        </div>
       </div>
 
       <SectionTitle style={{ marginTop: 24 }}>Adresse</SectionTitle>
