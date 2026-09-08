@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { sb } from "../../lib/supabase.js";
 import { Icon } from "../../components/Icon.jsx";
 import { CLIENT_STATUTS, CLIENT_SOURCES } from "./constants.js";
-import { isEmailList, isSiret, isSiretOrSiren, formatSiret } from "../../lib/helpers.js";
+import { isEmailList, isSiretOrSiren } from "../../lib/helpers.js";
+import { SirenLookup, TvaIntraNote } from "../../components/SirenLookup.jsx";
 import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 
 export function ClientModal({ token, company, client, onSave, onClose }) {
@@ -34,6 +35,22 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
   const [err, setErr] = useState("");
 
   function update(k, v) { setData((d) => ({ ...d, [k]: v })); }
+
+  // v8.174 — Résultat de l'annuaire. La raison sociale et le n° de TVA
+  // viennent du registre, on les pose ; l'adresse ne comble que des champs
+  // vides, le siège social n'étant pas toujours l'adresse de facturation.
+  function applySiren(d) {
+    setData((prev) => ({
+      ...prev,
+      legal_name: d.raison_sociale || prev.legal_name,
+      siret: d.siret || prev.siret,
+      vat_number: prev.vat_number || d.tva_intra || "",
+      address_line1: prev.address_line1 || d.adresse || "",
+      postal_code: prev.postal_code || d.code_postal || "",
+      city: prev.city || d.ville || "",
+      country: prev.country || "FR",
+    }));
+  }
 
   async function save() {
     setErr("");
@@ -117,8 +134,19 @@ export function ClientModal({ token, company, client, onSave, onClose }) {
               <>
                 <Field label="Raison sociale *" value={data.legal_name} onChange={(v) => update("legal_name", v)} full />
                 <Field label="Personne contact" value={data.contact_person} onChange={(v) => update("contact_person", v)} />
-                <Field label="SIRET (14 chiffres) ou SIREN (9)" value={data.siret} onChange={(v) => update("siret", formatSiret(v))} />
-                <Field label="N° TVA intracom." value={data.vat_number} onChange={(v) => update("vat_number", v.toUpperCase())} />
+                {/* v8.174 — Saisir le SIRET suffit : l'annuaire des entreprises
+                    remplit raison sociale, adresse et n° de TVA. */}
+                <SirenLookup
+                  value={data.siret}
+                  onChange={(v) => update("siret", v)}
+                  onResult={applySiren}
+                />
+                <div className="form-row">
+                  <label className="form-label">N° TVA intracom.</label>
+                  <input className="form-input" value={data.vat_number}
+                    onChange={(e) => update("vat_number", e.target.value.toUpperCase())} />
+                  <TvaIntraNote siren={data.siret} value={data.vat_number} />
+                </div>
               </>
             ) : (
               <>
