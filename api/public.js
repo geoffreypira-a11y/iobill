@@ -1048,7 +1048,14 @@ async function handlePushInvoice(body, res) {
       paid_cents: paidCents,
       vat_breakdown: totals.vat_breakdown,
       notes: invoice.notes || (businessMode === "standard" ? buildNotesFromMeta(invoice) : null),
-      terms: invoice.terms || null,
+      // v8.181 — `payment_terms` : la date à laquelle le règlement doit
+      // intervenir est une mention obligatoire (art. 242 nonies A 9° du CGI).
+      // Le pont IOCAR l'envoie sous ce nom ; elle se range dans la colonne
+      // `terms`, qui est justement le texte de conditions imprimé sur le PDF et
+      // servi au Factur-X. Sans cela le champ tombait dans le vide — cette
+      // liste est une liste blanche — et le générateur écrivait son propre
+      // texte par défaut, différent de celui imprimé par IOCAR.
+      terms: invoice.terms || invoice.payment_terms || null,
       external_source: company.source_app,
       external_id: String(externalId),
       // v8.38 — Mode métier + métadonnées véhicule (mode garage)

@@ -971,7 +971,7 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
         </ram:CategoryTradeTax>
       </ram:SpecifiedTradeAllowanceCharge>` : ""}
       <ram:SpecifiedTradePaymentTerms>
-        <ram:Description>${x(doc.payment_terms || "Paiement à réception de la facture")}</ram:Description>${doc.due_date ? `
+        <ram:Description>${x(doc.payment_terms || doc.terms || "Paiement à réception de la facture")}</ram:Description>${doc.due_date ? `
         <ram:DueDateDateTime><udt:DateTimeString format="102">${dt(doc.due_date)}</udt:DateTimeString></ram:DueDateDateTime>` : ""}
       </ram:SpecifiedTradePaymentTerms>
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
