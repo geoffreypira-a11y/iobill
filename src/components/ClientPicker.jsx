@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { sb } from "../lib/supabase.js";
-import { initials, isSiretOrSiren, formatSiret } from "../lib/helpers.js";
+import { SirenLookup, TvaIntraNote } from "./SirenLookup.jsx";
+import { initials, isSiretOrSiren } from "../lib/helpers.js";
 
 function displayName(c) {
   if (c.client_type === "individual") {
@@ -200,8 +201,27 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [siret, setSiret] = useState("");   // v8.48.17 — indispensable pour la PA
+  // v8.175 — Adresse et n° de TVA : ce formulaire ne les demandait pas, alors
+  // qu'une facture a besoin de l'adresse du client (et le Factur-X de sa
+  // commune et de son pays). La recherche annuaire les rapporte, il aurait
+  // été dommage de les jeter — ils restent modifiables avant création.
+  const [vatNumber, setVatNumber] = useState("");
+  const [addr1, setAddr1] = useState("");
+  const [cp, setCp] = useState("");
+  const [ville, setVille] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // Résultat de l'annuaire : la raison sociale du registre fait foi, le reste
+  // ne comble que ce qui est vide — on n'écrase pas une saisie.
+  function applySiren(d) {
+    if (d.raison_sociale) setLegalName(d.raison_sociale);
+    if (d.siret) setSiret(d.siret);
+    setVatNumber((v) => v || d.tva_intra || "");
+    setAddr1((v) => v || d.adresse || "");
+    setCp((v) => v || d.code_postal || "");
+    setVille((v) => v || d.ville || "");
+  }
 
   async function save(e) {
     if (e) e.preventDefault();
@@ -229,6 +249,11 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
         first_name: clientType === "individual" ? firstName.trim() : null,
         last_name: clientType === "individual" ? lastName.trim() : null,
         siret: clientType === "company" ? (siret.replace(/\s/g, "") || null) : null,
+        vat_number: clientType === "company" ? (vatNumber.trim() || null) : null,
+        address_line1: addr1.trim() || null,
+        postal_code: cp.trim() || null,
+        city: ville.trim() || null,
+        country: "FR",
         email: email.trim() || null,
         phone: phone.trim() || null
       };
@@ -366,20 +391,46 @@ function QuickClientCreateModal({ token, company, onClose, onCreated }) {
           </div>
 
           {clientType === "company" && (
-            <div className="form-row" style={{ marginBottom: 12 }}>
-              <label className="form-label">SIRET (14 chiffres) ou SIREN (9)</label>
-              <input
-                className="form-input mono"
+            <div style={{ marginBottom: 12 }}>
+              {/* v8.175 — Saisir le SIRET suffit : l'annuaire remplit raison
+                  sociale, adresse et n° de TVA. */}
+              <SirenLookup
                 value={siret}
-                onChange={(e) => setSiret(formatSiret(e.target.value))}
-                placeholder="123 456 789 00012"
-                disabled={saving}
+                onChange={setSiret}
+                onResult={applySiren}
               />
-              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, marginBottom: 12 }}>
                 Recommandé pour transmettre les factures via la Plateforme Agréée.
+              </div>
+              <div className="form-row" style={{ marginBottom: 12 }}>
+                <label className="form-label">N° TVA intracom.</label>
+                <input className="form-input" value={vatNumber}
+                  onChange={(e) => setVatNumber(e.target.value.toUpperCase())}
+                  placeholder="FR..." disabled={saving} />
+                <TvaIntraNote siren={siret} value={vatNumber} />
               </div>
             </div>
           )}
+
+          {/* L'adresse figure sur la facture : autant la saisir ici plutôt que
+              de rouvrir la fiche client juste après. */}
+          <div className="form-row" style={{ marginBottom: 12 }}>
+            <label className="form-label">Adresse</label>
+            <input className="form-input" value={addr1} onChange={(e) => setAddr1(e.target.value)}
+              placeholder="12 rue de la Paix" disabled={saving} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 12 }}>
+            <div className="form-row" style={{ margin: 0 }}>
+              <label className="form-label">Code postal</label>
+              <input className="form-input" value={cp} onChange={(e) => setCp(e.target.value)}
+                placeholder="75001" disabled={saving} />
+            </div>
+            <div className="form-row" style={{ margin: 0 }}>
+              <label className="form-label">Ville</label>
+              <input className="form-input" value={ville} onChange={(e) => setVille(e.target.value)}
+                placeholder="Paris" disabled={saving} />
+            </div>
+          </div>
 
           <div className="form-row" style={{ marginBottom: 16 }}>
             <label className="form-label">Téléphone</label>
