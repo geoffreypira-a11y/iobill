@@ -26,18 +26,29 @@ const PIE_COLORS = [COLORS.gold, COLORS.green, COLORS.orange, COLORS.red, COLORS
 // ──────────────────────────────────────────────────────────────
 export function DashboardCharts({ token, company }) {
   const [invoices, setInvoices] = useState([]);
+  // v8.183 — Les avoirs : le CA affiché ne baissait jamais après une vente
+  // annulée, les graphiques ne lisant que les factures.
+  const [creditNotes, setCreditNotes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const list = await sb.select(token, "invoices", {
-        filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)`,
-        order: "issue_date.desc",
-        limit: 500
-      });
+      const [list, avoirs] = await Promise.all([
+        sb.select(token, "invoices", {
+          filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)`,
+          order: "issue_date.desc",
+          limit: 500
+        }),
+        sb.select(token, "credit_notes", {
+          filter: `company_id=eq.${company.id}&status=eq.issued`,
+          order: "issue_date.desc",
+          limit: 500
+        })
+      ]);
       if (!alive) return;
       setInvoices(list || []);
+      setCreditNotes(avoirs || []);
       setLoading(false);
     })();
     return () => { alive = false; };
@@ -57,7 +68,7 @@ export function DashboardCharts({ token, company }) {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 16 }}>
-      <RevenueChart invoices={invoices} />
+      <RevenueChart invoices={invoices} creditNotes={creditNotes} />
       <StatusDonut invoices={invoices} />
     </div>
   );
@@ -66,7 +77,7 @@ export function DashboardCharts({ token, company }) {
 // ──────────────────────────────────────────────────────────────
 //  CA mensuel sur les 12 derniers mois
 // ──────────────────────────────────────────────────────────────
-function RevenueChart({ invoices }) {
+function RevenueChart({ invoices, creditNotes = [] }) {
   const data = useMemo(() => {
     const now = new Date();
     const months = [];
@@ -89,13 +100,21 @@ function RevenueChart({ invoices }) {
         target.encaisse += (inv.paid_cents || 0) / 100;
       }
     });
+    // v8.183 — Un avoir réduit le CA du mois où il est émis. Il porte des
+    // montants positifs — c'est son statut qui dit qu'il annule — d'où la
+    // soustraction explicite.
+    creditNotes.forEach((cn) => {
+      const m = (cn.issue_date || "").slice(0, 7);
+      const target = months.find((mm) => mm.key === m);
+      if (target) target.ca_ht -= (cn.subtotal_ht_cents || 0) / 100;
+    });
 
     return months.map((m) => ({
       label: m.label,
       "CA HT": Math.round(m.ca_ht),
       "Encaissé": Math.round(m.encaisse)
     }));
-  }, [invoices]);
+  }, [invoices, creditNotes]);
 
   return (
     <div className="card card-pad">
@@ -211,11 +230,20 @@ export function TopClientsChart({ token, company }) {
     let alive = true;
     (async () => {
       const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
-      const invoices = await sb.select(token, "invoices", {
-        filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)&issue_date=gte.${yearStart}`,
-        select: "client_id,client_snapshot,subtotal_ht_cents",
-        limit: 500
-      });
+      const [invoices, avoirs] = await Promise.all([
+        sb.select(token, "invoices", {
+          filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)&issue_date=gte.${yearStart}`,
+          select: "client_id,client_snapshot,subtotal_ht_cents",
+          limit: 500
+        }),
+        // v8.183 — Sans les avoirs, un client dont la vente a été annulée
+        // restait en tête du classement.
+        sb.select(token, "credit_notes", {
+          filter: `company_id=eq.${company.id}&status=eq.issued&issue_date=gte.${yearStart}`,
+          select: "client_id,client_snapshot,subtotal_ht_cents",
+          limit: 500
+        })
+      ]);
       if (!alive) return;
 
       const byClient = {};
@@ -224,6 +252,12 @@ export function TopClientsChart({ token, company }) {
         const name = snapshotDisplayName(inv.client_snapshot);
         if (!byClient[key]) byClient[key] = { name, ca: 0 };
         byClient[key].ca += (inv.subtotal_ht_cents || 0) / 100;
+      });
+      (avoirs || []).forEach((cn) => {
+        const key = cn.client_id || "_none";
+        const name = snapshotDisplayName(cn.client_snapshot);
+        if (!byClient[key]) byClient[key] = { name, ca: 0 };
+        byClient[key].ca -= (cn.subtotal_ht_cents || 0) / 100;
       });
 
       const sorted = Object.values(byClient)
