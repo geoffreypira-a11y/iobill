@@ -44,19 +44,19 @@ export function CreditNotesListPage({ token, company }) {
   async function transmitCreditNote(cn) {
     setActionLoading(`transmit-${cn.id}`);
     try {
-      const r = await fetch("/api/generate-facturx", {
+      // v8.182 — On appelait generate-facturx avec `transmit_pdp`, chemin
+      // neutralisé en v8.47.1 qui répond 410 : la transmission échouait à tous
+      // les coups. Elle passe désormais par la Plateforme Agréée réelle, comme
+      // les factures.
+      const r = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          document_type: "credit_note",
-          document_id: cn.id,
-          transmit_pdp: true
-        })
+        body: JSON.stringify({ action: "pa_send_credit_note", payload: { credit_note_id: cn.id } })
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
       await refreshList();
-      showToast(`Avoir transmis via ${j.provider || "PDP"} (ID: ${j.transmission_id || "?"})`);
+      showToast(`Avoir transmis à la Plateforme Agréée (ID : ${j.pa_document_id || "?"})`);
     } catch (e) {
       showToast(e.message || "Erreur transmission PDP", "error");
     }

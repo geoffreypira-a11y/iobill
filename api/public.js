@@ -1770,7 +1770,23 @@ async function handlePushCreditNote(body, res) {
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
-      notes: credit_note.notes || null
+      notes: credit_note.notes || null,
+      // v8.182 — Ce qui manquait pour qu'un avoir soit fiscalement complet.
+      //
+      // Le numéro de la facture d'origine : mention obligatoire sur le
+      // document, et BT-25 du Factur-X. On ne stockait que `invoice_id`, un
+      // UUID interne qui ne dit rien au destinataire ni à l'administration.
+      source_invoice_number: credit_note.source_invoice_number || sourceInvoice.number || null,
+      // Le régime de la vente annulée, sans quoi le PDF ne pouvait pas porter
+      // la mention art. 297 A.
+      vat_regime: credit_note.vat_regime || sourceInvoice.vat_regime || null,
+      // La TVA sur marge à REPRENDRE (art. 297 A) : invisible sur le document
+      // (art. 297 E) mais bien due, et déclarée. Sans ces montants, celle d'une
+      // vente annulée restait due à jamais — la déclaration n'avait rien à
+      // soustraire.
+      purchase_price_cents: Number(credit_note.purchase_price_cents) || 0,
+      marge_cents: Number(credit_note.marge_cents) || 0,
+      tva_marge_cents: Number(credit_note.tva_marge_cents) || 0
     };
 
     let creditNoteRow;

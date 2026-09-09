@@ -414,6 +414,74 @@ export async function paSendInvoice(company, payload) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   v8.182 — TRANSMISSION D'UN AVOIR À LA PLATEFORME AGRÉÉE
+
+   Il n'en existait aucune. Les deux boutons « 🏛️ Transmettre » des avoirs
+   appelaient `generate-facturx` avec `transmit_pdp`, chemin neutralisé en
+   v8.47.1 qui répond 410 : l'abonné voyait « Transmission… » puis une erreur,
+   à chaque fois. Un avoir pouvait donc être émis, son Factur-X généré — il ne
+   quittait jamais IOBILL, et la facture d'origine restait transmise sans son
+   annulation.
+
+   Même chemin que paSendInvoice, aux différences près qui tiennent à la nature
+   du document : un avoir s'émet (`issued`) au lieu de se payer, et il n'y a pas
+   d'e-reporting de paiement (fr:212) à enchaîner — rien n'est encaissé.
+   ══════════════════════════════════════════════════════════════════ */
+export async function paSendCreditNote(company, payload) {
+  const id = payload.credit_note_id || payload.document_id;
+  if (!id) throw fail(400, "credit_note_id manquant");
+  const cn = await sbAdmin.selectOne("credit_notes", "id=eq." + id);
+  if (!cn) throw fail(404, "Avoir introuvable");
+  if (cn.company_id !== company.id) throw fail(403, "Avoir hors périmètre");
+  if (cn.status === "draft") throw fail(400, "Émets l'avoir avant de le transmettre");
+  if (cn.pdp_transmission_id) throw fail(409, "Avoir déjà transmis (id " + cn.pdp_transmission_id + ")");
+
+  const bytes = await fetchFacturxPdf(cn);
+  if (!bytes) throw fail(400, "PDF Factur-X absent — génère-le d'abord");
+
+  const creds = await loadCreds(company.id);
+  // Même porte que pour les factures : tant que l'admin n'a pas ouvert
+  // l'émission, rien ne part — l'avoir reste disponible, sa Factur-X est bien
+  // générée, elle n'est simplement pas télétransmise.
+  if (creds.transmission_enabled === false) {
+    throw fail(403, "Transmission PDP désactivée — l'émission vers la Plateforme Agréée n'est pas encore activée pour cette entreprise. (L'avoir reste disponible, la Factur-X est bien générée ; elle n'est simplement pas télétransmise.)");
+  }
+  const { impl, cfg } = getProvider(creds);
+
+  try {
+    // Le sens de l'opération est porté par le TypeCode 381 du CII, pas par le
+    // canal : un avoir B2C relève de l'e-reporting comme la facture qu'il annule.
+    const isB2C = cn.client_snapshot?.client_type === "individual";
+    const out = await impl.sendInvoice(cfg, {
+      bytes, contentType: "application/pdf", filename: (cn.number || "avoir") + ".pdf",
+      processingRule: isB2C ? "B2C" : undefined
+    });
+    await sbAdmin.update("credit_notes", "id=eq." + cn.id, {
+      pdp_provider: creds.provider,
+      pdp_transmission_id: out.pa_document_id,
+      pdp_transmitted_at: new Date().toISOString(),
+      facturx_status: "transmitted"
+    });
+    await logEvent({
+      company_id: company.id, direction: "outbound", provider: creds.provider,
+      // On rattache l'événement à la facture d'origine : c'est elle que l'avoir
+      // corrige, et c'est par elle qu'on relit l'historique d'une vente.
+      pa_document_id: out.pa_document_id, invoice_id: cn.invoice_id,
+      event_type: "credit_note.submitted", status: "deposee",
+      message: "Avoir " + (cn.number || "") + (cn.source_invoice_number ? " sur " + cn.source_invoice_number : "")
+    });
+    return { ok: true, pa_document_id: out.pa_document_id };
+  } catch (e) {
+    await sbAdmin.update("credit_notes", "id=eq." + cn.id, { facturx_status: "rejected" });
+    await logEvent({
+      company_id: company.id, direction: "outbound", invoice_id: cn.invoice_id,
+      event_type: "credit_note.error", status: "error", message: String(e.message).slice(0, 500)
+    });
+    throw e;
+  }
+}
+
 export async function paInvoiceStatus(company, payload) {
   const inv = await sbAdmin.selectOne("invoices", "id=eq." + payload.invoice_id);
   if (!inv || inv.company_id !== company.id) throw fail(404, "Facture introuvable");
@@ -1423,7 +1491,7 @@ export async function paOauthUnlink(company) {
 
 export const PA_SUBSCRIBER_ACTIONS = new Set([
   "pa_config", "pa_config_save", "pa_request_change",
-  "pa_validate", "pa_send", "pa_status",
+  "pa_validate", "pa_send", "pa_send_credit_note", "pa_status",
   "pa_inbox_sync", "pa_inbox_ack", "pa_inbox_convert", "pa_inbox_file",
   "pa_purchase_paid",
   "pa_invoice_encaisser",  // v8.57 — fr:212 côté vendeur
@@ -1444,6 +1512,7 @@ export async function handlePaAction({ action, payload, user, company, isAdmin }
     case "pa_request_change":  return paRequestChange(user, company, payload || {});
     case "pa_validate":        return paValidateInvoice(company, payload || {});
     case "pa_send":            return paSendInvoice(company, payload || {});
+    case "pa_send_credit_note": return paSendCreditNote(company, payload || {});
     case "pa_status":          return paInvoiceStatus(company, payload || {});
     case "pa_inbox_sync":      return paInboxSync(company);
     case "pa_inbox_ack":       return paInboxAck(company, payload || {});

@@ -230,6 +230,16 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
     page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font, color: COLORS.grey });
     extraDateY -= 12;
   }
+  // v8.182 — Un avoir doit désigner la facture qu'il annule : mention
+  // obligatoire (art. 242 nonies A du CGI). Elle n'apparaissait jusqu'ici que
+  // dans le libellé d'une ligne, et seulement parce qu'IOCAR l'y avait mise —
+  // un avoir créé nativement sortait sans.
+  if (docType === "credit_note" && doc.source_invoice_number) {
+    const txt = `Facture d'origine : ${doc.source_invoice_number}`;
+    const w = fontBold.widthOfTextAtSize(txt, 9);
+    page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font: fontBold, color: COLORS.dark });
+    extraDateY -= 12;
+  }
 
   // ─── BLOC CLIENT à droite, sous une ligne grise (pattern IOcar) ───
   let clientBlockTop = extraDateY - 10;
