@@ -427,7 +427,12 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
   // Largeurs relatives des colonnes (doivent sommer à 1.0)
   // Mode TVA normale : [Désignation, Qté, Unité, P.U., TVA, Total]
   // Mode TVA marge   : [Désignation, Qté, Unité, P.U., Total]
-  const widthsFull  = [0.48, 0.07, 0.08, 0.13, 0.08, 0.16];
+  // v8.181 — En régime marge la colonne TVA porte « Hors TVA » et non « 20% » :
+  // elle a besoin de place, prise sur la désignation. Les factures au régime
+  // normal gardent exactement les largeurs d'avant.
+  const widthsFull  = isMargin
+    ? [0.45, 0.07, 0.08, 0.13, 0.11, 0.16]
+    : [0.48, 0.07, 0.08, 0.13, 0.08, 0.16];
   const widthsMarge = [0.52, 0.08, 0.09, 0.14, 0.17];
   const widths = isMargeTva ? widthsMarge : widthsFull;
   const headerLabels = isMargeTva
@@ -513,7 +518,21 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
   const cellBaselineOffset = 6;
   const descLineGap = 11;            // v8.118 — espacement vertical entre sous-lignes
   const rowSeparators = [];
+  // v8.181 — Prix d'affichage de la ligne véhicule, AVANT remise.
+  //
+  // IOCAR imprime ses lignes au prix brut puis déduit la remise sous le
+  // tableau, si bien que la colonne « Total HT » somme exactement au
+  // sous-total. Ici les lignes portent le prix NET (c'est lui qui fixe la base
+  // taxable du Factur-X, il ne bougera pas) : le pont nous envoie donc le brut
+  // à part, pour l'affichage seulement.
+  //
+  // C'est toujours la PREMIÈRE ligne : mapOrderToInvoice place le véhicule en
+  // tête, et ce champ n'existe que pour les factures venues d'IOCAR portant une
+  // remise. Absent, on affiche les lignes telles quelles.
+  const vehHtBrutCents = Math.max(0, Math.round(Number(doc.vehicle_meta?.veh_ht_brut_cents || 0)));
+  let idxLigne = 0;
   for (const l of (lines || [])) {
+    const brutLigne = (idxLigne++ === 0 && vehHtBrutCents > 0) ? vehHtBrutCents : 0;
     // v8.118 — Désignation MULTI-LIGNES : on découpe sur les retours à la ligne,
     // on tronque chaque sous-ligne à 80 caractères, et on plafonne à 6 sous-lignes
     // pour éviter tout débordement de page. La hauteur de la row s'adapte.
@@ -523,8 +542,11 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
     const nLines = descLines.length;
     const thisRowHeight = rowHeight + (nLines - 1) * descLineGap;
 
-    const ht = (Number(l.line_ht_cents) / 100).toFixed(2);
-    const pu = (Number(l.unit_price_ht_cents) / 100).toFixed(2);
+    // v8.181 — Même formatage que les totaux : « 20 825,00 € » et non
+    // « 20825.00 € ». Les deux cohabitaient sur la même page, et la facture
+    // IOCAR de la même vente écrit la première forme.
+    const ht = formatEUR(brutLigne || Number(l.line_ht_cents));
+    const pu = formatEUR(brutLigne || Number(l.unit_price_ht_cents));
     const qty = String(Number(l.quantity).toFixed(2)).replace(/\.00$/, "");
     const unit = l.unit || "u";
 
@@ -542,14 +564,18 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
     // Les autres colonnes s'alignent sur la 1ère sous-ligne (haut de cellule).
     drawInCell(qty, 1, firstBaselineY, 9, font, COLORS.dark);
     drawInCell(unit, 2, firstBaselineY, 9, font, COLORS.dark);
-    drawInCell(pu + " €", 3, firstBaselineY, 9, font, COLORS.dark);
+    drawInCell(pu, 3, firstBaselineY, 9, font, COLORS.dark);
     if (!isMargeTva) {
       // v8.63 — "—" sur les lignes en marge (taux 0), "20%" sur les lignes taxables.
-      const vatCell = Number(l.vat_rate) > 0 ? Number(l.vat_rate).toFixed(0) + "%" : "—";
-      drawInCell(vatCell, 4, firstBaselineY, 9, font, COLORS.dark);
-      drawInCell(ht + " €", 5, firstBaselineY, 9, font, COLORS.dark);
+      // v8.181 — Un tiret ne dit rien là où le lecteur cherche le taux : la
+      // ligne porte la mention. Même libellé que sur la facture IOCAR.
+      const taxable = Number(l.vat_rate) > 0;
+      const vatCell = taxable ? Number(l.vat_rate).toFixed(0) + "%" : "Hors TVA";
+      // La colonne est étroite : « Hors TVA » n'y tient qu'en corps réduit.
+      drawInCell(vatCell, 4, firstBaselineY, taxable ? 9 : 8, font, COLORS.dark);
+      drawInCell(ht, 5, firstBaselineY, 9, font, COLORS.dark);
     } else {
-      drawInCell(ht + " €", 4, firstBaselineY, 9, font, COLORS.dark);
+      drawInCell(ht, 4, firstBaselineY, 9, font, COLORS.dark);
     }
     y = rowBottomY;
     rowSeparators.push(rowBottomY); // séparateur exactement au bas de cette row
@@ -601,29 +627,64 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
 
   // v8.70 — Remise commerciale. Elle est déjà déduite du prix des lignes : la
   // lire après les montants nets inviterait à la retrancher une seconde fois.
-  // Elle s'affiche donc AVANT, où elle s'additionne — même présentation que la
-  // facture IOCAR. Purement documentaire : la base taxable étant déjà nette, le
-  // XML Factur-X n'en porte pas trace.
-  const remiseCents = Math.max(0, Math.round(Number(doc.vehicle_meta?.remise_ttc_cents || 0)));
-  if (remiseCents > 0) {
-    page.drawText("Sous-total TTC avant remise", { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
-    drawRight(page, formatEUR(doc.total_ttc_cents + remiseCents), width - 40, y, 9, font, COLORS.dark);
+  // Elle s'affiche donc AVANT, où elle s'additionne. Purement documentaire : la
+  // base taxable étant déjà nette, le XML Factur-X n'en porte pas trace.
+  //
+  // v8.181 — La cascade s'aligne sur celle d'IOCAR, qui est la bonne :
+  //
+  //     Sous-total HT      (somme des lignes, AVANT remise)
+  //     Remise accordée    (en HT)
+  //     Total HT net
+  //     TVA
+  //     TOTAL TTC
+  //
+  // On affichait jusqu'ici « Sous-total TTC avant remise » suivi d'une remise
+  // en TTC, au milieu d'un bloc HT : la lecture s'interrompait, puisque
+  // Total HT + TVA ne redonnait jamais ce sous-total. La remise se lit
+  // désormais AVANT la TVA, où la loi la met — la base imposable est nette des
+  // remises (art. 267 II 1° CGI).
+  //
+  // remise_ht_cents ne vient que du pont IOCAR. Une facture IOBILL native ou
+  // une facture IOCAR antérieure à la v8.180 n'en a pas : on retombe alors sur
+  // l'ancienne présentation, qui reste juste.
+  const remiseHtCents = Math.max(0, Math.round(Number(doc.vehicle_meta?.remise_ht_cents || 0)));
+  const remiseTtcCents = Math.max(0, Math.round(Number(doc.vehicle_meta?.remise_ttc_cents || 0)));
+  const cascadeHt = remiseHtCents > 0;
+  // En régime marge le véhicule n'a pas de TVA mentionnable (art. 297 E) : on
+  // n'écrit pas « HT » sur son prix, sans quoi l'acquéreur croirait qu'une TVA
+  // s'y ajoute ou qu'il peut la déduire.
+  const motHt = isMargin ? "" : " HT";
+  const remiseAffichee = cascadeHt ? remiseHtCents : remiseTtcCents;
+  if (remiseAffichee > 0) {
+    const labelBase = cascadeHt ? `Sous-total${motHt}` : "Sous-total TTC avant remise";
+    const valeurBase = cascadeHt
+      ? doc.subtotal_ht_cents + remiseHtCents   // le HT AVANT remise = somme des lignes affichées
+      : doc.total_ttc_cents + remiseTtcCents;  // ancienne présentation
+    page.drawText(labelBase, { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
+    drawRight(page, formatEUR(valeurBase), width - 40, y, 9, font, COLORS.dark);
     y -= 14;
     page.drawText("Remise accordée", { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
-    drawRight(page, "- " + formatEUR(remiseCents), width - 40, y, 9, font, COLORS.dark);
+    drawRight(page, "- " + formatEUR(remiseAffichee), width - 40, y, 9, font, COLORS.dark);
     y -= 14;
   }
 
-  // v8.39 — En mode marge : pas de "Total HT" ni "TVA %" séparés, juste le TTC
+  // v8.39 — En mode marge PUR (aucune ligne taxable) : pas de "Total HT" ni de
+  // "TVA %" séparés, juste le TTC.
   if (!isMargeTva) {
-    page.drawText("Total HT", { x: totalsX, y, size: 9, font, color: COLORS.grey });
+    const labelNet = remiseAffichee > 0
+      ? (isMargin ? "Net après remise" : "Total HT net")
+      : `Total${motHt || " HT"}`;
+    page.drawText(labelNet, { x: totalsX, y, size: 9, font, color: COLORS.grey });
     drawRight(page, formatEUR(doc.subtotal_ht_cents), width - 40, y, 9, font, COLORS.dark);
     y -= 14;
 
     // v8.63 — On n'affiche que les taux > 0 (pas de ligne "TVA 0%" pour la part
     // marge, dont la TVA n'est pas mentionnée — art. 297 E).
+    // v8.181 — En régime marge, préciser que cette TVA ne porte que sur les
+    // frais : le véhicule, lui, n'en montre aucune.
+    const suffixeTva = isMargin ? " (frais uniquement)" : "";
     for (const v of (doc.vat_breakdown || []).filter((v) => Number(v.rate) > 0)) {
-      page.drawText(`TVA ${Number(v.rate).toFixed(0)}%`, { x: totalsX, y, size: 9, font, color: COLORS.grey });
+      page.drawText(`TVA ${Number(v.rate).toFixed(0)}%${suffixeTva}`, { x: totalsX - 80, y, size: 9, font, color: COLORS.grey });
       drawRight(page, formatEUR(v.vat_cents), width - 40, y, 9, font, COLORS.dark);
       y -= 14;
     }
@@ -632,6 +693,14 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
       drawRight(page, formatEUR(doc.vat_total_cents), width - 40, y, 9, font, COLORS.dark);
       y -= 14;
     }
+  }
+
+  // v8.181 — Rappel court du régime juste avant le total, comme sur IOCAR. La
+  // mention complète (art. 297 A / 297 E) reste dans le bloc légal plus bas.
+  if (isMargin) {
+    page.drawText("TVA sur la marge", { x: totalsX - 80, y, size: 8, font, color: COLORS.grey });
+    drawRight(page, "Art. 297 A CGI", width - 40, y, 8, font, COLORS.grey);
+    y -= 14;
   }
   y -= 8;
   // Ligne gold AU-DESSUS du texte Total TTC (pas à travers)
