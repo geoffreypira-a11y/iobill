@@ -1829,21 +1829,62 @@ async function handlePushCreditNote(body, res) {
     }
 
     // 5) Lignes
-    const linesPayload = credit_note.lines.map((l, idx) => ({
-      document_type: 'credit_note',
-      document_id: creditNoteRow.id,
-      position: idx + 1,
-      description: l.description || '',
-      quantity: l.quantity || 1,
-      unit: l.unit || 'u',
-      unit_price_ht_cents: l.unit_price_ht_cents || 0,
-      vat_rate: l.vat_rate || 0,
-      discount_pct: l.discount_pct || 0,
-      line_ht_cents: l.line_ht_cents != null
-        ? l.line_ht_cents
-        : Math.round((l.quantity || 1) * (l.unit_price_ht_cents || 0) * (1 - (l.discount_pct || 0) / 100))
-    }));
-    await sbAdmin.insert("document_lines", linesPayload);
+    //
+    // v8.189 — Cette insertion échouait SILENCIEUSEMENT depuis toujours, pour
+    // deux raisons indépendantes, et tous les avoirs arrivaient donc dans
+    // IOBILL avec un tableau de lignes vide :
+    //
+    //   • `company_id` manquait, alors que document_lines.company_id est
+    //     NOT NULL — violation de contrainte, insertion refusée ;
+    //   • `position` n'existe pas : la colonne s'appelle `sort_order`, et
+    //     PostgREST rejette tout le lot dès qu'un champ est inconnu.
+    //
+    // Le chemin des FACTURES, lui, envoie bien company_id et sort_order — d'où
+    // des factures complètes et des avoirs vides.
+    //
+    // Conséquences : un avoir sans désignation ni quantité n'est pas un
+    // document régulier (art. 242 nonies A CGI), son PDF sortait avec les
+    // en-têtes de colonnes et rien dessous, et son Factur-X violait BR-16
+    // (« an Invoice shall have at least one Invoice line ») — ce qui explique
+    // les rejets côté PDP.
+    //
+    // On ajoute aussi line_vat_cents et line_ttc_cents, comme le fait le
+    // chemin des factures, pour que les deux documents portent le même détail.
+    const linesPayload = credit_note.lines.map((l, idx) => {
+      const qty = Number(l.quantity || 1);
+      const up = Number(l.unit_price_ht_cents || 0);
+      const discPct = Number(l.discount_pct || 0);
+      const vatRate = Number(l.vat_rate || 0);
+      const lineHt = l.line_ht_cents != null
+        ? Number(l.line_ht_cents)
+        : Math.round(qty * up * (1 - discPct / 100));
+      const lineVat = Math.round(lineHt * vatRate / 100);
+      return {
+        company_id: company.id,
+        document_type: 'credit_note',
+        document_id: creditNoteRow.id,
+        sort_order: idx,
+        description: l.description || '',
+        quantity: qty,
+        unit: l.unit || 'u',
+        unit_price_ht_cents: up,
+        vat_rate: vatRate,
+        discount_pct: discPct,
+        line_ht_cents: lineHt,
+        line_vat_cents: lineVat,
+        line_ttc_cents: lineHt + lineVat
+      };
+    });
+    const linesInserted = await sbAdmin.insert("document_lines", linesPayload);
+    // Un avoir sans ligne est inexploitable : mieux vaut refuser franchement
+    // que livrer un document vide, comme c'était le cas jusqu'ici.
+    if (!linesInserted) {
+      return json(res, 500, {
+        error: "Échec écriture des lignes de l'avoir",
+        hint: "Voir les logs Vercel IOBILL pour le détail.",
+        last_error: sbAdmin._lastError || null
+      });
+    }
 
     // 6) Génération PDF Factur-X en arrière-plan
     triggerFacturxGeneration(creditNoteRow.id, 'credit_note');
