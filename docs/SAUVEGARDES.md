@@ -13,18 +13,43 @@ Deux déclencheurs, un seul et même code (`api/_lib/backup.js`) :
 | Déclencheur | Chemin | Authentification |
 |---|---|---|
 | Cron quotidien, 7h | `api/cron-reminders.js`, en fin de passage global | header `x-vercel-cron`, ou `Bearer CRON_SECRET` |
-| À la demande | `api/backup-cron.js` | `Bearer CRON_SECRET` |
 | Bouton admin | `api/admin.js` → `backup_save` | jeton d'un admin connecté |
 
 La sauvegarde ne pouvait pas passer par l'action admin : celle-ci exige
 `authenticate()`, donc une session — qu'un cron n'a pas.
 
-Elle a d'abord eu **sa propre tâche cron**, et Vercel a refusé le déploiement de
-production : le projet n'accepte qu'une seule tâche déclarée dans `vercel.json`.
-Elle est donc lancée en fin du passage global de `cron-reminders`, qui tourne
-déjà une fois par jour à 7h. Un échec de sauvegarde n'interrompt pas les
+### ⚠️ Pourquoi pas de route dédiée : le plafond de 12 fonctions
+
+Elle a d'abord eu **sa propre route** `api/backup-cron.js`. Vercel a refusé le
+déploiement de production :
+
+> No more than 12 Serverless Functions can be added to a Deployment on the
+> Hobby plan.
+
+**Le projet est exactement au plafond : 12 fonctions sur 12 autorisées.** Toute
+nouvelle route dans `api/` fait échouer le déploiement — et l'échec est global,
+il emporte le site entier, pas seulement la nouvelle route.
+
+Pour ajouter un endpoint, il faut donc soit en retirer un, soit fusionner deux
+routes existantes (`api/public.js` et `api/admin.js` routent déjà plusieurs
+actions via un paramètre `action`, c'est le motif à suivre), soit passer au plan
+Pro.
+
+Les fichiers et dossiers d'`api/` préfixés par `_` (comme `api/_lib/`) ne
+comptent pas : ce sont des modules, pas des fonctions.
+
+La sauvegarde est donc lancée en fin du passage global de `cron-reminders`, qui
+tourne déjà une fois par jour à 7h. Un échec de sauvegarde n'interrompt pas les
 relances : il est capturé, journalisé bruyamment et remonté dans la réponse du
 cron sous la clé `backup`.
+
+Pour forcer une sauvegarde à la demande, utiliser le bouton de l'admin, ou
+appeler le cron :
+
+```
+curl -X POST https://iobill.vercel.app/api/cron-reminders \
+     -H "Authorization: Bearer $CRON_SECRET"
+```
 
 Chaque passage écrit **deux** objets dans le bucket privé `backups` :
 
