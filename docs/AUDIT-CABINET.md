@@ -26,14 +26,22 @@ La fiche client refuse en plus de s'afficher si `link.status !== 'accepted'`,
 et le tableau de bord ne liste que les liens `accepted_at IS NOT NULL AND
 revoked_at IS NULL`. Défense en profondeur cohérente.
 
-### 2. L'accès cabinet est-il en lecture seule ? — **OUI**
+### 2. L'accès cabinet est-il en lecture seule ? — **OUI sur la comptabilité**
 
-`firm_can_read` n'apparaît en écriture que dans deux policies, toutes deux sur
-`firm_signals` : `fs_insert` (le cabinet crée un signalement chez son client —
-c'est la fonction même du module, et elle exige en plus un rôle
-`owner|partner|staff`) et `fs_update` (changer le statut du signalement).
-Aucune policy `FOR ALL`, aucune écriture sur `invoices`, `credit_notes`,
-`purchases`, `payments`, `clients`.
+Relevé en base des policies qui référencent `firm_can_read` : **11 en `SELECT`**
+(`invoices`, `credit_notes`, `purchases`, `payments`, `clients`, `companies`,
+`quotes`, `bank_statements`, `pa_events`, `pa_inbound_invoices`,
+`document_lines` — cf. C2) et **2 en `INSERT`** :
+
+- `firm_signals` / `fs_insert` — le cabinet crée un signalement chez son client ;
+- `firm_threads` / `ft_insert` — il ouvre un fil de discussion.
+
+C'est la fonction même du module. Aucune policy `FOR ALL`, aucune écriture sur
+une donnée comptable : le cabinet ne peut ni créer, ni modifier, ni supprimer
+une facture, un avoir, un achat ou un encaissement.
+
+Réserve : `firm_signals` porte une **seconde** policy `INSERT`, `fs_insert_firm`,
+qui ne passe pas par `firm_can_read` — voir C4.
 
 `pa_credentials` (secrets PDP) : RLS activé, **aucune** policy → refus total
 côté navigateur, seul le `service_role` y accède. Le cabinet ne voit jamais les
@@ -68,41 +76,89 @@ Correction :
 
 Seuls les avoirs **émis** comptent : un brouillon n'annule rien.
 
-### C2 — La migration `v8_27_sprint3` visait une table inexistante *(corrigé)*
+### C2 — La migration `v8_27_sprint3` visait une table inexistante *(corrigé, et hypothèse initiale démentie)*
 
 Elle crée `invoice_lines_firm_select` **`ON public.invoice_lines`**. Cette table
-n'existe nulle part : ni dans `01_schema.sql`, ni dans `src/`, ni dans `api/`.
-Les lignes de document sont dans `public.document_lines`
+n'existe pas : `to_regclass('public.invoice_lines')` renvoie `NULL` en base. Les
+lignes de document sont dans `public.document_lines`
 (`document_type` / `document_id`).
 
-L'éditeur SQL Supabase exécutant un script dans une seule transaction, si la
-table est bien absente en base, **tout le fichier a été annulé** — `firm_can_read`
-compris. Le cabinet ne verrait alors strictement rien chez ses clients. Le bug
-est resté invisible parce que le module n'a pas encore de client réel.
+**J'en avais tiré une conclusion fausse.** J'avais écrit que l'éditeur SQL
+Supabase exécutant un script en une seule transaction, tout le fichier avait dû
+être annulé — helper `firm_can_read` compris — et donc que le cabinet ne voyait
+rien chez ses clients. La vérification en base dit l'inverse :
 
-`sql/2026-09-10-cabinet-avoirs.sql` est écrit comme un réparateur idempotent :
-il rétablit le helper et les policies `invoices` / `purchases` / `payments` /
-`clients` à l'identique, remplace la policy fantôme par la bonne sur
-`document_lines`, et supprime l'ancienne si elle existait malgré tout.
+- `firm_can_read` **existe** ;
+- 10 tables portent leur policy cabinet (`invoices`, `purchases`, `payments`,
+  `clients`, `companies`, `quotes`, `bank_statements`, `pa_events`,
+  `pa_inbound_invoices`, `credit_notes`).
 
-**À confirmer en base** — les trois requêtes de vérification sont en pied du
-fichier SQL. La requête B tranche la question : si `invoice_lines` renvoie
-`NULL`, la migration avait bien échoué.
+Le fichier est donc bien passé ; seule la policy `invoice_lines` est tombée. **Le
+module cabinet n'a jamais été cassé.** Le correctif restait sans risque parce
+qu'il était écrit idempotent, mais l'alerte était injustifiée.
 
-### C3 — `bank_statements` n'existe dans aucun fichier SQL *(à confirmer)*
+Ce qui reste vrai et corrigé : la policy visait une table fantôme, elle est
+remplacée par `document_lines_firm_select` sur la vraie table.
 
-L'onglet « Relevés » du cabinet lit `bank_statements`, avec un commentaire qui
-affirme « via RLS `firm_can_read` ». Cette table n'est définie dans **aucune**
-migration du dépôt, et aucune policy ne la mentionne. Soit elle a été créée à la
-main dans la console Supabase (schéma hors versionnement), soit elle n'existe
-pas et l'onglet est vide en silence.
+⚠️ **Non confirmé en base** : `document_lines_firm_select` n'apparaît pas dans
+le relevé des policies après passage du SQL, alors que `credit_notes_firm_select`
+y est. Sans conséquence fonctionnelle aujourd'hui — la page cabinet ouvre les
+PDF, elle n'affiche pas le détail des lignes — mais à élucider.
 
-La requête B du fichier SQL le dit. Si la table existe, il faudra la verser dans
-les migrations ; si elle n'existe pas, l'onglet est à retirer ou à écrire.
+### C3 — `bank_statements` existe mais n'est dans aucune migration *(constat révisé)*
+
+L'onglet « Relevés » du cabinet lit `bank_statements`, et l'abonné y dépose ses
+relevés depuis `MyFirmSettingsPage` (`insert` / `delete`). J'avais supposé que la
+table pouvait ne pas exister et l'onglet être vide en silence. **Faux** : la
+table existe, RLS activé, avec deux policies — `bank_stmt_owner` (`ALL`, le
+propriétaire) et `bank_stmt_firm_read` (`SELECT`, le cabinet). L'utilisateur
+confirme que la fonctionnalité marche en production.
+
+Le vrai reproche est ailleurs : **cette table n'est décrite dans aucune migration
+du dépôt.** Elle a été créée à la main dans la console Supabase. Le jour où la
+base est remontée à neuf depuis les fichiers versionnés, elle manque — et avec
+elle une fonctionnalité qui tourne. À rapatrier dans `supabase/`.
+
+### C4 — `firm_signals` a deux policies INSERT *(en cours d'analyse)*
+
+Le relevé en base montre `fs_insert` **et** `fs_insert_firm`. Les policies
+permissives se cumulent en **OU** : il suffit qu'une seule accepte.
+
+- `fs_insert` (versionnée, v8.27) est stricte : rôle `owner|partner|staff` du
+  cabinet **et** `firm_can_read(company_id)`, donc un lien accepté avec ce client.
+- `fs_insert_firm` **ne mentionne pas** `firm_can_read` — elle n'apparaît pas
+  dans le relevé des policies qui le référencent. Elle ne vérifie donc pas le
+  lien cabinet↔client, et elle n'existe dans aucun fichier SQL du dépôt.
+
+Si son `WITH CHECK` se contente de « je suis membre d'un cabinet », n'importe
+quel cabinet inscrit peut créer un signalement chez n'importe quelle société.
+Pas de fuite de données comptables — c'est une écriture, pas une lecture — mais
+de l'écriture non sollicitée chez un abonné qui n'a rien signé, et le
+contournement complet de `fs_insert`.
+
+Définition à récupérer avant de conclure. Même question pour `fs_delete` : qui
+peut supprimer un signalement ?
 
 ## Reste ouvert
 
-- Faire un vrai test bout en bout du module : inviter un cabinet, accepter,
-  vérifier ce qu'il voit, révoquer, vérifier que tout tombe.
+- **`fs_insert_firm`** — récupérer son `WITH CHECK` et décider : la supprimer si
+  elle fait doublon avec `fs_insert`, ou la resserrer sur `firm_can_read`.
+- **`document_lines_firm_select`** — comprendre pourquoi elle n'apparaît pas en
+  base après passage du SQL.
+- **Schéma hors versionnement** — `bank_statements` et `fs_insert_firm` existent
+  en base sans être dans le dépôt. Il en existe peut-être d'autres : un
+  inventaire `pg_policies` / `pg_tables` comparé aux fichiers `supabase/` dirait
+  l'ampleur de la dérive.
+- **Test bout en bout** — inviter un cabinet, accepter, vérifier ce qu'il voit,
+  révoquer, vérifier que tout tombe.
 - `document_lines` : la page cabinet n'affiche pas le détail des lignes
   aujourd'hui (elle ouvre les PDF). La policy est posée pour quand elle le fera.
+
+## Méthode — ce que cet audit rappelle
+
+Deux de mes constats de départ (C2, C3) partaient d'une lecture des fichiers
+versionnés et concluaient sur l'état de la base. Les deux se sont révélés faux
+une fois la base interrogée. La leçon vaut pour la suite : **sur ce projet, le
+dépôt n'est pas la source de vérité du schéma** — une partie a été créée à la
+main. Tout constat portant sur la base doit être vérifié par requête avant
+d'être annoncé.
