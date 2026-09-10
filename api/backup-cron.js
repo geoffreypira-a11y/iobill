@@ -1,15 +1,21 @@
 // IO BILL — Sauvegarde quotidienne automatique
 // ═══════════════════════════════════════════════════════════════════
-// Déclenché par le cron Vercel déclaré dans vercel.json.
+// Déclenchement MANUEL de la sauvegarde, sans session admin.
 //
-// Pourquoi un endpoint séparé de `api/admin.js` : l'action `backup_save`
-// y est protégée par `authenticate()`, qui exige le jeton d'un admin
-// CONNECTÉ. Un cron n'a pas de session — il ne peut structurellement pas
-// appeler cette action. D'où cette route, authentifiée autrement.
+// ⚠️ Cette route n'est PAS déclarée dans les `crons` de vercel.json :
+// Vercel a refusé le déploiement de production quand le projet en
+// déclarait deux. La sauvegarde quotidienne est donc lancée en fin de
+// passage global par api/cron-reminders.js, qui tourne déjà chaque jour.
 //
-// Deux authentifications acceptées, comme api/cron-reminders.js :
-//   • header `x-vercel-cron: 1`, injecté par Vercel sur ses propres appels
-//   • `Authorization: Bearer <CRON_SECRET>`, pour un déclenchement manuel
+// Elle reste utile pour forcer une sauvegarde à la demande (incident,
+// avant une migration) sans passer par l'interface admin :
+//
+//   curl -X POST https://iobill.vercel.app/api/backup-cron \
+//        -H "Authorization: Bearer $CRON_SECRET"
+//
+// Deux authentifications acceptées :
+//   • header `x-vercel-cron: 1`, si la route est un jour re-planifiée
+//   • `Authorization: Bearer <CRON_SECRET>`
 
 import { saveBackup } from "./_lib/backup.js";
 

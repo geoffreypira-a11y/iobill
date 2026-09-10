@@ -30,6 +30,7 @@
 import { sbAdmin, json, authenticate } from "./_lib/supabase-admin.js";
 import { sendTrackedEmail, htmlToText, logEmail, parseRecipients } from "./_lib/email-log.js";
 import { notifyAdmin } from "./_lib/monitor.js";
+import { saveBackup } from "./_lib/backup.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -150,12 +151,41 @@ export default async function handler(req, res) {
   let notifEmailsSent = 0;
   if (!scopedCompany) notifEmailsSent = await runPendingNotifEmails();
 
+  // ═══════════════════════════════════════════════════════════
+  // SAUVEGARDE QUOTIDIENNE
+  // ═══════════════════════════════════════════════════════════
+  // Déclenchée ici plutôt que par sa propre tâche cron : Vercel a
+  // refusé le déploiement quand vercel.json en déclarait une seconde.
+  // Le passage global n'a lieu qu'une fois par jour, ce qui est
+  // exactement la cadence voulue.
+  //
+  // Jamais sur un déclenchement utilisateur (`scopedCompany`) : la
+  // sauvegarde est globale, elle n'a rien à faire dans le bouton
+  // « Relancer maintenant » d'un abonné.
+  //
+  // Un échec de sauvegarde ne doit PAS faire échouer les relances :
+  // il est capturé, journalisé et remonté dans la réponse.
+  let backup = null;
+  if (!scopedCompany && isPrivileged) {
+    try {
+      const r = await saveBackup("cron");
+      backup = { ok: true, filename: r.filename, size_kb: r.size_kb, purged: r.purged };
+      console.log("[cron-reminders] sauvegarde OK", JSON.stringify(backup), JSON.stringify(r.manifest));
+    } catch (e) {
+      backup = { ok: false, error: e?.message || "inconnue" };
+      // Bruyant : sur le plan Supabase gratuit, c'est la seule
+      // protection des données.
+      console.error("[cron-reminders] SAUVEGARDE EN ÉCHEC", e?.stack || e?.message);
+    }
+  }
+
   return json(res, 200, {
     ok: true,
     scope: scopedCompany ? "company" : "all",
     source,
     ...result,
-    notif_emails_sent: notifEmailsSent
+    notif_emails_sent: notifEmailsSent,
+    backup
   });
 }
 

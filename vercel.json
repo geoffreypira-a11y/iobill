@@ -22,10 +22,6 @@
     {
       "path": "/api/cron-reminders",
       "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/backup-cron",
-      "schedule": "0 3 * * *"
     }
   ],
   "headers": [

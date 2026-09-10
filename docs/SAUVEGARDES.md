@@ -12,11 +12,19 @@ Deux déclencheurs, un seul et même code (`api/_lib/backup.js`) :
 
 | Déclencheur | Chemin | Authentification |
 |---|---|---|
-| Cron quotidien, 3h | `api/backup-cron.js` | header `x-vercel-cron`, ou `Bearer CRON_SECRET` |
+| Cron quotidien, 7h | `api/cron-reminders.js`, en fin de passage global | header `x-vercel-cron`, ou `Bearer CRON_SECRET` |
+| À la demande | `api/backup-cron.js` | `Bearer CRON_SECRET` |
 | Bouton admin | `api/admin.js` → `backup_save` | jeton d'un admin connecté |
 
-Le cron est déclaré dans `vercel.json`. Il ne pouvait pas passer par l'action
-admin : celle-ci exige `authenticate()`, donc une session — qu'un cron n'a pas.
+La sauvegarde ne pouvait pas passer par l'action admin : celle-ci exige
+`authenticate()`, donc une session — qu'un cron n'a pas.
+
+Elle a d'abord eu **sa propre tâche cron**, et Vercel a refusé le déploiement de
+production : le projet n'accepte qu'une seule tâche déclarée dans `vercel.json`.
+Elle est donc lancée en fin du passage global de `cron-reminders`, qui tourne
+déjà une fois par jour à 7h. Un échec de sauvegarde n'interrompt pas les
+relances : il est capturé, journalisé bruyamment et remonté dans la réponse du
+cron sous la clé `backup`.
 
 Chaque passage écrit **deux** objets dans le bucket privé `backups` :
 
