@@ -88,19 +88,33 @@ export async function buildBackup(backupType = "manual") {
     // de TVA et compteurs de numérotation étaient perdus à la
     // restauration — la société repartait sans son identité de facturation.
     const cData = { ...c, data: {} };
-    for (const t of COMPANY_TABLES) {
-      const rows = await sbAdmin.select(t, {
-        filter: `company_id=eq.${c.id}`,
-        order: "created_at.asc"
-      }) || [];
+    // Les 13 tables d'une société sont lues EN PARALLÈLE. En série, 13
+    // allers-retours × le nombre de sociétés approchait le plafond de
+    // 60 s du plan Hobby — d'autant que la sauvegarde partage désormais
+    // sa fonction avec le balayage des relances. Les sociétés restent
+    // traitées l'une après l'autre : ça borne le nombre de requêtes
+    // simultanées quel que soit le nombre d'abonnés.
+    const lots = await Promise.all(
+      COMPANY_TABLES.map((t) =>
+        sbAdmin.select(t, {
+          filter: `company_id=eq.${c.id}`,
+          order: "created_at.asc"
+        }).then((rows) => [t, rows || []])
+      )
+    );
+    for (const [t, rows] of lots) {
       cData.data[t] = rows;
       bump(t, rows.length);
     }
     backup.companies.push(cData);
   }
 
-  for (const t of GLOBAL_TABLES) {
-    const rows = await sbAdmin.select(t, { order: "created_at.asc" }) || [];
+  const globaux = await Promise.all(
+    GLOBAL_TABLES.map((t) =>
+      sbAdmin.select(t, { order: "created_at.asc" }).then((rows) => [t, rows || []])
+    )
+  );
+  for (const [t, rows] of globaux) {
     backup.global[t] = rows;
     bump(t, rows.length);
   }
