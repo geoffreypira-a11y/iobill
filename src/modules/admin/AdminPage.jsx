@@ -209,7 +209,23 @@ export function AdminPage({ token, company }) {
     setBackupLoading(true);
     try {
       const res = await adminCall("backup_save");
-      alert(`✅ Backup créé\n${res.filename}\n${res.total_companies} abonnés · ${res.size_kb} KB`);
+      // v8.184 — On affiche le manifeste : combien de lignes ont RÉELLEMENT
+      // été capturées, table par table. Une sauvegarde qui repart avec
+      // 0 ligne de `document_lines` est inutilisable, et sans ce détail
+      // rien ne le laissait voir.
+      const m = res.manifest || {};
+      const detail = Object.keys(m).sort()
+        .filter((k) => m[k] > 0)
+        .map((k) => `  ${k} : ${m[k]}`)
+        .join("\n");
+      const vides = Object.keys(m).sort().filter((k) => !m[k]);
+      alert(
+        `✅ Sauvegarde créée\n${res.filename}\n` +
+        `${res.total_companies} abonnés · ${res.size_kb} KB\n\n` +
+        `Contenu :\n${detail || "  (aucune donnée)"}` +
+        (vides.length ? `\n\nTables vides : ${vides.join(", ")}` : "") +
+        (res.purged ? `\n\n${res.purged} sauvegarde(s) de plus de 30 jours purgée(s).` : "")
+      );
       const { backup } = await adminCall("backup_info");
       setBackupInfo(backup);
     } catch (e) { alert("Erreur : " + e.message); }
