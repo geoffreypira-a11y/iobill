@@ -431,7 +431,9 @@ async function handleRequest(req, res) {
       // Historique daté réellement conservé — c'est lui qui permet de
       // remonter à un jour précis, pas `backup_latest.json` qui est écrasé.
       const dated = files
-        .filter((f) => /^backup_\d{4}-\d{2}-\d{2}\.json$/.test(f.name || ""))
+        // Motif large : reconnaît aussi les sauvegardes d'avant la
+        // rotation, nommées backup_AAAA-MM-JJ_<timestamp>.json.
+        .filter((f) => /^backup_\d{4}-\d{2}-\d{2}/.test(f.name || ""))
         .map((f) => f.name)
         .sort()
         .reverse();
