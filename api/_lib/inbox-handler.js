@@ -101,12 +101,45 @@ export async function handleInboxWebhook(req, res) {
     return json(res, 401, { error: "Signature invalide" });
   }
 
+  // v8.184 — Fraîcheur de l'horodatage.
+  //
+  // La signature couvre `{svix-id}.{svix-timestamp}.{body}`, mais rien ne
+  // vérifiait l'âge du message : une requête signée capturée restait rejouable
+  // indéfiniment. Cinq minutes est la tolérance recommandée par Svix.
+  if (WEBHOOK_SECRET) {
+    const ts = Number(req.headers["svix-timestamp"]);
+    const age = Number.isFinite(ts) ? Math.abs(Date.now() / 1000 - ts) : Infinity;
+    if (age > 300) {
+      console.warn("[inbox] horodatage hors tolérance", { age });
+      return json(res, 401, { error: "Horodatage hors tolérance" });
+    }
+  }
+
   let event;
   try { event = JSON.parse(rawBody); } catch { return json(res, 400, { error: "JSON invalide" }); }
 
   // On acquitte (200) tout event non pertinent pour éviter les retries inutiles.
   if (!event || event.type !== "email.received" || !event.data) {
     return json(res, 200, { ok: true, ignored: true });
+  }
+
+  // v8.184 — Idempotence.
+  //
+  // Resend/Svix REJOUE un message tant qu'il n'a pas reçu de 2xx : un timeout
+  // après l'enregistrement des achats suffisait à les créer une seconde fois.
+  // Des achats en double gonflent la TVA déductible du bloc 3 de la
+  // déclaration — une erreur en faveur de l'exploitant, donc la mauvaise
+  // direction. On refuse un identifiant déjà traité.
+  const messageId = req.headers["svix-id"] || null;
+  if (messageId) {
+    const deja = await sbAdmin.selectOne(
+      "inbox_messages",
+      `provider_message_id=eq.${encodeURIComponent(messageId)}`
+    );
+    if (deja) {
+      console.log("[inbox] message déjà traité, rejeu ignoré", { messageId });
+      return json(res, 200, { ok: true, duplicate: true });
+    }
   }
 
   const data = event.data;
@@ -211,6 +244,7 @@ export async function handleInboxWebhook(req, res) {
   // 4) Journaliser dans inbox_messages (best-effort — n'impacte pas la réponse).
   try {
     await sbAdmin.insert("inbox_messages", {
+      provider_message_id: messageId,
       company_id: company.id,
       alias: company.inbox_alias || null,
       received_at: new Date().toISOString(),
