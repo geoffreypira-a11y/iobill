@@ -717,10 +717,22 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
   page.drawLine({ start: { x: totalsX, y: y + 16 }, end: { x: width - 40, y: y + 16 }, thickness: 1, color: brandRgb });
   const totalLabel = docType === "credit_note" ? "Total à déduire" : "Total TTC";
   page.drawText(totalLabel, { x: totalsX, y, size: 12, font: fontBold, color: brandRgb });
-  // Note : on utilise le hyphen-minus (U+002D) au lieu du minus sign (U+2212)
-  // car StandardFonts.Helvetica utilise l'encoding WinAnsi qui ne supporte pas U+2212.
-  const totalValue = (docType === "credit_note" ? "- " : "") + formatEUR(doc.total_ttc_cents);
-  drawRight(page, totalValue, width - 40, y, 12, fontBold, brandRgb);
+  // v8.188 — Plus de signe « - » devant le total d'un avoir.
+  //
+  // Le commentaire ci-dessous énonçait déjà la règle — un avoir porte des
+  // montants POSITIFS — mais le code préfixait quand même le total d'un moins.
+  // Deux conséquences :
+  //
+  //   • le PDF IOBILL affichait « Total à déduire  - 25 170,00 € » là où le PDF
+  //     IOCAR du même avoir affiche « TOTAL À DÉDUIRE  25 170,00 € ». Les deux
+  //     documents doivent dire la même chose, ils ne le disaient pas ;
+  //   • un montant négatif sur un avoir est ce que la PDP refuse (EN 16931,
+  //     BR-27). L'afficher entretenait la confusion sur ce qui est transmis.
+  //
+  // Le sens « ces montants se déduisent » reste porté par le titre AVOIR, par
+  // le libellé « Total à déduire », par la phrase explicative juste dessous, et
+  // par le TypeCode 381 du Factur-X.
+  drawRight(page, formatEUR(doc.total_ttc_cents), width - 40, y, 12, fontBold, brandRgb);
   y -= 14;
 
   // v8.187 — Ce que veulent dire les montants ci-dessus.
