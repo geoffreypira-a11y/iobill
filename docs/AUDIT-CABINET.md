@@ -100,10 +100,9 @@ qu'il était écrit idempotent, mais l'alerte était injustifiée.
 Ce qui reste vrai et corrigé : la policy visait une table fantôme, elle est
 remplacée par `document_lines_firm_select` sur la vraie table.
 
-⚠️ **Non confirmé en base** : `document_lines_firm_select` n'apparaît pas dans
-le relevé des policies après passage du SQL, alors que `credit_notes_firm_select`
-y est. Sans conséquence fonctionnelle aujourd'hui — la page cabinet ouvre les
-PDF, elle n'affiche pas le détail des lignes — mais à élucider.
+Vérifié en base : `document_lines_firm_select` est bien posée, en `SELECT`, sur
+`firm_can_read(company_id)`. (J'avais dans un premier temps annoncé cette policy
+manquante, sur la foi d'un relevé partiel. Elle est là.)
 
 ### C3 — `bank_statements` existe mais n'est dans aucune migration *(constat révisé)*
 
@@ -119,36 +118,58 @@ du dépôt.** Elle a été créée à la main dans la console Supabase. Le jour 
 base est remontée à neuf depuis les fichiers versionnés, elle manque — et avec
 elle une fonctionnalité qui tourne. À rapatrier dans `supabase/`.
 
-### C4 — `firm_signals` a deux policies INSERT *(en cours d'analyse)*
+### C4 — `firm_signals` avait deux policies INSERT *(instruit et corrigé)*
 
-Le relevé en base montre `fs_insert` **et** `fs_insert_firm`. Les policies
+Le relevé en base montrait `fs_insert` **et** `fs_insert_firm`. Les policies
 permissives se cumulent en **OU** : il suffit qu'une seule accepte.
 
-- `fs_insert` (versionnée, v8.27) est stricte : rôle `owner|partner|staff` du
-  cabinet **et** `firm_can_read(company_id)`, donc un lien accepté avec ce client.
-- `fs_insert_firm` **ne mentionne pas** `firm_can_read` — elle n'apparaît pas
-  dans le relevé des policies qui le référencent. Elle ne vérifie donc pas le
-  lien cabinet↔client, et elle n'existe dans aucun fichier SQL du dépôt.
+| policy | `WITH CHECK` |
+|---|---|
+| `fs_insert` (versionnée, v8.27) | rôle `owner\|partner\|staff` du cabinet **ET** `firm_can_read(company_id)` |
+| `fs_insert_firm` (créée à la main, hors dépôt) | `firm_id IN (SELECT my_firms())` |
 
-Si son `WITH CHECK` se contente de « je suis membre d'un cabinet », n'importe
-quel cabinet inscrit peut créer un signalement chez n'importe quelle société.
-Pas de fuite de données comptables — c'est une écriture, pas une lecture — mais
-de l'écriture non sollicitée chez un abonné qui n'a rien signé, et le
-contournement complet de `fs_insert`.
+`fs_insert_firm` ne regardait **pas le `company_id`**. Elle vérifiait seulement
+que le `firm_id` inséré était un des cabinets de l'utilisateur. Tout membre d'un
+cabinet, quel que soit son rôle, pouvait donc insérer un signalement portant
+n'importe quel `company_id` — y compris celui d'une société sans aucun lien avec
+ce cabinet. Et `fs_select` laissant le propriétaire d'une société voir les
+signalements la concernant dès que `visible_to_client = true`, l'écriture
+s'affichait chez l'abonné visé.
 
-Définition à récupérer avant de conclure. Même question pour `fs_delete` : qui
-peut supprimer un signalement ?
+**Portée réelle, mesurée avant de conclure :**
+
+- *Pas de lecture* — `fs_select` ne s'ouvre qu'aux membres du cabinet
+  propriétaire du signal, ou au propriétaire de la société. Aucun accès à la
+  comptabilité de la victime.
+- *Pas de blocage de facturation* — le champ `blocks_emission` compte quatre
+  occurrences dans tout le dépôt, **toutes en écriture**. Aucun code ne le lit.
+- *Pas de notification* — `notifications_firm` est alimentée par la route
+  serveur, pas par RLS.
+- *Pas atteignable par l'interface* — la route `signal_create` vérifie le rôle
+  **et** exige un `firm_client_links` en `status = 'accepted'` avant d'insérer.
+  Il fallait appeler PostgREST directement pour contourner.
+
+Bilan : écriture non sollicitée et visible chez un abonné qui n'a rien signé —
+nuisance et vecteur d'hameçonnage, ni fuite de données ni déni de service.
+
+**Correction : `DROP POLICY "fs_insert_firm"`.** Sans effet sur le
+fonctionnement : le navigateur ne fait que **lire** `firm_signals`, toutes les
+écritures passent par `api/firm-invitation.js`, qui s'authentifie avec
+`SUPABASE_SERVICE_ROLE_KEY` et contourne donc les RLS de toute façon. Aucune
+policy INSERT n'est utilisée par l'application.
+
+Vérifié après application : `firm_signals` ne porte plus qu'une policy INSERT,
+`fs_insert`, et les 11 policies de lecture cabinet sont intactes.
 
 ## Reste ouvert
 
-- **`fs_insert_firm`** — récupérer son `WITH CHECK` et décider : la supprimer si
-  elle fait doublon avec `fs_insert`, ou la resserrer sur `firm_can_read`.
-- **`document_lines_firm_select`** — comprendre pourquoi elle n'apparaît pas en
-  base après passage du SQL.
-- **Schéma hors versionnement** — `bank_statements` et `fs_insert_firm` existent
-  en base sans être dans le dépôt. Il en existe peut-être d'autres : un
-  inventaire `pg_policies` / `pg_tables` comparé aux fichiers `supabase/` dirait
-  l'ampleur de la dérive.
+- **Schéma hors versionnement** — `bank_statements` et `fs_insert_firm`
+  existaient en base sans être dans le dépôt. Il en existe probablement
+  d'autres : un inventaire `pg_policies` / `pg_tables` comparé aux fichiers
+  `supabase/` dirait l'ampleur de la dérive. C'est la cause racine de mes deux
+  constats faux.
+- **`bank_statements` à rapatrier** — table réelle, en production, décrite dans
+  aucune migration.
 - **Test bout en bout** — inviter un cabinet, accepter, vérifier ce qu'il voit,
   révoquer, vérifier que tout tombe.
 - `document_lines` : la page cabinet n'affiche pas le détail des lignes
