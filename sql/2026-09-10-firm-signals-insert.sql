@@ -1,0 +1,59 @@
+-- ════════════════════════════════════════════════════════════════════
+-- 2026-09-10 — firm_signals : retrait de la policy INSERT permissive
+-- ════════════════════════════════════════════════════════════════════
+--
+-- ⚠️ DÉJÀ APPLIQUÉ EN PRODUCTION le 2026-09-10. Ce fichier existe pour
+-- que la base puisse être reconstruite depuis le dépôt, et pour garder
+-- la trace exacte de ce qui a été retiré.
+--
+-- ── CONSTAT ─────────────────────────────────────────────────────────
+-- `firm_signals` portait DEUX policies INSERT. Les policies permissives
+-- se cumulent en OU : il suffit qu'une seule accepte.
+--
+--   fs_insert       (versionnée, v8.27) — stricte :
+--     rôle owner|partner|staff du cabinet ET firm_can_read(company_id)
+--
+--   fs_insert_firm  (créée à la main, absente du dépôt) — permissive :
+--     firm_id IN (SELECT my_firms())
+--
+-- `fs_insert_firm` ne regardait pas le company_id. Tout membre d'un
+-- cabinet pouvait donc insérer un signalement portant N'IMPORTE QUEL
+-- company_id, y compris celui d'une société sans lien avec ce cabinet —
+-- signalement que la victime voyait (fs_select l'ouvre au propriétaire
+-- de la société dès que visible_to_client = true).
+--
+-- ── PORTÉE (mesurée) ────────────────────────────────────────────────
+-- Pas de lecture de la comptabilité de la victime (fs_select ne s'ouvre
+-- qu'aux membres du cabinet propriétaire du signal). Pas de blocage de
+-- facturation : `blocks_emission` n'est lu nulle part dans le dépôt.
+-- Pas de notification (créée côté serveur). Non atteignable par
+-- l'interface : la route signal_create vérifie le rôle ET exige un
+-- firm_client_links en status='accepted'. Il fallait appeler PostgREST
+-- directement.
+--
+-- ── POURQUOI C'EST SANS RISQUE ──────────────────────────────────────
+-- Le navigateur ne fait que LIRE firm_signals. Toutes les écritures
+-- passent par api/firm-invitation.js, qui s'authentifie avec
+-- SUPABASE_SERVICE_ROLE_KEY — le service_role contourne les RLS. Aucune
+-- policy INSERT n'est utilisée par l'application ; fs_insert est
+-- conservée comme garde-fou en profondeur.
+-- ════════════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "fs_insert_firm" ON public.firm_signals;
+
+-- ── Pour rétablir à l'identique en cas de besoin ─────────────────────
+-- Définition exacte relevée en base avant suppression :
+--
+--   CREATE POLICY "fs_insert_firm" ON public.firm_signals
+--     FOR INSERT TO authenticated
+--     WITH CHECK (firm_id IN (SELECT my_firms()));
+--
+-- Ne la rétablir qu'en corrigeant le manque : la contrainte sur
+-- company_id (AND public.firm_can_read(company_id)).
+
+-- ── Vérification ────────────────────────────────────────────────────
+-- Doit renvoyer une seule ligne : fs_insert.
+--
+--   SELECT policyname FROM pg_policies
+--   WHERE schemaname='public' AND tablename='firm_signals' AND cmd='INSERT';
+-- ════════════════════════════════════════════════════════════════════
