@@ -267,6 +267,21 @@ function OverviewTab({ token, firm, company, signals }) {
       select: "subtotal_ht_cents,vat_total_cents,total_ttc_cents,grand_total_cents,debour_total_cents,paid_cents,status"
     });
 
+    // v8.183 — Les avoirs ÉMIS de la période viennent en DÉDUCTION du CA et
+    // de la TVA collectée (art. 272-1 CGI). Sans ça le cabinet déclarait une
+    // TVA surévaluée. Un brouillon n'annule rien : status = issued seulement.
+    const creditNotes = await sb.select(token, "credit_notes", {
+      filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}&status=eq.issued`,
+      select: "subtotal_ht_cents,vat_total_cents,total_ttc_cents"
+    });
+
+    let avoirsHtCents = 0;
+    let avoirsTvaCents = 0;
+    for (const cn of (creditNotes || [])) {
+      avoirsHtCents += cn.subtotal_ht_cents || 0;
+      avoirsTvaCents += cn.vat_total_cents || 0;
+    }
+
     let caFactureCents = 0;
     let caCollecteCents = 0;
     let tvaCollecteeCents = 0;
@@ -275,6 +290,8 @@ function OverviewTab({ token, firm, company, signals }) {
       tvaCollecteeCents += inv.vat_total_cents || 0;
       caCollecteCents += inv.paid_cents || 0;
     }
+    caFactureCents -= avoirsHtCents;
+    tvaCollecteeCents -= avoirsTvaCents;
 
     // Achats
     const purchases = await sb.select(token, "purchases", {
@@ -297,8 +314,11 @@ function OverviewTab({ token, firm, company, signals }) {
       tvaDeductibleCents,
       tvaNetteCents: tvaCollecteeCents - tvaDeductibleCents,
       achatsHtCents,
+      avoirsHtCents,
+      avoirsTvaCents,
       nbFactures: invoices?.length || 0,
-      nbAchats: purchases?.length || 0
+      nbAchats: purchases?.length || 0,
+      nbAvoirs: creditNotes?.length || 0
     });
   }
 
@@ -314,12 +334,31 @@ function OverviewTab({ token, firm, company, signals }) {
 
       {/* Grille KPIs déclaratifs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 24 }}>
-        <KpiCard label="CA HT facturé" value={fmtEUR(kpis.caFactureCents)} sub={`${kpis.nbFactures} facture${kpis.nbFactures > 1 ? "s" : ""}`} />
+        <KpiCard
+          label="CA HT facturé"
+          value={fmtEUR(kpis.caFactureCents)}
+          sub={
+            kpis.nbAvoirs > 0
+              ? `${kpis.nbFactures} facture${kpis.nbFactures > 1 ? "s" : ""} − ${kpis.nbAvoirs} avoir${kpis.nbAvoirs > 1 ? "s" : ""}`
+              : `${kpis.nbFactures} facture${kpis.nbFactures > 1 ? "s" : ""}`
+          }
+        />
         <KpiCard label="CA TTC encaissé" value={fmtEUR(kpis.caCollecteCents)} sub="Effectivement payé" />
-        <KpiCard label="TVA collectée" value={fmtEUR(kpis.tvaCollecteeCents)} sub="À reverser" />
+        <KpiCard
+          label="TVA collectée"
+          value={fmtEUR(kpis.tvaCollecteeCents)}
+          sub={kpis.avoirsTvaCents > 0 ? `Nette de ${fmtEUR(kpis.avoirsTvaCents)} d'avoirs` : "À reverser"}
+        />
         <KpiCard label="TVA déductible" value={fmtEUR(kpis.tvaDeductibleCents)} sub="Sur achats" />
         <KpiCard label="TVA nette" value={fmtEUR(kpis.tvaNetteCents)} sub={kpis.tvaNetteCents >= 0 ? "À déclarer" : "Crédit TVA"} highlight />
         <KpiCard label="Achats HT" value={fmtEUR(kpis.achatsHtCents)} sub={`${kpis.nbAchats} achat${kpis.nbAchats > 1 ? "s" : ""}`} />
+        {kpis.nbAvoirs > 0 && (
+          <KpiCard
+            label="Avoirs émis"
+            value={"− " + fmtEUR(kpis.avoirsHtCents)}
+            sub={`${kpis.nbAvoirs} avoir${kpis.nbAvoirs > 1 ? "s" : ""} · TVA ${fmtEUR(kpis.avoirsTvaCents)}`}
+          />
+        )}
       </div>
 
       {signals.length > 0 && (
@@ -1325,7 +1364,8 @@ function VatTab({ token, firm, company }) {
         ventilation: [],
         totalCollectee: 0,
         totalDeductible: 0,
-        totalNet: 0
+        totalNet: 0,
+        creditNotes: []
       });
       return;
     }
@@ -1358,6 +1398,16 @@ function VatTab({ token, firm, company }) {
       order: "issue_date.desc"
     });
 
+    // v8.183 — Avoirs ÉMIS de la période. Ils viennent en DÉDUCTION de la
+    // TVA collectée et de la base (art. 272-1 CGI). Un avoir porte des
+    // montants POSITIFS — c'est son type qui dit qu'il annule — donc on
+    // soustrait explicitement, taux par taux comme pour les factures.
+    const creditNotes = await sb.select(token, "credit_notes", {
+      filter: `company_id=eq.${company.id}&issue_date=gte.${firstDay}&issue_date=lte.${lastDay}&status=eq.issued`,
+      select: "id,number,issue_date,status,reason,vat_breakdown,vat_total_cents,subtotal_ht_cents,total_ttc_cents,pdf_url",
+      order: "issue_date.desc"
+    });
+
     // Ventilation TVA par taux + fallback sur les totaux pour les factures
     // sans vat_breakdown (ancien format, factures importées, etc.)
     const ventilation = {};
@@ -1382,6 +1432,23 @@ function VatTab({ token, firm, company }) {
         // Fallback : pas de détail, on agrège seulement aux totaux
         totalCollectee += inv.vat_total_cents || 0;
         totalBaseCollectee += inv.subtotal_ht_cents || 0;
+      }
+    }
+
+    for (const cn of (creditNotes || [])) {
+      const breakdown = cn.vat_breakdown || [];
+      if (breakdown.length > 0) {
+        for (const v of breakdown) {
+          const k = `${v.rate}%`;
+          ventilation[k] = ventilation[k] || { rate: v.rate, collectee: 0, deductible: 0, baseCollectee: 0, baseDeductible: 0 };
+          ventilation[k].collectee -= v.vat_cents || 0;
+          ventilation[k].baseCollectee -= v.base_cents || 0;
+          totalCollectee -= v.vat_cents || 0;
+          totalBaseCollectee -= v.base_cents || 0;
+        }
+      } else {
+        totalCollectee -= cn.vat_total_cents || 0;
+        totalBaseCollectee -= cn.subtotal_ht_cents || 0;
       }
     }
 
@@ -1412,11 +1479,13 @@ function VatTab({ token, firm, company }) {
       totalBaseDeductible,
       totalNet: totalCollectee - totalDeductible,
       invoices: invoices || [],
-      purchases: purchases || []
+      purchases: purchases || [],
+      creditNotes: creditNotes || []
     });
-    console.log("[VAT cabinet v834]", {
+    console.log("[VAT cabinet v8183]", {
       invoices_count: (invoices || []).length,
       purchases_count: (purchases || []).length,
+      credit_notes_count: (creditNotes || []).length,
       totalCollectee,
       totalDeductible,
       sample_invoice: invoices?.[0] ? {
@@ -1457,15 +1526,16 @@ function VatTab({ token, firm, company }) {
  * VatSummaryTable — Tableau récap TVA cabinet
  * Structure :
  *   - 1 ligne "Factures émises" (toujours affichée, dépliable)
+ *   - 1 ligne "Avoirs émis" (si la période en contient — en déduction)
  *   - 1 ligne "Achats" (toujours affichée, dépliable)
  *   - 1 ligne TOTAL
  *   - 1 ligne TVA nette à reverser / crédit
  */
 function VatSummaryTable({ periodData, token }) {
-  const [expanded, setExpanded] = React.useState(null); // "invoices" | "purchases" | null
+  const [expanded, setExpanded] = React.useState(null); // "invoices" | "creditNotes" | "purchases" | null
   const [preview, setPreview] = React.useState(null); // { url, title } | null
 
-  function openPdf(doc, e) {
+  function openPdf(doc, e, kind) {
     e.stopPropagation();
     // Cas 1 : facture (URL complète stockée dans facturx_pdf_url ou pdf_url)
     const invoiceUrl = doc.facturx_pdf_url || doc.pdf_url;
@@ -1476,7 +1546,7 @@ function VatSummaryTable({ periodData, token }) {
       // Facture : on passe l'URL stockée au modal qui se charge de la rafraîchir
       setPreview({
         url: invoiceUrl,
-        title: `Facture ${doc.number || ""}`
+        title: `${kind === "creditNotes" ? "Avoir" : "Facture"} ${doc.number || ""}`
       });
     } else if (purchasePath) {
       // Achat : construire URL Storage (le modal la rafraîchit ensuite)
@@ -1491,10 +1561,16 @@ function VatSummaryTable({ periodData, token }) {
 
   const invoices = periodData.invoices || [];
   const purchases = periodData.purchases || [];
+  const creditNotes = periodData.creditNotes || [];
   const invHT = invoices.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
   const invVAT = invoices.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
   const purHT = purchases.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
   const purVAT = purchases.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
+  // v8.183 — Avoirs émis : montants positifs en base, déduits ici.
+  const cnHT = creditNotes.reduce((s, d) => s + (d.subtotal_ht_cents || 0), 0);
+  const cnVAT = creditNotes.reduce((s, d) => s + (d.vat_total_cents || 0), 0);
+  const collHT = invHT - cnHT;
+  const collVAT = invVAT - cnVAT;
 
   function CategoryRow({ kind, label, docs, ht, vat, accentColor }) {
     const isExpanded = expanded === kind;
@@ -1541,22 +1617,26 @@ function VatSummaryTable({ periodData, token }) {
                   </thead>
                   <tbody>
                     {docs.map((d) => {
-                      const ht = d.subtotal_ht_cents || 0;
-                      const vat = d.vat_total_cents || 0;
+                      const sign = kind === "creditNotes" ? -1 : 1;
+                      const ht = sign * (d.subtotal_ht_cents || 0);
+                      const vat = sign * (d.vat_total_cents || 0);
                       const bd = d.vat_breakdown || [];
                       let rateLabel = "—";
                       if (bd.length === 1) rateLabel = `${bd[0].rate}%`;
                       else if (bd.length > 1) rateLabel = "Multi";
-                      else if (ht > 0 && vat > 0) rateLabel = `~${Math.round((vat / ht) * 100)}%`;
+                      else if (ht !== 0 && vat !== 0) rateLabel = `~${Math.round(Math.abs(vat / ht) * 100)}%`;
                       const pdfUrl = d.facturx_pdf_url || d.pdf_url || d.file_url || null;
-                      const docLabel = kind === "invoices"
-                        ? (d.number || "Sans n°")
-                        : `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`;
+                      const docLabel = kind === "purchases"
+                        ? `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`
+                        : (d.number || "Sans n°");
                       return (
                         <tr key={d.id} style={{ borderTop: "1px solid var(--border2)" }}>
                           <td style={{ padding: "8px 12px 8px 40px" }}>
                             <div style={{ fontSize: 12, fontWeight: 500 }}>{docLabel}</div>
-                            <div style={{ fontSize: 10, color: "var(--muted)" }}>{fmtDate(d.issue_date)}{d.status ? ` · ${d.status}` : ""}</div>
+                            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                              {fmtDate(d.issue_date)}{d.status ? ` · ${d.status}` : ""}
+                              {kind === "creditNotes" && d.reason ? ` · ${d.reason}` : ""}
+                            </div>
                           </td>
                           <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12 }}>{fmtEUR(ht)}</td>
                           <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, color: "var(--muted)" }}>{rateLabel}</td>
@@ -1564,7 +1644,7 @@ function VatSummaryTable({ periodData, token }) {
                           <td style={{ padding: "8px 12px", textAlign: "right" }}>
                             {pdfUrl && (
                               <button
-                                onClick={(e) => openPdf(d, e)}
+                                onClick={(e) => openPdf(d, e, kind)}
                                 className="btn btn-ghost btn-xs"
                                 style={{ fontSize: 10, padding: "3px 8px" }}
                               >
@@ -1609,6 +1689,16 @@ function VatSummaryTable({ periodData, token }) {
           vat={invVAT}
           accentColor="var(--gold)"
         />
+        {creditNotes.length > 0 && (
+          <CategoryRow
+            kind="creditNotes"
+            label="Avoirs émis (déduction)"
+            docs={creditNotes}
+            ht={-cnHT}
+            vat={-cnVAT}
+            accentColor="var(--red, #d46a6a)"
+          />
+        )}
         <CategoryRow
           kind="purchases"
           label="Achats"
@@ -1623,20 +1713,20 @@ function VatSummaryTable({ periodData, token }) {
           <td></td>
           <td>TOTAL</td>
           <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Collecté {fmtEUR(invHT)}</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Collecté {fmtEUR(collHT)}</div>
             <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Déductible {fmtEUR(purHT)}</div>
           </td>
           <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-            <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 400 }}>Coll. {fmtEUR(invVAT)}</div>
+            <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 400 }}>Coll. {fmtEUR(collVAT)}</div>
             <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 400 }}>Déd. {fmtEUR(purVAT)}</div>
           </td>
         </tr>
         <tr style={{ background: "rgba(212,168,67,0.08)", fontWeight: 700 }}>
           <td colSpan={3} style={{ textAlign: "right" }}>
-            TVA nette {(invVAT - purVAT) >= 0 ? "à reverser" : "crédit"}
+            TVA nette {(collVAT - purVAT) >= 0 ? "à reverser" : "crédit"}
           </td>
           <td style={{ textAlign: "right", fontFamily: "monospace", color: "var(--gold)" }}>
-            {fmtEUR(Math.abs(invVAT - purVAT))}
+            {fmtEUR(Math.abs(collVAT - purVAT))}
           </td>
         </tr>
       </tfoot>
