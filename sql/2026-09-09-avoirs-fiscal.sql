@@ -34,7 +34,12 @@ ALTER TABLE public.credit_notes
 ALTER TABLE public.credit_notes
   ADD COLUMN IF NOT EXISTS vehicle_meta JSONB,
   ADD COLUMN IF NOT EXISTS business_mentions JSONB,
-  ADD COLUMN IF NOT EXISTS business_mode TEXT DEFAULT 'standard';
+  ADD COLUMN IF NOT EXISTS business_mode TEXT DEFAULT 'standard',
+  -- `terms` existe sur quotes et invoices depuis 01_schema, pas sur
+  -- credit_notes : c'est la colonne qu'imprime le PDF sous « CONDITIONS ».
+  -- Sans elle, la phrase « Montant à rembourser au client… » transmise par le
+  -- pont n'avait nulle part où se ranger.
+  ADD COLUMN IF NOT EXISTS terms TEXT;
 
 COMMENT ON COLUMN public.credit_notes.vat_regime IS
   'Régime de la vente annulée : ''standard'' ou ''margin_297a''. Pilote la mention art. 297 A sur le PDF.';
@@ -50,3 +55,17 @@ UPDATE public.credit_notes cn
   FROM public.invoices i
  WHERE cn.invoice_id = i.id
    AND cn.source_invoice_number IS NULL;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Rattrapage : colonnes d'`invoices` écrites par le code mais jamais
+-- versionnées (ajoutées à la main dans la console Supabase). Sans elles,
+-- un environnement reconstruit depuis ce dépôt serait cassé.
+-- Idempotent : sans effet là où elles existent déjà.
+-- ═══════════════════════════════════════════════════════════════════
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS vat_regime TEXT,
+  ADD COLUMN IF NOT EXISTS purchase_price_cents BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS marge_cents BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS tva_marge_cents BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS debours JSONB,
+  ADD COLUMN IF NOT EXISTS debour_total_cents BIGINT DEFAULT 0;

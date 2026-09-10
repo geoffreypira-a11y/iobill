@@ -1766,6 +1766,11 @@ async function handlePushCreditNote(body, res) {
       issue_date: credit_note.issue_date || new Date().toISOString().slice(0, 10),
       reason: credit_note.reason || null,
       status: credit_note.status || 'issued',
+      // v8.188 — `payment_terms` du pont : sur une facture il se range dans
+      // `terms` (la colonne qui existe et que le PDF imprime), l'avoir avait été
+      // oublié. Résultat : le bloc CONDITIONS n'apparaissait pas sur l'avoir,
+      // alors que le pont envoie bien « Montant à rembourser au client… ».
+      terms: credit_note.terms || credit_note.payment_terms || null,
       subtotal_ht_cents: totals.subtotal_ht_cents,
       vat_total_cents: totals.vat_total_cents,
       total_ttc_cents: totals.total_ttc_cents,
