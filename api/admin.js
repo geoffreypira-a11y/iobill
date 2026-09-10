@@ -11,6 +11,7 @@
 //   tickets_delete, tickets_purge_closed
 
 import { sbAdmin, authenticate, authenticateAllowNoCompany } from "./_lib/supabase-admin.js";
+import { saveBackup, listBackups, KEEP_DAYS } from "./_lib/backup.js";
 
 function json(res, status, body) {
   res.status(status);
@@ -413,63 +414,33 @@ async function handleRequest(req, res) {
       });
     }
 
+    // v8.184 — Délègue à api/_lib/backup.js, partagé avec le cron
+    // quotidien (api/backup-cron.js), pour que les deux chemins
+    // sauvegardent exactement le même contenu.
     case "backup_save": {
-      const companies = await sbAdmin.select("companies", { order: "created_at.asc" });
-      const backup = {
-        version: "1.0", platform: "iobill",
-        backup_date: new Date().toISOString(),
-        total_companies: (companies || []).length,
-        companies: []
-      };
-      for (const c of companies || []) {
-        const cData = {
-          id: c.id, legal_name: c.legal_name, email: c.email, siret: c.siret,
-          sub_status: c.sub_status, is_active: c.is_active, _archived: c._archived,
-          created_at: c.created_at, data: {}
-        };
-        for (const t of [...DOC_TABLES, "clients", "purchases"]) {
-          try {
-            cData.data[t] = await sbAdmin.select(t, {
-              filter: `company_id=eq.${c.id}`,
-              order: "created_at.asc"
-            }) || [];
-          } catch { cData.data[t] = []; }
-        }
-        backup.companies.push(cData);
+      try {
+        return json(res, 200, await saveBackup("manual"));
+      } catch (e) {
+        return json(res, 500, { error: e?.message || "Échec de la sauvegarde" });
       }
-      const jsonStr = JSON.stringify(backup);
-      const filename = `backup_${new Date().toISOString().slice(0, 10)}_${Date.now()}.json`;
-      const upR = await fetch(`${SUPA_URL}/storage/v1/object/backups/${filename}`, {
-        method: "POST",
-        headers: { ...srHeaders(), "x-upsert": "true" },
-        body: jsonStr
-      });
-      if (!upR.ok) {
-        const t = await upR.text().catch(() => "");
-        return json(res, 500, { error: "Backup upload failed: " + t });
-      }
-      await fetch(`${SUPA_URL}/storage/v1/object/backups/backup_latest.json`, {
-        method: "POST",
-        headers: { ...srHeaders(), "x-upsert": "true" },
-        body: jsonStr
-      });
-      return json(res, 200, {
-        ok: true, filename,
-        total_companies: backup.total_companies,
-        size_kb: Math.round(jsonStr.length / 1024)
-      });
     }
 
     case "backup_info": {
-      const r = await fetch(`${SUPA_URL}/storage/v1/object/list/backups`, {
-        method: "POST",
-        headers: srHeaders(),
-        body: JSON.stringify({ prefix: "", limit: 100, sortBy: { column: "updated_at", order: "desc" } })
+      const files = await listBackups(1000);
+      const latest = files.find((f) => f.name === "backup_latest.json") || null;
+      // Historique daté réellement conservé — c'est lui qui permet de
+      // remonter à un jour précis, pas `backup_latest.json` qui est écrasé.
+      const dated = files
+        .filter((f) => /^backup_\d{4}-\d{2}-\d{2}\.json$/.test(f.name || ""))
+        .map((f) => f.name)
+        .sort()
+        .reverse();
+      return json(res, 200, {
+        backup: latest,
+        history: dated,
+        history_count: dated.length,
+        keep_days: KEEP_DAYS
       });
-      if (!r.ok) return json(res, 200, { backup: null });
-      const files = await r.json();
-      const latest = (Array.isArray(files) ? files : []).find((f) => f.name === "backup_latest.json");
-      return json(res, 200, { backup: latest || null });
     }
 
     case "backup_download": {
