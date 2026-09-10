@@ -1771,6 +1771,21 @@ async function handlePushCreditNote(body, res) {
       total_ttc_cents: totals.total_ttc_cents,
       vat_breakdown: totals.vat_breakdown,
       notes: credit_note.notes || null,
+      // v8.183 — Ce qui manquait pour que l'avoir RESSEMBLE à sa facture.
+      //
+      // `invoices` a reçu vehicle_meta et business_mode en v8.38 (mode garage),
+      // pas `credit_notes`. Le pont transmettait bien le véhicule et les
+      // mentions du garage, mais cette liste blanche les jetait : l'avoir
+      // sortait sans bloc véhicule, sans plaque et sans référence au livre de
+      // police, là où la facture de la même vente les affiche. Le mode se
+      // déduit de la même façon que pour une facture.
+      vehicle_meta: credit_note.vehicle_meta || null,
+      business_mentions: credit_note.business_mentions || null,
+      business_mode: credit_note.business_mode
+        || (company.source_app === "iocar" ? "garage"
+          : company.source_app === "iobtp" ? "btp"
+          : company.source_app === "ioinstitute" ? "institute"
+          : "standard"),
       // v8.182 — Ce qui manquait pour qu'un avoir soit fiscalement complet.
       //
       // Le numéro de la facture d'origine : mention obligatoire sur le

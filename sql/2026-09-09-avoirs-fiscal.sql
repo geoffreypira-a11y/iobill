@@ -25,6 +25,17 @@ ALTER TABLE public.credit_notes
   ADD COLUMN IF NOT EXISTS marge_cents BIGINT DEFAULT 0,
   ADD COLUMN IF NOT EXISTS tva_marge_cents BIGINT DEFAULT 0;
 
+-- ── Le document lui-même ────────────────────────────────────────────
+-- `invoices` a reçu vehicle_meta et business_mode en v8.38 (mode garage),
+-- `credit_notes` jamais. Le pont transmet bien le véhicule et les mentions
+-- du garage depuis la v8.183 côté IO CAR, mais l'insertion les jetait faute
+-- de colonnes : l'avoir sortait sans bloc véhicule, sans plaque et sans
+-- référence au livre de police, là où la facture les affiche.
+ALTER TABLE public.credit_notes
+  ADD COLUMN IF NOT EXISTS vehicle_meta JSONB,
+  ADD COLUMN IF NOT EXISTS business_mentions JSONB,
+  ADD COLUMN IF NOT EXISTS business_mode TEXT DEFAULT 'standard';
+
 COMMENT ON COLUMN public.credit_notes.vat_regime IS
   'Régime de la vente annulée : ''standard'' ou ''margin_297a''. Pilote la mention art. 297 A sur le PDF.';
 COMMENT ON COLUMN public.credit_notes.source_invoice_number IS
