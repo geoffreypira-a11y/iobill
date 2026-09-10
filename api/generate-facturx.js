@@ -745,16 +745,36 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
     </ram:ApplicableTradeTax>`;
   }).join("");
 
-  // Pour un avoir : référence à la facture d'origine via BillingReferencedDocument
-  let billingRefBlock = "";
+  // Pour un avoir : référence à la facture d'origine (BT-25).
+  //
+  // v8.185 — L'élément était `ram:BillingReferencedDocument`, placé dans
+  // `ram:ApplicableHeaderTradeAgreement` juste après BuyerTradeParty. Deux
+  // erreurs en une, et la PDP rejetait TOUS les avoirs :
+  //
+  //   « Invalid report: Element '{...}BillingReferencedDocument' is not
+  //     expected. Expected is one of ( ... ) »
+  //
+  //   1. Mauvais parent — dans la séquence CII, ApplicableHeaderTradeAgreement
+  //      n'admet pas cet élément (elle accepte SellerOrderReferencedDocument,
+  //      BuyerOrderReferencedDocument, ContractReferencedDocument…, pas lui).
+  //   2. Mauvais nom — le profil EN 16931 mappe BT-25 sur
+  //      ApplicableHeaderTradeSettlement/ram:InvoiceReferencedDocument.
+  //
+  // Il est donc émis plus bas, dans le bloc Settlement, APRÈS
+  // SpecifiedTradeSettlementHeaderMonetarySummation : c'est sa position dans
+  // la séquence du schéma, et un élément bien nommé au mauvais rang serait
+  // rejeté tout autant.
+  //
+  // Les factures n'étaient pas touchées : le bloc y est vide, donc Agreement
+  // restait conforme. Seuls les avoirs échouaient — tous, sans exception.
+  //
+  // BT-25 attend le NUMÉRO de la facture d'origine (« VEH-2026-0107 »), pas
+  // l'UUID interne : on ne retombe sur `invoice_id` que pour les avoirs
+  // antérieurs à la migration, faute de mieux.
+  let invoiceRefBlock = "";
   if (cfg.lineType === "credit_note" && (doc.source_invoice_number || doc.invoice_id)) {
-    // v8.182 — BT-25 attend le NUMÉRO de la facture d'origine (« VEH-2026-0107 »).
-    // On y mettait `invoice_id`, l'UUID interne d'IOBILL : illisible pour le
-    // destinataire comme pour l'administration, et sans valeur d'identification.
-    // Le numéro est désormais stocké sur l'avoir (source_invoice_number) ; on ne
-    // retombe sur l'UUID que pour les avoirs antérieurs à la migration, faute de
-    // mieux.
-    billingRefBlock = `<ram:BillingReferencedDocument><ram:IssuerAssignedID>${x(doc.source_invoice_number || doc.invoice_id)}</ram:IssuerAssignedID></ram:BillingReferencedDocument>`;
+    invoiceRefBlock = `
+      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${x(doc.source_invoice_number || doc.invoice_id)}</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -946,7 +966,6 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
         })()}
         ${cs.vat_number ? `<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">${x(cs.vat_number)}</ram:ID></ram:SpecifiedTaxRegistration>` : ""}
       </ram:BuyerTradeParty>
-      ${billingRefBlock}
     </ram:ApplicableHeaderTradeAgreement>
     <!-- v8.61.3 — Fix règle PEPPOL-EN16931-R008 : "Document MUST not contain
          empty elements". L'élément ApplicableHeaderTradeDelivery était auto-fermant
@@ -1003,7 +1022,7 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
           blocks.push(`<ram:DuePayableAmount>${(dueCents / 100).toFixed(2)}</ram:DuePayableAmount>`);
           return blocks.join("\n        ");
         })()}
-      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>${invoiceRefBlock}
     </ram:ApplicableHeaderTradeSettlement>
   </rsm:SupplyChainTradeTransaction>
 </rsm:CrossIndustryInvoice>`;
