@@ -230,6 +230,16 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
     page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font, color: COLORS.grey });
     extraDateY -= 12;
   }
+  // v8.182 — Un avoir doit désigner la facture qu'il annule : mention
+  // obligatoire (art. 242 nonies A du CGI). Elle n'apparaissait jusqu'ici que
+  // dans le libellé d'une ligne, et seulement parce qu'IOCAR l'y avait mise —
+  // un avoir créé nativement sortait sans.
+  if (docType === "credit_note" && doc.source_invoice_number) {
+    const txt = `Facture d'origine : ${doc.source_invoice_number}`;
+    const w = fontBold.widthOfTextAtSize(txt, 9);
+    page.drawText(txt, { x: width - 40 - w, y: extraDateY, size: 9, font: fontBold, color: COLORS.dark });
+    extraDateY -= 12;
+  }
 
   // ─── BLOC CLIENT à droite, sous une ligne grise (pattern IOcar) ───
   let clientBlockTop = extraDateY - 10;
@@ -711,7 +721,25 @@ export async function buildDocumentPdf({ docType, doc, lines, payments, company 
   // car StandardFonts.Helvetica utilise l'encoding WinAnsi qui ne supporte pas U+2212.
   const totalValue = (docType === "credit_note" ? "- " : "") + formatEUR(doc.total_ttc_cents);
   drawRight(page, totalValue, width - 40, y, 12, fontBold, brandRgb);
-  y -= 24;
+  y -= 14;
+
+  // v8.187 — Ce que veulent dire les montants ci-dessus.
+  //
+  // Un avoir porte des montants POSITIFS : c'est la convention de la
+  // facturation électronique, et elle n'est pas négociable — la PDP rejette les
+  // lignes à montant négatif (EN 16931, BR-27). Le sens est porté par le titre
+  // AVOIR, par « Total à déduire » et par le TypeCode 381 du Factur-X.
+  //
+  // Reste que « TVA 20 % — 166,67 € » sans signe se lit mal quand on n'a pas ce
+  // contexte : le lecteur croit devoir cette TVA au lieu de la récupérer. Une
+  // phrase le dit, dans les mêmes termes que sur le document IOCAR.
+  if (docType === "credit_note") {
+    const note = "Les montants ci-dessus viennent en déduction"
+      + (doc.source_invoice_number ? " de la facture " + doc.source_invoice_number : "") + ".";
+    drawRight(page, note, width - 40, y, 8, font, COLORS.grey);
+    y -= 14;
+  }
+  y -= 10;
 
   // v8.39 — DÉBOURS (art. 267 II 2° du CGI)
   // Affiché sous Total TTC, hors base TVA mais à ajouter au total à payer.

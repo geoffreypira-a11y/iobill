@@ -443,10 +443,13 @@ export function CreditNoteEditorPage({ token, company }) {
     if (!confirm("Transmettre cet avoir à l'administration via la PDP configurée ?")) return;
     setSaving(true);
     try {
-      const r = await fetch("/api/generate-facturx", {
+      // v8.182 — Idem page liste : le chemin `transmit_pdp` de generate-facturx
+      // est désactivé depuis la v8.47.1 et répondait 410. On passe par la
+      // Plateforme Agréée réelle.
+      const r = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ document_type: "credit_note", document_id: creditNote.id, transmit_pdp: true })
+        body: JSON.stringify({ action: "pa_send_credit_note", payload: { credit_note_id: creditNote.id } })
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Transmission échouée");

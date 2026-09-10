@@ -53,7 +53,7 @@ export async function syncVatCurrentPeriod(token, company) {
     if (!period) return null;
 
     // 1) Charger factures + achats de la période
-    const [invoices, purchases] = await Promise.all([
+    const [invoices, purchases, creditNotes] = await Promise.all([
       sb.select(token, "invoices", {
         filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)&issue_date=gte.${period.start}&issue_date=lte.${period.end}`,
         order: "issue_date.desc",
@@ -63,18 +63,33 @@ export async function syncVatCurrentPeriod(token, company) {
         filter: `company_id=eq.${company.id}&status=in.(validated,paid,partial,pending)&issue_date=gte.${period.start}&issue_date=lte.${period.end}`,
         order: "issue_date.desc",
         limit: 500
+      }),
+      // v8.182 — Les avoirs émis de la période : ils réduisent la collectée,
+      // TVA visible comme TVA sur marge. Sans eux, la déclaration synchronisée
+      // annonçait la TVA de ventes annulées.
+      sb.select(token, "credit_notes", {
+        filter: `company_id=eq.${company.id}&status=eq.issued&issue_date=gte.${period.start}&issue_date=lte.${period.end}`,
+        order: "issue_date.desc",
+        limit: 500
       })
     ]);
 
     // 2) Calculs
     const invs = invoices || [];
     const purs = purchases || [];
+    const avoirs = creditNotes || [];
     // v8.68 — La collectée inclut la TVA sur marge (art. 297 A) : invisible sur
     // la facture mais bien DUE. Disjointe de vat_total_cents (pas de double-compte).
-    const collectedPdpVAT = invs.reduce((s, i) => s + (i.vat_total_cents || 0), 0);
-    const marginVAT = invs.reduce((s, i) => s + (i.tva_marge_cents || 0), 0);
+    // v8.182 — Les avoirs émis viennent en déduction, dans les deux assiettes.
+    // Ils portent des montants positifs — c'est leur statut qui dit qu'ils
+    // annulent — donc on soustrait explicitement.
+    const collectedPdpVAT = invs.reduce((s, i) => s + (i.vat_total_cents || 0), 0)
+      - avoirs.reduce((s, c) => s + (c.vat_total_cents || 0), 0);
+    const marginVAT = invs.reduce((s, i) => s + (i.tva_marge_cents || 0), 0)
+      - avoirs.reduce((s, c) => s + (c.tva_marge_cents || 0), 0);
     const collectedVAT = collectedPdpVAT + marginVAT;
-    const collectedHT = invs.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
+    const collectedHT = invs.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0)
+      - avoirs.reduce((s, c) => s + (c.subtotal_ht_cents || 0), 0);
 
     // v8.68 — Déductible = part RÉCUPÉRABLE (vat_deductible_cents, fallback total),
     // pondérée par la part PAYÉE (exigibilité). Aligné sur la page TVA.
@@ -90,7 +105,18 @@ export async function syncVatCurrentPeriod(token, company) {
     });
 
     // Breakdown par taux
+    // v8.182 — Les avoirs y entrent en négatif, sinon la ventilation par taux
+    // contredisait le total de la collectée qu'elle est censée détailler.
     const breakdownMap = {};
+    const cumulBreakdown = (doc, signe) => {
+      (doc.vat_breakdown || []).forEach((br) => {
+        const k = `${br.rate}`;
+        if (!breakdownMap[k]) breakdownMap[k] = { rate: br.rate, base_cents: 0, vat_cents: 0 };
+        breakdownMap[k].base_cents += signe * (br.base_cents || 0);
+        breakdownMap[k].vat_cents += signe * (br.vat_cents || 0);
+      });
+    };
+    avoirs.forEach((c) => cumulBreakdown(c, -1));
     invs.forEach((i) => {
       (i.vat_breakdown || []).forEach((br) => {
         const k = `${br.rate}`;

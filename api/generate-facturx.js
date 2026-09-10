@@ -747,11 +747,14 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
 
   // Pour un avoir : référence à la facture d'origine via BillingReferencedDocument
   let billingRefBlock = "";
-  if (cfg.lineType === "credit_note" && doc.invoice_id) {
-    // On a déjà fait la requête lines, on n'a pas la facture source ici ;
-    // mais on a son numéro via client_snapshot ? Non : on stocke l'id seulement.
-    // Astuce : on met l'id pour traçabilité (la facture sera retrouvée côté DGFiP via num).
-    billingRefBlock = `<ram:BillingReferencedDocument><ram:IssuerAssignedID>${x(doc.invoice_id)}</ram:IssuerAssignedID></ram:BillingReferencedDocument>`;
+  if (cfg.lineType === "credit_note" && (doc.source_invoice_number || doc.invoice_id)) {
+    // v8.182 — BT-25 attend le NUMÉRO de la facture d'origine (« VEH-2026-0107 »).
+    // On y mettait `invoice_id`, l'UUID interne d'IOBILL : illisible pour le
+    // destinataire comme pour l'administration, et sans valeur d'identification.
+    // Le numéro est désormais stocké sur l'avoir (source_invoice_number) ; on ne
+    // retombe sur l'UUID que pour les avoirs antérieurs à la migration, faute de
+    // mieux.
+    billingRefBlock = `<ram:BillingReferencedDocument><ram:IssuerAssignedID>${x(doc.source_invoice_number || doc.invoice_id)}</ram:IssuerAssignedID></ram:BillingReferencedDocument>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>

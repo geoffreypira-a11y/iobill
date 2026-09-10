@@ -17,6 +17,10 @@ export function VatPage({ token, company }) {
   const [returns, setReturns] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  // v8.182 — Les avoirs manquaient à l'appel : la déclaration se construisait
+  // sur `invoices` et `purchases` seulement, donc une vente annulée restait
+  // déclarée et l'exploitant payait la TVA d'une vente qui n'a pas eu lieu.
+  const [creditNotes, setCreditNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   // v8.67 — Repli des 3 volets de la déclaration (fermés par défaut, trop de lignes sinon).
@@ -26,7 +30,7 @@ export function VatPage({ token, company }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [r, i, p] = await Promise.all([
+      const [r, i, p, cn] = await Promise.all([
         sb.select(token, "vat_returns", { filter: `company_id=eq.${company.id}`, order: "period_start.desc" }),
         sb.select(token, "invoices", {
           filter: `company_id=eq.${company.id}&status=in.(issued,sent,partial,paid,overdue)`,
@@ -35,12 +39,18 @@ export function VatPage({ token, company }) {
         sb.select(token, "purchases", {
           filter: `company_id=eq.${company.id}&status=in.(validated,paid,partial,pending)`,
           order: "issue_date.desc"
+        }),
+        // Seuls les avoirs ÉMIS comptent : un brouillon n'annule rien.
+        sb.select(token, "credit_notes", {
+          filter: `company_id=eq.${company.id}&status=eq.issued`,
+          order: "issue_date.desc"
         })
       ]);
       if (!alive) return;
       const allReturns = r || [];
       setInvoices(i || []);
       setPurchases(p || []);
+      setCreditNotes(cn || []);
 
       // Auto-bascule : déclarations in_progress dont le mois est passé → ready
       const period = computeCurrentVatPeriod(company.vat_regime);
@@ -67,6 +77,10 @@ export function VatPage({ token, company }) {
     };
     const invInPeriod = invoices.filter((i) => filterDate(i.issue_date));
     const purInPeriod = purchases.filter((p) => filterDate(p.issue_date));
+    // v8.182 — Les avoirs de la période viennent en DÉDUCTION de la collectée,
+    // bloc par bloc. Un avoir porte des montants positifs — c'est son statut qui
+    // dit qu'il annule — donc on soustrait explicitement.
+    const cnInPeriod = creditNotes.filter((c) => filterDate(c.issue_date));
 
     // ── BLOC 1 — TVA transmise via PDP (TVA visible des factures) ──
     // Déjà remontée au pré-rempli DGFiP → à NE PAS re-déclarer.
@@ -79,8 +93,22 @@ export function VatPage({ token, company }) {
         ttc_cents: i.total_ttc_cents || 0,
         vat_cents: i.vat_total_cents || 0
       }));
-    const collectedPdpVAT = block1Rows.reduce((s, r) => s + r.vat_cents, 0);
-    const collectedHT = invInPeriod.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0);
+    // Bloc 1 — les avoirs à TVA visible s'y déduisent : la vente annulée avait
+    // été transmise via PDP, son annulation l'est aussi.
+    const block1Credits = cnInPeriod
+      .filter((c) => (c.vat_total_cents || 0) > 0)
+      .map((c) => ({
+        id: c.id,
+        number: c.number,
+        client: c.client_snapshot?.legal_name || c.client_snapshot?.name || "—",
+        ttc_cents: -(c.total_ttc_cents || 0),
+        vat_cents: -(c.vat_total_cents || 0),
+        avoir: true
+      }));
+    const collectedPdpVAT = block1Rows.reduce((s, r) => s + r.vat_cents, 0)
+      + block1Credits.reduce((s, r) => s + r.vat_cents, 0);
+    const collectedHT = invInPeriod.reduce((s, i) => s + (i.subtotal_ht_cents || 0), 0)
+      - cnInPeriod.reduce((s, c) => s + (c.subtotal_ht_cents || 0), 0);
 
     // ── BLOC 2 — TVA à déclarer sur marge (art. 297 A) ──
     // Invisible sur la facture (297 E), NON transmise via PDP → À AJOUTER au
@@ -102,7 +130,22 @@ export function VatPage({ token, company }) {
           tva_marge_cents: tvaMarge
         };
       });
-    const marginVAT = block2Rows.reduce((s, r) => s + r.tva_marge_cents, 0);
+    // Bloc 2 — même chose pour la TVA sur marge, qui n'est ni visible sur le
+    // document (art. 297 E) ni transmise via PDP : sans cette déduction, la
+    // marge d'une vente annulée restait due à jamais.
+    const block2Credits = cnInPeriod
+      .filter((c) => (c.tva_marge_cents || 0) > 0)
+      .map((c) => ({
+        id: c.id,
+        number: c.number,
+        achat_cents: -(c.purchase_price_cents || 0),
+        marge_cents: -(c.marge_cents || 0),
+        vente_ttc_cents: -((c.purchase_price_cents || 0) + (c.marge_cents || 0)),
+        tva_marge_cents: -(c.tva_marge_cents || 0),
+        avoir: true
+      }));
+    const marginVAT = block2Rows.reduce((s, r) => s + r.tva_marge_cents, 0)
+      + block2Credits.reduce((s, r) => s + r.tva_marge_cents, 0);
 
     // ── BLOC 3 — TVA déductible sur achats (art. 271) ──
     // Jamais pré-remplie → toujours à porter. Déductible uniquement sur la part
@@ -152,7 +195,10 @@ export function VatPage({ token, company }) {
 
     // v8.68 — Le volet marge ne s'affiche que si l'abonné A de la TVA sur marge
     // (activité biens d'occasion / IOCAR). Un abonné IOBILL classique ne le voit pas.
-    const hasMarginActivity = invoices.some((i) => (i.tva_marge_cents || 0) > 0);
+    // v8.182 — Une période ne contenant qu'un avoir sur marge doit afficher le
+    // bloc 2 : c'est justement là que se lit la reprise.
+    const hasMarginActivity = invoices.some((i) => (i.tva_marge_cents || 0) > 0)
+      || creditNotes.some((c) => (c.tva_marge_cents || 0) > 0);
 
     return {
       collectedPdpVAT,
@@ -163,12 +209,15 @@ export function VatPage({ token, company }) {
       hasMarginActivity,
       netVAT: collectedVAT - deductibleVAT,      // Total TVA réel (1 + 2 − 3)
       toDeclareVAT: marginVAT - deductibleVAT,    // Aide : à ajuster au pré-rempli (2 − 3)
-      block1Rows,
-      block2Rows,
+      // v8.182 — Les avoirs s'affichent DANS les blocs qu'ils réduisent, avec
+      // leurs montants en négatif : le détail explique alors le total, au lieu
+      // d'un écart inexpliqué entre la somme des lignes et la TVA annoncée.
+      block1Rows: [...block1Rows, ...block1Credits],
+      block2Rows: [...block2Rows, ...block2Credits],
       block3Rows,
       breakdown: breakdownArr
     };
-  }, [invoices, purchases, currentPeriod]);
+  }, [invoices, purchases, creditNotes, currentPeriod]);
 
   // SYNC AUTO de la déclaration in_progress du mois en cours
   // Dès qu'il y a au moins une facture ou un achat dans la période, on crée/MAJ
@@ -467,7 +516,9 @@ export function VatPage({ token, company }) {
                 <tbody>
                   {stats.block1Rows.map((r) => (
                     <tr key={r.id}>
-                      <td className="mono">{r.number}</td>
+                      {/* v8.182 — Un montant négatif au milieu de factures doit
+                          se comprendre du premier coup d'œil. */}
+                      <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
                       <td>{r.client}</td>
                       <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
                       <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_cents)}</td>
@@ -497,7 +548,7 @@ export function VatPage({ token, company }) {
                 <tbody>
                   {stats.block2Rows.map((r) => (
                     <tr key={r.id}>
-                      <td className="mono">{r.number}</td>
+                      <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
                       <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.achat_cents)}</td>
                       <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vente_ttc_cents)}</td>
                       <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.marge_cents)}</td>
