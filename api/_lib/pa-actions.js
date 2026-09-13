@@ -965,8 +965,20 @@ export async function paWebhook(companyId, rawBody, headers) {
     } catch (e) { console.warn("[PA webhook] getInvoice", e.message); }
     if (item) await persistInbound(companyId, creds, impl, cfg, item);
   } else {
+    // v8.190 — On cherche d'abord une facture, puis un AVOIR.
+    //
+    // Jusqu'ici cette recherche ne portait que sur `invoices`. Le retour de
+    // statut d'un avoir ne trouvait donc rien, et tout le bloc était sauté :
+    // ni mise à jour de facturx_status, ni journalisation dans pa_events.
+    // Un avoir pouvait être rejeté par la Plateforme Agréée sans qu'IO BILL
+    // ne l'apprenne jamais — l'abonné ne le découvrait qu'en allant voir
+    // chez la PDP. C'est exactement ce qui s'est produit le 13/09/2026 :
+    // `credit_note.submitted` journalisé, rejet fr:213 côté PDP, silence ici.
     const inv = await sbAdmin.selectOne("invoices", "pdp_transmission_id=eq." + encodeURIComponent(evt.pa_document_id));
-    if (inv) {
+    const cn = inv ? null : await sbAdmin.selectOne("credit_notes", "pdp_transmission_id=eq." + encodeURIComponent(evt.pa_document_id));
+    const doc = inv || cn;
+    const table = inv ? "invoices" : "credit_notes";
+    if (doc) {
       // v8.57.8 — Mapping événement unique reçu → facturx_status.
       // Un webhook reçoit un seul event, on ne peut pas voir tout l'historique.
       // Règle : on ne dégrade JAMAIS un statut plus terminal vers un moins
@@ -982,17 +994,23 @@ export async function paWebhook(companyId, rawBody, headers) {
       else if (c === LIFECYCLE.approuvee)   newFx = "accepted";
 
       if (newFx) {
-        const currentRank = RANK[inv.facturx_status] ?? -1;
+        const currentRank = RANK[doc.facturx_status] ?? -1;
         const newRank = RANK[newFx];
         // Rejet toujours prioritaire, sinon on n'écrase que si "plus terminal"
         if (newFx === "rejected" || newRank > currentRank) {
-          await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: newFx });
+          await sbAdmin.update(table, "id=eq." + doc.id, { facturx_status: newFx });
         }
       }
       await logEvent({
-        company_id: inv.company_id, direction: "outbound", provider: creds.provider,
-        pa_document_id: evt.pa_document_id, invoice_id: inv.id,
-        event_type: evt.event, status: c, payload: evt.payload
+        company_id: doc.company_id, direction: "outbound", provider: creds.provider,
+        pa_document_id: evt.pa_document_id,
+        // Un avoir se rattache à SA facture d'origine, comme le fait déjà
+        // paSendCreditNote : c'est par elle qu'on relit l'histoire d'une vente.
+        invoice_id: inv ? inv.id : (cn ? cn.invoice_id : null),
+        event_type: cn ? "credit_note." + evt.event : evt.event,
+        status: c,
+        message: cn ? "Avoir " + (cn.number || "") + " — statut " + c : undefined,
+        payload: evt.payload
       });
     }
   }
