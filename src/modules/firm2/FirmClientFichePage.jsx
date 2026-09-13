@@ -211,6 +211,7 @@ export function FirmClientFichePage({ token, user, company }) {
         {[
           { key: "overview", label: "Vue d'ensemble" },
           { key: "invoices", label: "Factures" },
+          { key: "creditNotes", label: "Avoirs" },
           { key: "purchases", label: "Achats" },
           { key: "vat", label: "TVA & URSSAF" },
           { key: "bank", label: "Relevés bancaires" },
@@ -240,6 +241,7 @@ export function FirmClientFichePage({ token, user, company }) {
       {/* Contenu */}
       {tab === "overview" && <OverviewTab token={token} firm={firm} company={clientCompany} signals={openSignals} />}
       {tab === "invoices" && <InvoicesTab token={token} firm={firm} company={clientCompany} signals={signals} onSignalCreated={load} />}
+      {tab === "creditNotes" && <CreditNotesTab token={token} firm={firm} company={clientCompany} signals={signals} onSignalCreated={load} />}
       {tab === "purchases" && <PurchasesTab token={token} firm={firm} company={clientCompany} signals={signals} onSignalCreated={load} />}
       {tab === "vat" && <VatTab token={token} firm={firm} company={clientCompany} />}
       {tab === "bank" && <BankStatementsTab token={token} firm={firm} company={clientCompany} />}
@@ -671,6 +673,174 @@ function InvoicesTab({ token, firm, company, signals, onSignalCreated }) {
     {previewUrl && (
       <PdfPreviewModal token={token} url={previewUrl} invoiceId={previewInvoiceId} title={previewTitle} onClose={() => { setPreviewUrl(null); setPreviewInvoiceId(null); }} />
     )}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// Onglet : Avoirs
+// ════════════════════════════════════════════════════════════════
+//
+// v8.196 — Le cabinet déduisait bien les avoirs de la TVA collectée et du CA
+// (v8.183), mais ne pouvait pas les PARCOURIR : ils n'apparaissaient que
+// comme une ligne agrégée dans le récapitulatif TVA. Un comptable qui ouvre
+// la fiche d'un client s'attend à consulter ses avoirs comme ses factures —
+// pour les justifier, les rapprocher de leur facture d'origine, ou les
+// signaler.
+function CreditNotesTab({ token, firm, company, signals, onSignalCreated }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewTitle, setPreviewTitle] = useState("");
+  const filters = useListFilters();
+  const { sort, toggleSort } = useTableSort("firm.creditNotes.sort", { key: "issue_date", dir: "desc" });
+
+  async function load() {
+    const list = await sb.select(token, "credit_notes", {
+      filter: `company_id=eq.${company.id}`,
+      select: "id,number,issue_date,status,reason,source_invoice_number,subtotal_ht_cents,vat_total_cents,total_ttc_cents,pdf_url",
+      order: "issue_date.desc",
+      limit: 500
+    });
+    setRows(list || []);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [company?.id]);
+
+  const visible = rows.filter((c) =>
+    filters.match(c, (x) => x.issue_date, (x) => [x.number, x.source_invoice_number, x.reason, x.status])
+  );
+  const sorted = useSortedRows(visible, sort, (c, k) => {
+    switch (k) {
+      case "number":     return c.number || "";
+      case "issue_date": return c.issue_date || "";
+      case "source":     return c.source_invoice_number || "";
+      case "ht":         return c.subtotal_ht_cents || 0;
+      case "vat":        return c.vat_total_cents || 0;
+      case "ttc":        return c.total_ttc_cents || 0;
+      case "status":     return c.status || "";
+      default:           return "";
+    }
+  });
+
+  // Seuls les avoirs ÉMIS viennent en déduction de la TVA collectée : un
+  // brouillon n'annule rien. On affiche les deux — le comptable doit savoir
+  // qu'un brouillon existe — mais le total rappelle ce qui compte vraiment.
+  const emis = rows.filter((c) => c.status === "issued");
+  const totalEmisHt  = emis.reduce((s, c) => s + (c.subtotal_ht_cents || 0), 0);
+  const totalEmisTva = emis.reduce((s, c) => s + (c.vat_total_cents || 0), 0);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>Chargement...</div>;
+  if (rows.length === 0) return <EmptyTab text="Aucun avoir sur ce client" />;
+
+  return (
+    <>
+      <ListToolbar
+        filters={filters}
+        placeholder="N° d'avoir, facture d'origine, motif…"
+        shown={sorted.length}
+        total={rows.length}
+      />
+
+      <div className="card card-pad" style={{ marginBottom: 12, fontSize: 12, color: "var(--muted)" }}>
+        <strong style={{ color: "var(--text)" }}>{emis.length} avoir{emis.length > 1 ? "s" : ""} émis</strong>
+        {" · "}−{fmtEUR(totalEmisHt)} de CA HT{" · "}−{fmtEUR(totalEmisTva)} de TVA collectée
+        {rows.length > emis.length && (
+          <span> · {rows.length - emis.length} brouillon(s), sans effet sur la déclaration</span>
+        )}
+      </div>
+
+      {sorted.length === 0 ? <NoResults onReset={filters.reset} /> : (
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <SortableTh label="N°"              sortKey="number"     sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Date"            sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Facture d'origine" sortKey="source"   sort={sort} onSort={toggleSort} />
+                  <SortableTh label="HT"              sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="TVA"             sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="TTC"             sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="Statut"          sortKey="status"     sort={sort} onSort={toggleSort} />
+                  <th style={{ textAlign: "right" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((c) => {
+                  const cnSignals = (signals || []).filter((sg) => sg.target_id === c.id && sg.status === "open");
+                  const emisCe = c.status === "issued";
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <span style={{ fontFamily: "monospace" }}>{c.number}</span>
+                        {cnSignals.length > 0 && (
+                          <span style={{ marginLeft: 6 }} title={cnSignals.map((sg) => sg.title).join("\n")}>
+                            {SEV_EMOJI[cnSignals[0].severity]}
+                          </span>
+                        )}
+                        {c.reason && (
+                          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>{c.reason}</div>
+                        )}
+                      </td>
+                      <td>{fmtDate(c.issue_date)}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: 11 }}>
+                        {c.source_invoice_number || <span style={{ color: "var(--muted2)" }}>—</span>}
+                      </td>
+                      {/* Les montants sont POSITIFS en base — c'est le type du
+                          document qui dit qu'il annule. On les affiche en
+                          négatif ici : le comptable lit une déduction. */}
+                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.subtotal_ht_cents || 0)}</td>
+                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.vat_total_cents || 0)}</td>
+                      <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>−{fmtEUR(c.total_ttc_cents || 0)}</td>
+                      <td>
+                        <span
+                          className="badge"
+                          style={{
+                            background: emisCe ? "rgba(62,207,122,0.12)" : "rgba(255,255,255,0.05)",
+                            color: emisCe ? "var(--green)" : "var(--muted)",
+                            border: `1px solid ${emisCe ? "rgba(62,207,122,0.35)" : "var(--border2, rgba(255,255,255,0.12))"}`
+                          }}
+                          title={emisCe
+                            ? "Avoir émis — vient en déduction de la TVA collectée"
+                            : "Brouillon — sans effet sur la déclaration tant qu'il n'est pas émis"}
+                        >
+                          {emisCe ? "Émis" : "Brouillon"}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {c.pdf_url && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => { setPreviewUrl(c.pdf_url); setPreviewTitle(`Avoir ${c.number}`); }}
+                            style={{ padding: "4px 8px", marginRight: 4 }}
+                            title="Voir le PDF"
+                          >👁</button>
+                        )}
+                        <SignalButton
+                          token={token}
+                          firm_id={firm.id}
+                          company_id={company.id}
+                          target_type="credit_note"
+                          target_id={c.id}
+                          targetLabel={`Avoir ${c.number}`}
+                          compact
+                          onCreated={onSignalCreated}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {previewUrl && (
+        <PdfPreviewModal token={token} url={previewUrl} title={previewTitle} onClose={() => setPreviewUrl(null)} />
+      )}
     </>
   );
 }
