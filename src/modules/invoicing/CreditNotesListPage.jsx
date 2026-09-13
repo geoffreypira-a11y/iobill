@@ -24,12 +24,40 @@ export function CreditNotesListPage({ token, company }) {
   const [previewCreditNote, setPreviewCreditNote] = useState(null);
   // v8.42 — Transmission PDP : loading + toast
   const [actionLoading, setActionLoading] = useState(null);
+  // v8.193 — État de la transmission PDP, comme sur la page Factures.
+  // Le bouton « Transmettre » s'affichait ici quelle que soit la
+  // configuration : le serveur refusait bien (paSendCreditNote renvoie un 403
+  // « Transmission PDP désactivée »), mais on proposait une action vouée à
+  // l'échec. En cas d'échec de lecture on reste à true, donc au comportement
+  // d'avant.
+  const [pdpConfigured, setPdpConfigured] = useState(true);
+  const [transmissionEnabled, setTransmissionEnabled] = useState(true);
   const [toast, setToast] = useState(null);
 
   function showToast(msg, type = "success") {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   }
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: "pa_config" })
+        });
+        const j = await r.json().catch(() => ({}));
+        const cfg = j.config || j;
+        if (alive && cfg) {
+          setPdpConfigured(!!cfg.configured);
+          setTransmissionEnabled(cfg.transmission_enabled !== false);
+        }
+      } catch (_) { /* on garde true */ }
+    })();
+    return () => { alive = false; };
+  }, [token, company?.id]);
 
   async function refreshList() {
     const list = await sb.select(token, "credit_notes", {
@@ -239,8 +267,9 @@ export function CreditNotesListPage({ token, company }) {
                         >
                           👁 Voir
                         </button>
-                        {/* v8.42 — Transmettre à la DGFiP via PDP (uniquement si émis et pas encore transmis) */}
-                        {c.status === "issued" && !c.pdp_transmitted_at && (
+                        {/* v8.42 — Transmettre à la DGFiP via PDP (uniquement si émis et pas encore transmis)
+                            v8.193 — …et seulement si la transmission est ouverte. */}
+                        {c.status === "issued" && !c.pdp_transmitted_at && pdpConfigured && transmissionEnabled && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={(e) => {
@@ -253,6 +282,20 @@ export function CreditNotesListPage({ token, company }) {
                           >
                             {actionLoading === `transmit-${c.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
                           </button>
+                        )}
+                        {/* v8.193 — Sans cette mention, l'absence de bouton
+                            ressemblait à un bug. L'avoir est bien émis et sa
+                            Factur-X générée : seule la télétransmission est
+                            fermée côté administrateur. */}
+                        {c.status === "issued" && !c.pdp_transmitted_at && (!pdpConfigured || !transmissionEnabled) && (
+                          <span
+                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--muted)", border: "1px dashed var(--border2, rgba(255,255,255,0.15))", borderRadius: 6, whiteSpace: "nowrap" }}
+                            title={pdpConfigured
+                              ? "La transmission à la Plateforme Agréée n'est pas activée pour cette entreprise. L'avoir reste valable et sa Factur-X est bien générée."
+                              : "Aucune Plateforme Agréée n'est configurée pour cette entreprise."}
+                          >
+                            🏛️ Transmission désactivée
+                          </span>
                         )}
                         {c.pdp_transmitted_at && (
                           <span
