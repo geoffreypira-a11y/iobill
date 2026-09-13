@@ -59,6 +59,62 @@ export function CreditNotesListPage({ token, company }) {
     return () => { alive = false; };
   }, [token, company?.id]);
 
+  // v8.194 — Statut PDP des avoirs transmis.
+  //
+  // Un avoir n'est pas payé par l'acheteur : seul compte « accepté ou rejeté ».
+  // Jusqu'ici la pastille affichait « ✓ Transmis » même pour un avoir refusé
+  // en fr:213 — autrement dit l'inverse de la réalité, sur un document dont
+  // dépend une récupération de TVA.
+  //
+  // On interroge UNE SEULE FOIS par montage, et seulement les avoirs transmis
+  // dont le statut n'est pas encore terminal. Pas de boucle : le polling
+  // automatique des factures a été coupé en v8.57.6 parce qu'il réveillait le
+  // Realtime, qui refetchait la liste et écrasait l'état des boutons. On ne
+  // réintroduit pas ce défaut.
+  const statutsDemandes = React.useRef(new Set());
+
+  async function rafraichirStatutPdp(cn, { silencieux = true } = {}) {
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: "pa_status", payload: { credit_note_id: cn.id } })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (!silencieux) showToast(j.error || `Erreur ${r.status}`, "error");
+        return;
+      }
+      const nouveau = j.facturx_status;
+      if (nouveau && nouveau !== cn.facturx_status) {
+        setItems(prev => prev.map(x => x.id === cn.id ? { ...x, facturx_status: nouveau } : x));
+      }
+      if (!silencieux) {
+        showToast(nouveau === "rejected"
+          ? "Avoir refusé par la plateforme"
+          : "Statut à jour : " + (nouveau || "transmis"),
+          nouveau === "rejected" ? "error" : "success");
+      }
+    } catch (_) { if (!silencieux) showToast("Statut indisponible", "error"); }
+  }
+
+  useEffect(() => {
+    // Borné aux 10 plus récents : chaque vérification interroge la plateforme,
+    // et un abonné qui aurait cinquante avoirs en attente déclencherait
+    // cinquante appels au simple affichage de la page. Les plus anciens
+    // restent vérifiables d'un clic sur leur pastille.
+    let restants = 10;
+    for (const c of items) {
+      if (restants <= 0) break;
+      const terminal = c.facturx_status === "rejected" || c.facturx_status === "accepted";
+      if (!c.pdp_transmitted_at || terminal) continue;
+      if (statutsDemandes.current.has(c.id)) continue;
+      statutsDemandes.current.add(c.id);
+      restants -= 1;
+      rafraichirStatutPdp(c);
+    }
+  }, [items]);
+
   async function refreshList() {
     const list = await sb.select(token, "credit_notes", {
       filter: `company_id=eq.${company.id}`,
@@ -297,14 +353,30 @@ export function CreditNotesListPage({ token, company }) {
                             🏛️ Transmission désactivée
                           </span>
                         )}
-                        {c.pdp_transmitted_at && (
+                        {c.pdp_transmitted_at && (() => {
+                          // v8.194 — La pastille dit ce que la plateforme a
+                          // réellement répondu. « ✓ Transmis » sur un avoir
+                          // refusé affirmait le contraire de la vérité.
+                          const refuse = c.facturx_status === "rejected";
+                          const quand = new Date(c.pdp_transmitted_at).toLocaleDateString("fr-FR");
+                          const via = c.pdp_provider || "PDP";
+                          return (
                           <span
-                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--green)", border: "1px solid rgba(62,207,122,0.3)", borderRadius: 6, whiteSpace: "nowrap" }}
-                            title={`Transmis via ${c.pdp_provider || "PDP"} le ${new Date(c.pdp_transmitted_at).toLocaleDateString("fr-FR")}`}
+                            onClick={(e) => { e.stopPropagation(); rafraichirStatutPdp(c, { silencieux: false }); }}
+                            style={{
+                              padding: "5px 10px", fontSize: 10, cursor: "pointer",
+                              color: refuse ? "var(--red, #e54949)" : "var(--green)",
+                              border: `1px solid ${refuse ? "rgba(229,73,73,0.4)" : "rgba(62,207,122,0.3)"}`,
+                              borderRadius: 6, whiteSpace: "nowrap"
+                            }}
+                            title={refuse
+                              ? `Refusé par ${via}. L'avoir n'est PAS parvenu à l'administration : la rectification de TVA n'est pas prise en compte. Cliquer pour revérifier.`
+                              : `Transmis via ${via} le ${quand}. Cliquer pour revérifier le statut.`}
                           >
-                            ✓ Transmis
+                            {refuse ? "❌ Refusé" : "✓ Transmis"}
                           </span>
-                        )}
+                          );
+                        })()}
                       </div>
                     </td>
                   </tr>
