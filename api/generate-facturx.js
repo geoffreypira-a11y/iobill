@@ -385,6 +385,28 @@ async function handleRequest(req, res) {
     }) || [];
   }
 
+  // v8.191 — BT-26 : date de la facture d'origine, obligatoire sur un avoir.
+  //
+  // SUPER PDP rejette (fr:213) tout avoir dont la référence à la facture
+  // antérieure n'est pas datée :
+  //
+  //   BR-FR-CO-05/BT-3 : si le type de facture est un avoir (261, 381, 396,
+  //   502, 503), alors au moins une référence à une facture antérieure (BT-25)
+  //   AVEC SA DATE (BT-26) doit être présente au niveau entête.
+  //   « Références entête trouvées : 0. »
+  //
+  // Zéro, alors que l'IssuerAssignedID était bien émis : la règle ne compte
+  // une référence que si elle porte sa date. C'est une exigence FRANÇAISE,
+  // plus stricte qu'EN 16931 où BT-26 est facultatif.
+  //
+  // La date n'est pas stockée sur l'avoir : on la relit sur la facture
+  // d'origine, que credit_notes.invoice_id désigne toujours (NOT NULL).
+  if (documentType === "credit_note" && doc.invoice_id && !doc.source_invoice_date) {
+    const src = await sbAdmin.selectOne("invoices", `id=eq.${doc.invoice_id}`);
+    if (src?.issue_date) doc.source_invoice_date = src.issue_date;
+    if (!doc.source_invoice_number && src?.number) doc.source_invoice_number = src.number;
+  }
+
   console.log(`[generate-facturx] doc=${documentType}/${documentId} lines=${(lines || []).length} payments=${payments.length} status=${doc.status}`);
 
   // 1) XML CII Factur-X
@@ -771,16 +793,26 @@ function buildFacturxXml({ doc, lines, company, cfg }) {
   // BT-25 attend le NUMÉRO de la facture d'origine (« VEH-2026-0107 »), pas
   // l'UUID interne : on ne retombe sur `invoice_id` que pour les avoirs
   // antérieurs à la migration, faute de mieux.
+  //
+  // v8.191 — La date (BT-26) accompagne obligatoirement la référence : sans
+  // elle, la règle française BR-FR-CO-05 ne compte pas la référence du tout
+  // (« Références entête trouvées : 0 ») et la PDP rejette l'avoir.
+  //
+  // Dans le schéma CII, FormattedIssueDateTime contient un `qdt:DateTimeString`
+  // — pas `udt:` comme les autres dates du document. C'est le seul endroit du
+  // fichier qui emploie ce namespace, déclaré sur la racine.
   let invoiceRefBlock = "";
   if (cfg.lineType === "credit_note" && (doc.source_invoice_number || doc.invoice_id)) {
+    const refDate = doc.source_invoice_date || doc.issue_date;
     invoiceRefBlock = `
-      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${x(doc.source_invoice_number || doc.invoice_id)}</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>`;
+      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${x(doc.source_invoice_number || doc.invoice_id)}</ram:IssuerAssignedID><ram:FormattedIssueDateTime><qdt:DateTimeString format="102">${dt(refDate)}</qdt:DateTimeString></ram:FormattedIssueDateTime></ram:InvoiceReferencedDocument>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rsm:CrossIndustryInvoice
   xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
   xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+  xmlns:qdt="urn:un:unece:uncefact:data:standard:QualifiedDataType:100"
   xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
   <rsm:ExchangedDocumentContext>
     <!-- v8.48.27 — Mode de facturation Chorus Pro requis par BR-FR-08.
