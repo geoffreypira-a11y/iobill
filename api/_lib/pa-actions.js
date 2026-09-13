@@ -483,9 +483,22 @@ export async function paSendCreditNote(company, payload) {
 }
 
 export async function paInvoiceStatus(company, payload) {
-  const inv = await sbAdmin.selectOne("invoices", "id=eq." + payload.invoice_id);
-  if (!inv || inv.company_id !== company.id) throw fail(404, "Facture introuvable");
-  if (!inv.pdp_transmission_id) throw fail(400, "Facture jamais transmise");
+  // v8.194 — Vaut aussi pour les AVOIRS.
+  //
+  // Un avoir n'est pas payé par l'acheteur : les statuts « paiement transmis »
+  // et « encaissée » n'ont aucun sens dessus. Un seul compte — accepté ou
+  // REJETÉ — et c'est justement celui qui manquait : un avoir refusé en fr:213
+  // par la plateforme s'affichait « ✓ Transmis » côté abonné. Or un avoir
+  // rejeté est une rectification qui n'est jamais parvenue à l'administration,
+  // donc une TVA récupérée en comptabilité que le fisc n'a jamais vue.
+  const isCreditNote = !!payload.credit_note_id;
+  const table = isCreditNote ? "credit_notes" : "invoices";
+  const label = isCreditNote ? "Avoir" : "Facture";
+  const docId = isCreditNote ? payload.credit_note_id : payload.invoice_id;
+
+  const inv = await sbAdmin.selectOne(table, "id=eq." + docId);
+  if (!inv || inv.company_id !== company.id) throw fail(404, label + " introuvable");
+  if (!inv.pdp_transmission_id) throw fail(400, label + " jamais transmis" + (isCreditNote ? "" : "e"));
 
   const creds = await loadCreds(company.id);
   const { impl, cfg } = getProvider(creds);
@@ -536,7 +549,7 @@ export async function paInvoiceStatus(company, payload) {
 
   // Ne met à jour la base que si le statut a effectivement changé
   if (fx !== inv.facturx_status) {
-    await sbAdmin.update("invoices", "id=eq." + inv.id, { facturx_status: fx });
+    await sbAdmin.update(table, "id=eq." + inv.id, { facturx_status: fx });
   }
 
   return { ok: true, status_code: latestCode, facturx_status: fx, events_count: events.length };
