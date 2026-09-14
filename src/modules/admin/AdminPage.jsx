@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fmtEUR, fmtDate } from "../../lib/helpers.js";
+import { fmtEUR, fmtDate, fmtDateHeure } from "../../lib/helpers.js";
 import { AdminFirmsTab } from "./AdminFirmsTab.jsx";
 import { AdminPdpModal } from "./AdminPdpModal.jsx";
 
@@ -297,7 +297,7 @@ export function AdminPage({ token, company }) {
           </button>
           {backupInfo && (
             <button className="btn btn-ghost" onClick={backupDownload}>
-              ⬇ Dernier backup ({backupInfo.updated_at ? fmtDate(backupInfo.updated_at) : "?"})
+              ⬇ Dernier backup ({backupInfo.updated_at ? fmtDateHeure(backupInfo.updated_at) : "?"})
             </button>
           )}
         </div>

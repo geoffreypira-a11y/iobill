@@ -27,6 +27,19 @@ export const fmtDate = (iso) => {
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
 };
 
+// Date ET heure. Sur une sauvegarde, le jour ne suffit pas : il ne dit pas si
+// le cron de cette nuit a tourné ou si l'on regarde un fichier de la veille
+// écrit juste après minuit.
+export const fmtDateHeure = (iso) => {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleString("fr-FR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit"
+  });
+};
+
 export const fmtDateLong = (iso) => {
   if (!iso) return "-";
   const d = new Date(iso);
