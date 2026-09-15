@@ -1348,12 +1348,10 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
           )}
 
           <label className="form-label" style={{ display: "block", margin: "16px 0 6px" }}>Moyen de paiement</label>
+          {/* v8.196 — Même source que la correction dans l'historique : les deux
+              listes ne peuvent plus diverger. */}
           <select className="form-input" value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="bank_transfer">Virement</option>
-            <option value="cash">Espèces</option>
-            <option value="check">Chèque</option>
-            <option value="card">Carte</option>
-            <option value="other">Autre</option>
+            {PAYMENT_METHOD_CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
         <div className="modal-foot">
@@ -1372,6 +1370,31 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
 // Lit la table payments (déjà alimentée par le bridge IOCAR + encaissements).
 // N'écrit rien, ne touche à aucun PDF.
 // ═══════════════════════════════════════════════════════════════════
+// Les choix proposés à la saisie. `PAYMENT_METHOD_LABELS` en dessous garde
+// en plus les clés historiques (français, stripe) pour l'affichage des lignes
+// déjà en base — mais on ne les propose pas à la saisie.
+const PAYMENT_METHOD_CHOICES = [
+  ["bank_transfer", "Virement"],
+  ["cash", "Espèces"],
+  ["check", "Chèque"],
+  ["card", "Carte"],
+  ["other", "Autre"],
+];
+
+// Les encaissements venus d'IO CAR ou d'anciennes versions portent des clés
+// françaises ("virement", "cheque"…) qui ne correspondent à aucune option du
+// menu. Sans normalisation, ouvrir la correction sur une telle ligne afficherait
+// un menu vide et l'enregistrement ne partirait pas — la valeur d'état étant
+// restée égale à celle d'origine.
+const PAYMENT_METHOD_ALIASES = {
+  virement: "bank_transfer", especes: "cash", cheque: "check", cb: "card", stripe: "card",
+};
+const normalizeMethod = (m) => {
+  const k = String(m || "").toLowerCase();
+  if (PAYMENT_METHOD_CHOICES.some(([v]) => v === k)) return k;
+  return PAYMENT_METHOD_ALIASES[k] || "other";
+};
+
 const PAYMENT_METHOD_LABELS = {
   bank_transfer: "Virement", virement: "Virement",
   cash: "Espèces", especes: "Espèces",
@@ -1415,6 +1438,76 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
 
   const methodLabel = (m) => PAYMENT_METHOD_LABELS[String(m || "").toLowerCase()] || (m || "—");
 
+  // ── v8.196 — Correction du moyen de paiement ──────────────────────────
+  // Se tromper de ligne dans le menu déroulant au moment d'encaisser n'était
+  // pas rattrapable : l'historique était en lecture seule, et la facture une
+  // fois encaissée ne repassait plus par la modale d'encaissement.
+  //
+  // Seul le MOYEN est modifiable. Ni le montant, ni la date : ce sont eux qui
+  // portent la comptabilité, alors que le moyen de paiement est une étiquette
+  // descriptive. Il ne figure pas sur la facture, n'entre dans aucun total et
+  // ne part pas à la PDP — la page « Historique des paiements » du comptable
+  // est reconstruite à chaque export, elle reflétera la correction.
+  const [editId, setEditId] = useState(null);
+  const [editMethod, setEditMethod] = useState("bank_transfer");
+  const [saving, setSaving] = useState(false);
+  // Volontairement distinct de `err` : celui-ci remplace toute la liste, ce
+  // qui est bon pour un échec de chargement et désastreux pour un échec de
+  // correction — on masquerait l'historique que l'on vient de consulter.
+  const [errSave, setErrSave] = useState(null);
+
+  async function saveMethod(paiement) {
+    if (editMethod === normalizeMethod(paiement.method)) { setEditId(null); return; }
+    setSaving(true);
+    try {
+      const res = await sb.update(token, "payments", "id=eq." + paiement.id, { method: editMethod });
+      // sb.update renvoie null quand PostgREST refuse : sans ce contrôle, la
+      // correction semblerait passée et l'ancienne valeur reviendrait au
+      // prochain chargement.
+      if (!res) { setErrSave("La correction n'a pas pu être enregistrée."); return; }
+      setPayments((prev) => prev.map((x) => x.id === paiement.id ? { ...x, method: editMethod } : x));
+      setErrSave(null);
+      setEditId(null);
+    } catch (e) {
+      setErrSave(e.message || "La correction n'a pas pu être enregistrée.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Encaissement sans ligne de détail (facture ancienne, ou encaissement natif
+  // qui n'en créait pas) : il n'y a rien à corriger, il faut créer la ligne.
+  // La date est demandée, car la mettre à aujourd'hui fausserait la page du
+  // comptable pour un paiement reçu il y a deux mois.
+  const [ajoutOuvert, setAjoutOuvert] = useState(false);
+  const [ajoutMethod, setAjoutMethod] = useState("bank_transfer");
+  const [ajoutDate, setAjoutDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  async function ajouterDetail() {
+    const montant = paidCents - sumPayments;
+    if (montant <= 0) return;
+    setSaving(true);
+    try {
+      const rows = await sb.insert(token, "payments", {
+        company_id: inv.company_id,
+        invoice_id: inv.id,
+        amount_cents: montant,
+        method: ajoutMethod,
+        paid_at: new Date(ajoutDate + "T12:00:00").toISOString(),
+        notes: "Moyen de paiement précisé après coup"
+      });
+      if (!rows) { setErrSave("L'ajout n'a pas pu être enregistré."); return; }
+      const cree = Array.isArray(rows) ? rows[0] : rows;
+      setPayments((prev) => [...prev, cree].sort((a, b) => String(a.paid_at).localeCompare(String(b.paid_at))));
+      setErrSave(null);
+      setAjoutOuvert(false);
+    } catch (e) {
+      setErrSave(e.message || "L'ajout n'a pas pu être enregistré.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
@@ -1443,6 +1536,13 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
             </div>
           </div>
 
+          {errSave && (
+            <div style={{
+              background: "rgba(229,92,92,.1)", border: "1px solid rgba(229,92,92,.35)",
+              borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "var(--red)", marginBottom: 10
+            }}>{errSave}</div>
+          )}
+
           {/* Liste */}
           {loading ? (
             <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>Chargement…</div>
@@ -1462,10 +1562,40 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
               {payments.map((p, i) => (
                 <div key={p.id || i} style={{ display: "flex", alignItems: "center", fontSize: 13, padding: "9px 4px", borderBottom: "1px solid var(--border2)" }}>
                   <span style={{ flex: "0 0 90px", color: "var(--muted2)" }}>{p.paid_at ? fmtDate(p.paid_at) : "—"}</span>
-                  <span style={{ flex: 1 }}>
-                    {methodLabel(p.method)}
-                    {(p.notes || p.reference) && (
-                      <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 6 }}>· {p.notes || p.reference}</span>
+                  <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    {editId === p.id ? (
+                      <>
+                        <select
+                          className="form-input"
+                          value={editMethod}
+                          onChange={(e) => setEditMethod(e.target.value)}
+                          disabled={saving}
+                          style={{ padding: "3px 6px", fontSize: 12, height: "auto", flex: 1, minWidth: 0 }}
+                        >
+                          {PAYMENT_METHOD_CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <button className="btn btn-ghost" title="Enregistrer" disabled={saving}
+                          style={{ padding: "2px 6px", fontSize: 12 }}
+                          onClick={() => saveMethod(p)}>✓</button>
+                        <button className="btn btn-ghost" title="Annuler" disabled={saving}
+                          style={{ padding: "2px 6px", fontSize: 12 }}
+                          onClick={() => setEditId(null)}>✕</button>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {methodLabel(p.method)}
+                          {(p.notes || p.reference) && (
+                            <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 6 }}>· {p.notes || p.reference}</span>
+                          )}
+                        </span>
+                        <button
+                          className="btn btn-ghost"
+                          title="Corriger le moyen de paiement"
+                          style={{ padding: "2px 5px", fontSize: 11, opacity: 0.6 }}
+                          onClick={() => { setEditMethod(normalizeMethod(p.method)); setEditId(p.id); }}
+                        >✏️</button>
+                      </>
                     )}
                   </span>
                   <span style={{ flex: "0 0 90px", textAlign: "right", fontWeight: 600 }}>{fmtEUR(Number(p.amount_cents) || 0)}</span>
@@ -1476,11 +1606,40 @@ function PaymentsHistoryModal({ token, inv, onClose }) {
                 <div style={{ display: "flex", alignItems: "center", fontSize: 13, padding: "9px 4px", borderBottom: "1px solid var(--border2)" }}>
                   <span style={{ flex: "0 0 90px", color: "var(--muted2)" }}>—</span>
                   <span style={{ flex: 1, fontStyle: "italic", color: "var(--muted2)" }}>
-                    Encaissement <span style={{ color: "var(--muted)", fontSize: 11 }}>· détail par paiement non disponible</span>
+                    Encaissement <span style={{ color: "var(--muted)", fontSize: 11 }}>· moyen de paiement non renseigné</span>
                   </span>
                   <span style={{ flex: "0 0 90px", textAlign: "right", fontWeight: 600 }}>{fmtEUR(paidCents - sumPayments)}</span>
                 </div>
               )}
+              {/* v8.196 — Il n'y a pas de ligne à corriger ici : il faut la
+                  créer. La date est demandée, la mettre à aujourd'hui
+                  fausserait la page du comptable pour un encaissement ancien. */}
+              {missingDetail && (ajoutOuvert ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "10px 4px", borderBottom: "1px solid var(--border2)" }}>
+                  <input
+                    type="date" className="form-input" value={ajoutDate} disabled={saving}
+                    onChange={(e) => setAjoutDate(e.target.value)}
+                    style={{ padding: "3px 6px", fontSize: 12, height: "auto", flex: "0 0 130px" }}
+                  />
+                  <select
+                    className="form-input" value={ajoutMethod} disabled={saving}
+                    onChange={(e) => setAjoutMethod(e.target.value)}
+                    style={{ padding: "3px 6px", fontSize: 12, height: "auto", flex: 1, minWidth: 100 }}
+                  >
+                    {PAYMENT_METHOD_CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <button className="btn btn-ghost" disabled={saving} style={{ padding: "2px 6px", fontSize: 12 }}
+                    onClick={ajouterDetail}>✓</button>
+                  <button className="btn btn-ghost" disabled={saving} style={{ padding: "2px 6px", fontSize: 12 }}
+                    onClick={() => setAjoutOuvert(false)}>✕</button>
+                </div>
+              ) : (
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 12, marginTop: 8, alignSelf: "flex-start" }}
+                  onClick={() => setAjoutOuvert(true)}
+                >✏️ Renseigner le moyen de paiement</button>
+              ))}
             </div>
           )}
         </div>
