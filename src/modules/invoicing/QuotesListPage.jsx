@@ -129,45 +129,23 @@ export function QuotesListPage({ token, company }) {
   }, [token, company.id]);
 
   // ─── Filtres ─────
-  const filtered = useMemo(() => {
-    const s = search.toLowerCase().trim();
-    return quotes.filter((q) => {
-      const name = snapshotDisplayName(q.client_snapshot).toLowerCase();
-      const matchS = !s || (q.number || "").toLowerCase().includes(s) || name.includes(s);
-      const effectiveStatus = isQuoteExpired(q) ? "expired" : q.status;
-      const matchF = statusFilter === "all" || effectiveStatus === statusFilter;
-      return matchS && matchF;
-    });
-  }, [quotes, search, statusFilter]);
-
-  const counts = useMemo(() => {
-    const c = { all: quotes.length };
-    Object.keys(QUOTE_STATUSES).forEach((k) => { c[k] = 0; });
-    quotes.forEach((q) => {
-      const eff = isQuoteExpired(q) ? "expired" : q.status;
-      c[eff] = (c[eff] || 0) + 1;
-    });
-    return c;
-  }, [quotes]);
-
-  const totalPending = quotes
-    .filter((q) => q.status === "sent" && !isQuoteExpired(q))
-    .reduce((s, q) => s + (q.total_ttc_cents || 0), 0);
-
-  // ─── Groupement par root_quote_id (versions imbriquees facon arborescence) ─────
-  // On ne montre que la DERNIERE version de chaque arbre, et un bouton expand
-  // pour voir les versions precedentes.
-  const grouped = useMemo(() => {
-    // Construire map root_id -> [versions triees par version desc]
-    const byRoot = new Map();
-    for (const q of filtered) {
+  // v8.199 — Tout l'écran raisonne désormais par CHAÎNE de versions, plus par
+  // ligne de table. Le tableau n'a jamais affiché qu'une ligne par chaîne — la
+  // dernière version — mais les compteurs, eux, dénombraient les lignes en
+  // base. D'où « Tous (14) » au-dessus d'un tableau de dix lignes, et
+  // « Envoyé (12) » pour huit lignes envoyées.
+  //
+  // Une chaîne vaut ce que vaut sa dernière version : les précédentes ont été
+  // remplacées. C'est vrai du compte comme du total en attente de signature.
+  const chaines = useMemo(() => {
+    const parRacine = new Map();
+    for (const q of quotes) {
       const rootId = q.root_quote_id || q.id;
-      if (!byRoot.has(rootId)) byRoot.set(rootId, []);
-      byRoot.get(rootId).push(q);
+      if (!parRacine.has(rootId)) parRacine.set(rootId, []);
+      parRacine.get(rootId).push(q);
     }
-    // Pour chaque groupe, trier par version desc (la plus recente en premier)
     const result = [];
-    for (const [rootId, versions] of byRoot) {
+    for (const [rootId, versions] of parRacine) {
       versions.sort((a, b) => (b.version || 1) - (a.version || 1));
       result.push({
         rootId,
@@ -176,6 +154,68 @@ export function QuotesListPage({ token, company }) {
         hasMultipleVersions: versions.length > 1
       });
     }
+    return result;
+  }, [quotes]);
+
+  const filtered = useMemo(() => {
+    const s = search.toLowerCase().trim();
+    return chaines.filter((g) => {
+      // La recherche accepte le numéro de N'IMPORTE quelle version : on cherche
+      // souvent une chaîne à partir du numéro qu'on a sous les yeux, qui peut
+      // être celui d'une version remplacée depuis.
+      const matchS = !s || g.versions.some((q) =>
+        (q.number || "").toLowerCase().includes(s)
+        || snapshotDisplayName(q.client_snapshot).toLowerCase().includes(s)
+      );
+      const eff = isQuoteExpired(g.latest) ? "expired" : g.latest.status;
+      const matchF = statusFilter === "all" || eff === statusFilter;
+      return matchS && matchF;
+    });
+  }, [chaines, search, statusFilter]);
+
+  const counts = useMemo(() => {
+    const c = { all: chaines.length };
+    Object.keys(QUOTE_STATUSES).forEach((k) => { c[k] = 0; });
+    chaines.forEach((g) => {
+      const eff = isQuoteExpired(g.latest) ? "expired" : g.latest.status;
+      c[eff] = (c[eff] || 0) + 1;
+    });
+    return c;
+  }, [chaines]);
+
+  // v8.199 — « En attente de signature » additionnait TOUTES les versions à
+  // plat. Un devis révisé deux fois pesait trois fois dans le total, et une
+  // chaîne finalement convertie en facture continuait de l'alimenter par ses
+  // versions antérieures, restées au statut « envoyé ».
+  //
+  // Seule la dernière version d'une chaîne représente une proposition vivante :
+  // les précédentes ont été remplacées, elles n'attendent plus rien. Et si
+  // cette dernière version est convertie, signée, refusée ou expirée, la
+  // chaîne entière sort du total — ce qui règle le cas des devis convertis
+  // sans avoir à les traiter à part.
+  const totalPending = useMemo(
+    () => chaines.reduce((total, g) => {
+      const q = g.latest;
+      const enAttente = q.status === "sent" && !isQuoteExpired(q);
+      return enAttente ? total + (q.total_ttc_cents || 0) : total;
+    }, 0),
+    [chaines]
+  );
+
+  // Nombre de propositions distinctes — une chaîne de versions compte pour un.
+  // L'en-tête annonçait le nombre de lignes en base (14 sur la capture du
+  // 21/09) alors que le tableau en affiche dix : il ne montre que la dernière
+  // version de chaque chaîne. Les deux chiffres parlent maintenant de la même
+  // chose.
+
+
+  // ─── Groupement par root_quote_id (versions imbriquees facon arborescence) ─────
+  // On ne montre que la DERNIERE version de chaque arbre, et un bouton expand
+  // pour voir les versions precedentes.
+  const grouped = useMemo(() => {
+    // v8.199 — `filtered` porte déjà des chaînes constituées : il ne reste
+    // qu'à les trier.
+    const result = filtered;
     // v8.53 — Tri par la colonne choisie, appliqué à la version la plus
     // récente de chaque groupe (c'est elle qui est affichée sur la ligne).
     const valueOf = (g, key) => {
@@ -570,7 +610,21 @@ export function QuotesListPage({ token, company }) {
         <div>
           <div className="page-title">DEVIS</div>
           <div className="page-sub">
-            {quotes.length} devis · {fmtEUR(totalPending)} en attente de signature
+            {/* v8.199 — Le résumé ne disait que ce qui reste à signer. Il annonce
+                maintenant ce qui a abouti : un devis signé ou converti est un
+                devis gagné, c'est le chiffre qu'on cherche en ouvrant l'écran.
+                Chaque mention ne s'affiche que si elle vaut quelque chose — un
+                « 0 signé » permanent n'apprendrait rien. */}
+            {chaines.length} devis
+            {(counts.signed || 0) > 0 && (
+              <> · {counts.signed} devis signé{counts.signed > 1 ? "s" : ""}</>
+            )}
+            {(counts.converted || 0) > 0 && (
+              <> · {counts.converted} converti{counts.converted > 1 ? "s" : ""} en facture</>
+            )}
+            {totalPending > 0 && (
+              <> · {fmtEUR(totalPending)} en attente de signature</>
+            )}
           </div>
         </div>
         <button className="btn btn-primary" onClick={() => setEditModal("new")}>
