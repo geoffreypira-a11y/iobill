@@ -422,7 +422,12 @@ export function QuotesListPage({ token, company }) {
     const effectiveStatus = expired ? "expired" : q.status;
     const badge = quoteStatusBadge(effectiveStatus);
     const validity = q.expires_at ? daysUntil(q.expires_at) : null;
-    const canEdit = !["signed", "converted", "refused"].includes(q.status);
+    // v8.198 — Un devis ENVOYÉ n'est plus modifiable. Le client en détient une
+    // copie : la modifier en silence ferait diverger ce qu'il a reçu de ce que
+    // porte l'application, et c'est exactement ce qui se plaide mal quand il
+    // revient avec son PDF. Pour le corriger, on crée une nouvelle version —
+    // le bouton « Nouvelle version » reste disponible (canVersion ci-dessous).
+    const canEdit = !["sent", "signed", "converted", "refused"].includes(q.status);
     const canSend = ["draft", "sent"].includes(q.status);
     // Conversion possible dès le brouillon (à condition de ne pas déjà être converti ou refusé)
     const canConvert = !["converted", "refused"].includes(q.status) && !q.converted_invoice_id;
@@ -484,7 +489,11 @@ export function QuotesListPage({ token, company }) {
               className="btn btn-primary btn-sm"
               onClick={() => canEdit ? setEditModal(q) : setPreviewQuote(q)}
               style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
-              title={canEdit ? "Modifier ce devis" : "Aperçu du devis avec son historique"}
+              title={canEdit
+                ? "Modifier ce devis"
+                : q.status === "sent"
+                  ? "Devis envoyé — le client en détient une copie. Pour le modifier, créez une nouvelle version."
+                  : "Aperçu du devis avec son historique"}
             >
               {canEdit ? "✏️ Modifier" : "👁 Voir"}
             </button>
