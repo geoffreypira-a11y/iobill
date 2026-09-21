@@ -178,7 +178,16 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
       vat_category: vatCategory,
       vat_legal_mention: cat.legal_mention || null,
       notes: notes || null,
-      terms: terms || null
+      terms: terms || null,
+      // v8.198 — Toute modification invalide le PDF déjà produit.
+      //
+      // `generate-quote-pdf` enregistre son résultat dans `pdf_url`, et l'envoi
+      // par email réutilise ce fichier s'il existe au lieu de le reconstruire.
+      // Un simple aperçu suffisait donc à figer un PDF : on prévisualisait un
+      // brouillon, on le corrigeait, et le client recevait la version d'avant
+      // la correction. En l'effaçant ici, le prochain envoi régénère à partir
+      // des données à jour.
+      pdf_url: null
     };
 
     try {
