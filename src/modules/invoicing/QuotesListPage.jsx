@@ -610,7 +610,21 @@ export function QuotesListPage({ token, company }) {
         <div>
           <div className="page-title">DEVIS</div>
           <div className="page-sub">
-            {chaines.length} devis · {fmtEUR(totalPending)} en attente de signature
+            {/* v8.199 — Le résumé ne disait que ce qui reste à signer. Il annonce
+                maintenant ce qui a abouti : un devis signé ou converti est un
+                devis gagné, c'est le chiffre qu'on cherche en ouvrant l'écran.
+                Chaque mention ne s'affiche que si elle vaut quelque chose — un
+                « 0 signé » permanent n'apprendrait rien. */}
+            {chaines.length} devis
+            {(counts.signed || 0) > 0 && (
+              <> · {counts.signed} devis signé{counts.signed > 1 ? "s" : ""}</>
+            )}
+            {(counts.converted || 0) > 0 && (
+              <> · {counts.converted} converti{counts.converted > 1 ? "s" : ""} en facture</>
+            )}
+            {totalPending > 0 && (
+              <> · {fmtEUR(totalPending)} en attente de signature</>
+            )}
           </div>
         </div>
         <button className="btn btn-primary" onClick={() => setEditModal("new")}>
