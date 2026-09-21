@@ -443,13 +443,47 @@ export function QuotesListPage({ token, company }) {
     setActionLoading(null);
   }
 
+  // v8.200 — Supprimer une version isolée.
+  //
+  // C'était déjà possible — l'entrée « 🗑 Supprimer » du menu « ⋯ » apparaît
+  // sur toute ligne au statut brouillon, version intermédiaire comprise — mais
+  // deux choses l'empêchaient de bien se passer.
+  //
+  // D'abord, `sb.delete` renvoie un booléen que personne ne regardait. Un refus
+  // de la base laissait donc la ligne disparaître de l'écran (elle n'était
+  // retirée que de l'état local) pour réapparaître au rechargement suivant,
+  // sans le moindre message. Le retour est maintenant vérifié.
+  //
+  // Ensuite, la version précédente continuait de porter un `superseded_by_id`
+  // pointant vers le document supprimé. Ce champ n'est lu nulle part
+  // aujourd'hui, mais laisser un « remplacé par » qui désigne le vide est le
+  // genre de détail qui se paie le jour où on décide de l'afficher.
   async function deleteQuote(id) {
     try {
-      await sb.delete(token, "document_lines", `document_type=eq.quote&document_id=eq.${id}`);
-      await sb.delete(token, "quotes", `id=eq.${id}`);
-      setQuotes((prev) => prev.filter((q) => q.id !== id));
+      const supprime = quotes.find((q) => q.id === id);
+
+      const lignesOk = await sb.delete(token, "document_lines", `document_type=eq.quote&document_id=eq.${id}`);
+      if (!lignesOk) throw new Error("Les lignes du devis n'ont pas pu être supprimées");
+
+      const devisOk = await sb.delete(token, "quotes", `id=eq.${id}`);
+      if (!devisOk) throw new Error("Le devis n'a pas pu être supprimé");
+
+      // Recoudre la chaîne : la version qui désignait celle-ci comme
+      // remplaçante ne remplace plus rien.
+      const precedente = quotes.find((q) => q.superseded_by_id === id);
+      if (precedente) {
+        await sb.update(token, "quotes", `id=eq.${precedente.id}`, { superseded_by_id: null });
+      }
+
+      setQuotes((prev) => prev
+        .filter((q) => q.id !== id)
+        .map((q) => q.superseded_by_id === id ? { ...q, superseded_by_id: null } : q));
       setPendingDelete(null);
-      showToast("Devis supprimé");
+      showToast(
+        supprime?.version > 1
+          ? `Version v${supprime.version} supprimée — les autres versions sont conservées`
+          : "Devis supprimé"
+      );
     } catch (e) {
       showToast(e.message || "Erreur suppression", "error");
     }
@@ -736,16 +770,31 @@ export function QuotesListPage({ token, company }) {
       )}
 
       {/* ─── Confirmation suppression ─── */}
-      {pendingDelete && (
+      {/* v8.200 — La confirmation disait « le devis X ET TOUTES SES LIGNES »,
+          ce qui se lit facilement comme « et toutes ses versions » sur un devis
+          qui en a plusieurs. On nomme donc explicitement ce qui part et ce qui
+          reste : supprimer une révision ne touche pas aux autres. */}
+      {pendingDelete && (() => {
+        const cible = quotes.find((q) => q.id === pendingDelete.id);
+        const racine = cible ? (cible.root_quote_id || cible.id) : null;
+        const autresVersions = racine
+          ? quotes.filter((q) => (q.root_quote_id || q.id) === racine && q.id !== pendingDelete.id).length
+          : 0;
+        return (
         <ConfirmModal
-          title="Supprimer ce devis ?"
-          message={`Cette action est irréversible. Le devis ${pendingDelete.label} et toutes ses lignes seront supprimés.`}
+          title={autresVersions > 0 ? "Supprimer cette version ?" : "Supprimer ce devis ?"}
+          message={autresVersions > 0
+            ? `Seule la version ${pendingDelete.label}${cible?.version ? ` (v${cible.version})` : ""} sera supprimée, avec ses lignes. `
+              + `${autresVersions === 1 ? "L'autre version est conservée" : `Les ${autresVersions} autres versions sont conservées`}. `
+              + "Cette action est irréversible."
+            : `Cette action est irréversible. Le devis ${pendingDelete.label} et toutes ses lignes seront supprimés.`}
           confirmLabel="Supprimer"
           confirmType="danger"
           onConfirm={() => deleteQuote(pendingDelete.id)}
           onCancel={() => setPendingDelete(null)}
         />
-      )}
+        );
+      })()}
 
       {/* ─── Confirmation conversion en facture ─── */}
       {pendingConvert && (
