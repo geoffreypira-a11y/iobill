@@ -107,7 +107,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: readonly ? "2.4fr .6fr .6fr 1fr .6fr 1.1fr" : "2.4fr .6fr .6fr 1fr .6fr .8fr 1.1fr 0.4fr",
+          gridTemplateColumns: readonly ? "2.4fr .6fr .6fr 1fr .6fr 1.1fr" : "2.4fr .6fr .6fr 1fr .6fr .8fr 1.1fr 0.9fr",
           gap: 8,
           fontSize: 9.5,
           letterSpacing: 1.4,
@@ -141,7 +141,7 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
             key={l._localId || l.id || i}
             style={{
               display: "grid",
-              gridTemplateColumns: readonly ? "2.4fr .6fr .6fr 1fr .6fr 1.1fr" : "2.4fr .6fr .6fr 1fr .6fr .8fr 1.1fr 0.4fr",
+              gridTemplateColumns: readonly ? "2.4fr .6fr .6fr 1fr .6fr 1.1fr" : "2.4fr .6fr .6fr 1fr .6fr .8fr 1.1fr 0.9fr",
               gap: 8,
               alignItems: "center",
               padding: "8px 0",
@@ -210,7 +210,40 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
               {fmtEUR(totals.line_ht_cents)}
             </span>
             {!readonly && (
-              <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", gap: 1, justifyContent: "flex-end", alignItems: "center" }}>
+                {/* v8.201 — Réordonner les lignes. `move()` existait depuis
+                    longtemps dans ce composant, sans rien pour l'appeler.
+                    Deux flèches suffisent : dans la pratique on déplace une
+                    ligne d'un ou deux crans, et elles fonctionnent au doigt —
+                    ce que le glisser-déposer natif ne fait pas.
+                    Le composant étant partagé, devis, factures et avoirs en
+                    héritent ensemble. */}
+                <button
+                  type="button"
+                  className="btn-xs"
+                  onClick={() => move(i, -1)}
+                  disabled={i === 0}
+                  style={{
+                    background: "transparent", border: "none", cursor: i === 0 ? "default" : "pointer",
+                    color: i === 0 ? "var(--border2)" : "var(--muted)", padding: "2px 3px", fontSize: 11, lineHeight: 1
+                  }}
+                  title={i === 0 ? "Déjà en première position" : "Monter cette ligne"}
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  className="btn-xs"
+                  onClick={() => move(i, 1)}
+                  disabled={i === lines.length - 1}
+                  style={{
+                    background: "transparent", border: "none", cursor: i === lines.length - 1 ? "default" : "pointer",
+                    color: i === lines.length - 1 ? "var(--border2)" : "var(--muted)", padding: "2px 3px", fontSize: 11, lineHeight: 1
+                  }}
+                  title={i === lines.length - 1 ? "Déjà en dernière position" : "Descendre cette ligne"}
+                >
+                  ▼
+                </button>
                 <button
                   type="button"
                   className="btn-xs"
