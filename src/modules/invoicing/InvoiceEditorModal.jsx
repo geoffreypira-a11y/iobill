@@ -30,6 +30,20 @@ function clearDraft() {
 }
 
 export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }) {
+
+  // v8.202 — Catalogue produits, chargé une fois à l'ouverture. Facultatif :
+  // s'il est vide ou si la table n'existe pas encore, `sb.select` renvoie un
+  // tableau vide et le champ désignation se comporte comme avant.
+  const [catalogue, setCatalogue] = React.useState([]);
+  React.useEffect(() => {
+    let vivant = true;
+    sb.select(token, "products", {
+      filter: `company_id=eq.${company.id}&archived=eq.false`,
+      order: "designation.asc",
+      limit: 500
+    }).then((r) => { if (vivant) setCatalogue(Array.isArray(r) ? r : []); });
+    return () => { vivant = false; };
+  }, [token, company.id]);
   const isNew = !invoice;
   const locked = invoice && isInvoiceLocked(invoice.status);
   const isReadonly = locked || (invoice && invoice.status === "canceled");
@@ -457,6 +471,7 @@ export function InvoiceEditorModal({ token, company, invoice, onClose, onSaved }
               readonly={isReadonly}
               vatExempt={vatExempt}
               defaultVatRate={company.vat_default_rate || 20}
+            products={catalogue}
             />
           </div>
 

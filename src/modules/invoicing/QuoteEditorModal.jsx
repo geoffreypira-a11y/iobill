@@ -42,6 +42,20 @@ function clearDraft() {
  * - onSaved(quote) : appelé après save réussi avec le devis créé/maj
  */
 export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
+
+  // v8.202 — Catalogue produits, chargé une fois à l'ouverture. Facultatif :
+  // s'il est vide ou si la table n'existe pas encore, `sb.select` renvoie un
+  // tableau vide et le champ désignation se comporte comme avant.
+  const [catalogue, setCatalogue] = React.useState([]);
+  React.useEffect(() => {
+    let vivant = true;
+    sb.select(token, "products", {
+      filter: `company_id=eq.${company.id}&archived=eq.false`,
+      order: "designation.asc",
+      limit: 500
+    }).then((r) => { if (vivant) setCatalogue(Array.isArray(r) ? r : []); });
+    return () => { vivant = false; };
+  }, [token, company.id]);
   const isNew = !quote;
   const isReadonly = quote && ["signed", "converted", "refused"].includes(quote.status);
 
@@ -405,6 +419,7 @@ export function QuoteEditorModal({ token, company, quote, onClose, onSaved }) {
               readonly={isReadonly}
               vatExempt={vatExempt}
               defaultVatRate={company.vat_default_rate || 20}
+            products={catalogue}
             />
           </div>
 
