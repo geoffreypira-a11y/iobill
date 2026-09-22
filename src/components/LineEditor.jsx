@@ -91,7 +91,15 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
   // Index de la ligne dont la liste de suggestions est ouverte, et position
   // surlignée au clavier. `null` = aucune liste affichée.
   const [suggestPour, setSuggestPour] = React.useState(null);
-  const [surligne, setSurligne] = React.useState(0);
+  // `null` tant que l'utilisateur n'est pas entré dans la liste au clavier.
+  // C'est ce qui rend la suggestion non intrusive : tant qu'il écrit, Entrée
+  // reste le retour à la ligne qu'elle a toujours été. Il faut une flèche
+  // (ou la souris) pour donner la main à la liste.
+  const [surligne, setSurligne] = React.useState(null);
+  // Le survol souris est purement visuel et n'entre PAS dans `surligne` :
+  // sinon la souris posée par hasard au-dessus de la liste rendrait à Entrée
+  // son pouvoir de sélection, en plein milieu d'une désignation qu'on tape.
+  const [survol, setSurvol] = React.useState(null);
 
   const catalogue = React.useMemo(
     () => (products || []).filter((p) => !p.archived),
@@ -196,30 +204,49 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
                     value={l.description || ""}
                     onChange={(e) => {
                       update(i, { description: e.target.value });
-                      if (catalogue.length > 0) { setSuggestPour(i); setSurligne(0); }
+                      if (catalogue.length > 0) { setSuggestPour(i); setSurligne(null); }
                     }}
-                    onFocus={() => { if (catalogue.length > 0) { setSuggestPour(i); setSurligne(0); } }}
+                    onFocus={() => { if (catalogue.length > 0) { setSuggestPour(i); setSurligne(null); } }}
                     // Un clic sur une suggestion fait perdre le focus au champ.
                     // On laisse au clic le temps d'aboutir avant de fermer.
                     onBlur={() => setTimeout(() => setSuggestPour((cur) => cur === i ? null : cur), 150)}
                     onKeyDown={(e) => {
                       if (props.length === 0) return;
-                      if (e.key === "ArrowDown") { e.preventDefault(); setSurligne((x) => (x + 1) % props.length); }
-                      else if (e.key === "ArrowUp") { e.preventDefault(); setSurligne((x) => (x - 1 + props.length) % props.length); }
-                      else if (e.key === "Enter" && !e.shiftKey) {
-                        // Entrée valide la suggestion surlignée. Shift+Entrée
-                        // garde son rôle : un vrai retour à la ligne.
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSurligne((x) => x === null ? 0 : (x + 1) % props.length);
+                      }
+                      else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSurligne((x) => x === null ? props.length - 1 : (x - 1 + props.length) % props.length);
+                      }
+                      else if (e.key === "Enter" && surligne !== null) {
+                        // Entrée ne valide une suggestion QUE si l'on est
+                        // descendu dans la liste. Sinon elle passe son chemin
+                        // et le navigateur insère un retour à la ligne, comme
+                        // avant l'arrivée du catalogue : on écrit une
+                        // désignation sur trois lignes sans être interrompu.
                         e.preventDefault();
                         choisirProduit(i, props[surligne]);
                       }
-                      else if (e.key === "Escape") { setSuggestPour(null); }
+                      else if (e.key === "Escape") { setSuggestPour(null); setSurligne(null); }
                     }}
                     placeholder={catalogue.length > 0
-                      ? "Désignation — tapez pour chercher au catalogue"
+                      ? "Désignation — Entrée = nouvelle ligne, ↓ pour le catalogue"
                       : "Désignation (Entrée = nouvelle ligne)"}
                     disabled={readonly}
                     rows={1}
-                    onInput={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                    ref={(el) => {
+                      if (!el || el.dataset.hauteurPour === el.value) return;
+                      el.style.height = "auto";
+                      el.style.height = el.scrollHeight + "px";
+                      el.dataset.hauteurPour = el.value;
+                    }}
+                    onInput={(e) => {
+                      e.target.style.height = "auto";
+                      e.target.style.height = e.target.scrollHeight + "px";
+                      e.target.dataset.hauteurPour = e.target.value;
+                    }}
                     style={{ fontSize: 12.5, resize: "vertical", minHeight: 34, lineHeight: 1.4, fontFamily: "inherit", overflow: "hidden" }}
                   />
                   {props.length > 0 && (
@@ -233,11 +260,12 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
                         <div
                           key={p.id}
                           onMouseDown={(e) => { e.preventDefault(); choisirProduit(i, p); }}
-                          onMouseEnter={() => setSurligne(k)}
+                          onMouseEnter={() => setSurvol(k)}
+                          onMouseLeave={() => setSurvol(null)}
                           style={{
                             padding: "7px 10px", cursor: "pointer", display: "flex",
                             justifyContent: "space-between", alignItems: "baseline", gap: 10,
-                            background: k === surligne ? "rgba(212,168,67,.12)" : "transparent"
+                            background: (k === surligne || k === survol) ? "rgba(212,168,67,.12)" : "transparent"
                           }}
                         >
                           <span style={{ fontSize: 12.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
