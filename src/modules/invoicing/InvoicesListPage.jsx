@@ -1017,11 +1017,19 @@ export function InvoicesListPage({ token, company }) {
                               return;
                             }
                             const rect = e.currentTarget.getBoundingClientRect();
+                            // v8.203 — Près du bas de l'écran, le menu
+                            // débordait sous la fenêtre et ses dernières
+                            // entrées devenaient inatteignables. On l'ouvre
+                            // alors VERS LE HAUT. Même garde que la page
+                            // Achats, qui avait déjà le correctif.
+                            const ESPACE_MINI = 320;
+                            const versLeHaut = window.innerHeight - rect.bottom < ESPACE_MINI;
                             setOpenMenu({
                               id: inv.id,
                               invoice: inv,
-                              right: window.innerWidth - rect.right,
-                              top: rect.bottom + 4,
+                              right: Math.max(12, window.innerWidth - rect.right),
+                              top: versLeHaut ? null : rect.bottom + 4,
+                              bottom: versLeHaut ? window.innerHeight - rect.top + 4 : null,
                               canEdit, canDelete
                             });
                           }}
@@ -1130,7 +1138,8 @@ export function InvoicesListPage({ token, company }) {
           onClick={(e) => e.stopPropagation()}
           style={{
             position: "fixed",
-            top: openMenu.top,
+            top: openMenu.top ?? undefined,
+            bottom: openMenu.bottom ?? undefined,
             right: openMenu.right,
             background: "var(--card)",
             border: "1px solid var(--border2)",
