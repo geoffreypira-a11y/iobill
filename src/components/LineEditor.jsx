@@ -82,7 +82,46 @@ export function newEmptyLine(defaults = {}) {
   };
 }
 
-export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = false, vatExempt = false }) {
+// v8.202 — `products` est le catalogue de l'entreprise, facultatif. Quand il
+// est fourni, taper dans la désignation propose les produits correspondants ;
+// en choisir un remplit la ligne. Le prix est COPIÉ, jamais référencé :
+// augmenter un tarif au catalogue ne doit rien changer à un document déjà
+// établi. Sans `products`, le champ se comporte exactement comme avant.
+export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = false, vatExempt = false, products = [] }) {
+  // Index de la ligne dont la liste de suggestions est ouverte, et position
+  // surlignée au clavier. `null` = aucune liste affichée.
+  const [suggestPour, setSuggestPour] = React.useState(null);
+  const [surligne, setSurligne] = React.useState(0);
+
+  const catalogue = React.useMemo(
+    () => (products || []).filter((p) => !p.archived),
+    [products]
+  );
+
+  function suggestions(texte) {
+    const s = String(texte || "").toLowerCase().trim();
+    if (s.length < 2) return [];
+    return catalogue
+      .filter((p) =>
+        (p.designation || "").toLowerCase().includes(s)
+        || (p.reference || "").toLowerCase().includes(s))
+      .slice(0, 8);
+  }
+
+  // Choisir un produit remplit la ligne d'un coup. La description longue, si
+  // elle existe, vient sous la désignation : c'est ce que le client lira.
+  function choisirProduit(i, p) {
+    update(i, {
+      description: p.description
+        ? `${p.designation}\n${p.description}`
+        : p.designation,
+      unit: p.unit || "u",
+      unit_price_ht: String((p.unit_price_ht_cents || 0) / 100),
+      vat_rate: vatExempt ? 0 : Number(p.vat_rate ?? defaultVatRate)
+    });
+    setSuggestPour(null);
+  }
+
   function update(i, patch) {
     const next = [...lines];
     next[i] = { ...next[i], ...patch };
@@ -148,16 +187,77 @@ export function LineEditor({ lines, onChange, defaultVatRate = 20, readonly = fa
               borderBottom: "1px solid var(--border2)"
             }}
           >
-            <textarea
-              className="form-input"
-              value={l.description || ""}
-              onChange={(e) => update(i, { description: e.target.value })}
-              placeholder="Désignation (Entrée = nouvelle ligne)"
-              disabled={readonly}
-              rows={1}
-              onInput={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-              style={{ fontSize: 12.5, resize: "vertical", minHeight: 34, lineHeight: 1.4, fontFamily: "inherit", overflow: "hidden" }}
-            />
+            {(() => {
+              const props = suggestPour === i ? suggestions(l.description) : [];
+              return (
+                <div style={{ position: "relative" }}>
+                  <textarea
+                    className="form-input"
+                    value={l.description || ""}
+                    onChange={(e) => {
+                      update(i, { description: e.target.value });
+                      if (catalogue.length > 0) { setSuggestPour(i); setSurligne(0); }
+                    }}
+                    onFocus={() => { if (catalogue.length > 0) { setSuggestPour(i); setSurligne(0); } }}
+                    // Un clic sur une suggestion fait perdre le focus au champ.
+                    // On laisse au clic le temps d'aboutir avant de fermer.
+                    onBlur={() => setTimeout(() => setSuggestPour((cur) => cur === i ? null : cur), 150)}
+                    onKeyDown={(e) => {
+                      if (props.length === 0) return;
+                      if (e.key === "ArrowDown") { e.preventDefault(); setSurligne((x) => (x + 1) % props.length); }
+                      else if (e.key === "ArrowUp") { e.preventDefault(); setSurligne((x) => (x - 1 + props.length) % props.length); }
+                      else if (e.key === "Enter" && !e.shiftKey) {
+                        // Entrée valide la suggestion surlignée. Shift+Entrée
+                        // garde son rôle : un vrai retour à la ligne.
+                        e.preventDefault();
+                        choisirProduit(i, props[surligne]);
+                      }
+                      else if (e.key === "Escape") { setSuggestPour(null); }
+                    }}
+                    placeholder={catalogue.length > 0
+                      ? "Désignation — tapez pour chercher au catalogue"
+                      : "Désignation (Entrée = nouvelle ligne)"}
+                    disabled={readonly}
+                    rows={1}
+                    onInput={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                    style={{ fontSize: 12.5, resize: "vertical", minHeight: 34, lineHeight: 1.4, fontFamily: "inherit", overflow: "hidden" }}
+                  />
+                  {props.length > 0 && (
+                    <div style={{
+                      position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                      background: "var(--card)", border: "1px solid var(--border)",
+                      borderRadius: 8, marginTop: 2, overflow: "hidden",
+                      boxShadow: "0 8px 24px rgba(0,0,0,.4)", maxHeight: 260, overflowY: "auto"
+                    }}>
+                      {props.map((p, k) => (
+                        <div
+                          key={p.id}
+                          onMouseDown={(e) => { e.preventDefault(); choisirProduit(i, p); }}
+                          onMouseEnter={() => setSurligne(k)}
+                          style={{
+                            padding: "7px 10px", cursor: "pointer", display: "flex",
+                            justifyContent: "space-between", alignItems: "baseline", gap: 10,
+                            background: k === surligne ? "rgba(212,168,67,.12)" : "transparent"
+                          }}
+                        >
+                          <span style={{ fontSize: 12.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {p.designation}
+                            {p.reference && (
+                              <span className="mono" style={{ color: "var(--muted)", fontSize: 10.5, marginLeft: 6 }}>
+                                {p.reference}
+                              </span>
+                            )}
+                          </span>
+                          <span className="mono" style={{ fontSize: 12, color: "var(--gold)", whiteSpace: "nowrap" }}>
+                            {fmtEUR(p.unit_price_ht_cents)} / {p.unit}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <input
               type="number"
               step="1"

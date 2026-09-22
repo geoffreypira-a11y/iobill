@@ -17,6 +17,7 @@ import { SettingsPage } from "./modules/core/SettingsPage.jsx";
 
 // CRM
 import { ClientsListPage } from "./modules/clients/ClientsListPage.jsx";
+import { ProductsListPage } from "./modules/products/ProductsListPage.jsx";
 import { ClientFichePage } from "./modules/clients/ClientFichePage.jsx";
 
 // Devis & Factures
@@ -310,6 +311,7 @@ export default function App() {
 
         {/* CRM Clients */}
         <Route path="clients" element={<ClientsListPage token={session.token} company={company} setCompany={setCompany} />} />
+        <Route path="products" element={<ProductsListPage token={session.token} company={company} />} />
         <Route path="clients/:id" element={<ClientFichePage token={session.token} company={company} />} />
 
         {/* Devis */}

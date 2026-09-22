@@ -237,6 +237,13 @@ export function Sidebar({ token, company, user, onSignOut }) {
                 {t("Clients")}
               </NavLink>
 
+              {/* v8.202 — Catalogue produits : ce qu'on vend, pour ne plus le
+                  ressaisir à chaque devis. */}
+              <NavLink to="/products" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
+                <Icon name="cart" className="nav-icon" />
+                {t("Produits")}
+              </NavLink>
+
               {openSignalsCount > 0 && (
                 <NavLink to="/signals" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={close}>
                   <Icon name="warning" className="nav-icon" />
