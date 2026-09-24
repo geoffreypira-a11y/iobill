@@ -125,28 +125,51 @@ function CGV() {
       </ul>
       <p>Les prix sont indiqués hors taxes. La TVA française au taux en vigueur (20 % au 18/05/2026) est ajoutée pour les clients établis en France.</p>
 
-      <H2>3. Souscription</H2>
+      <H2>3. Documents transmis et reçus via la Plateforme Agréée</H2>
+      <p>
+        Chaque abonnement comprend <strong>500 documents par mois calendaire</strong>, sans
+        frais supplémentaire.
+      </p>
+      <p>
+        Est décompté comme un document toute facture, tout avoir et toute pièce
+        assimilée <strong>transmis</strong> à la Plateforme Agréée ou <strong>reçu</strong> par
+        son intermédiaire. L'émission et la réception sont décomptées de la même façon.
+        Les documents établis dans IO BILL sans passer par la Plateforme Agréée ne sont
+        pas décomptés.
+      </p>
+      <p>
+        Au-delà de 500 documents sur un même mois, chaque document supplémentaire est
+        facturé <strong>0,05 € HT</strong>. Le compteur est remis à zéro le premier jour de
+        chaque mois ; les documents non consommés ne sont pas reportés.
+      </p>
+      <p>
+        Les dépassements sont facturés mensuellement, à terme échu, sur la base du
+        relevé de la Plateforme Agréée. Le détail des documents décomptés est
+        communiqué sur simple demande.
+      </p>
+
+      <H2>4. Souscription</H2>
       <p>La souscription se fait via Stripe (PCI-DSS Niveau 1). L'abonnement est activé immédiatement après le paiement. Vous recevez un email de confirmation et une facture conforme.</p>
 
-      <H2>4. Période d'essai</H2>
+      <H2>5. Période d'essai</H2>
       <p>Une période d'essai gratuite de 14 jours est offerte aux nouveaux comptes (sauf cabinets bénéficiaires de l'offre de lancement). Aucune carte bancaire n'est requise pour démarrer l'essai. À la fin de l'essai, vous pouvez souscrire ou laisser le compte expirer sans frais.</p>
 
-      <H2>5. Renouvellement et résiliation</H2>
+      <H2>6. Renouvellement et résiliation</H2>
       <p>L'abonnement se renouvelle automatiquement par tacite reconduction à chaque échéance (mensuelle ou annuelle). Vous pouvez résilier à tout moment depuis Paramètres → Abonnement. La résiliation prend effet à la fin de la période en cours, sans remboursement au prorata.</p>
 
-      <H2>6. Modalités de paiement</H2>
+      <H2>7. Modalités de paiement</H2>
       <p>Les paiements sont prélevés automatiquement par Stripe sur la carte bancaire ou le compte SEPA renseigné. En cas d'échec de paiement, l'abonnement passe en « impayé » pendant 7 jours avant suspension.</p>
 
-      <H2>7. Droit de rétractation</H2>
+      <H2>8. Droit de rétractation</H2>
       <p>Conformément à l'article L.221-3 du Code de la consommation, le droit de rétractation de 14 jours ne s'applique pas aux contrats conclus entre professionnels. Toutefois, OWL'S INDUSTRY accepte le remboursement intégral en cas de demande dans les 7 jours suivant la première souscription, à titre commercial.</p>
 
-      <H2>8. Pénalités de retard</H2>
+      <H2>9. Pénalités de retard</H2>
       <p>Tout retard de paiement entraîne, sans mise en demeure préalable, l'application de pénalités au taux de 3 fois le taux d'intérêt légal, ainsi qu'une indemnité forfaitaire pour frais de recouvrement de 40 € (article L.441-10 du Code de commerce).</p>
 
-      <H2>9. Garanties et responsabilité</H2>
+      <H2>10. Garanties et responsabilité</H2>
       <p>L'Éditeur garantit la conformité de la plateforme aux spécifications Factur-X DGFiP. La responsabilité de l'Éditeur est limitée au montant des sommes versées au titre de l'abonnement sur les 12 derniers mois.</p>
 
-      <H2>10. Litiges</H2>
+      <H2>11. Litiges</H2>
       <p>Tout litige est soumis aux tribunaux compétents du siège social de OWL'S INDUSTRY. Une médiation peut être tentée préalablement.</p>
     </>
   );
