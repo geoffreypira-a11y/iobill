@@ -283,33 +283,32 @@ async function handleRequest(req, res) {
         // elle a été créée avant la v8.51, soit son numéro a été saisi à la
         // main. Lui en réattribuer un créerait précisément le trou qu'on
         // cherche à supprimer.
-        const patch = {
-          status: "issued",
-          issued_at: new Date().toISOString()
-        };
-
-        if (String(doc.number || "").startsWith("BROUILLON-")) {
-          const legalNumber = await sbAdmin.rpc("allocate_document_number", {
-            p_company_id: company.id,
-            p_doc_type: "invoice"
-          });
-          if (!legalNumber || typeof legalNumber !== "string") {
-            return json(res, 500, {
-              error: "Impossible d'attribuer le numéro de facture. Si la migration v8.51 "
-                + "n'a pas été exécutée, lancez migration_v8_51_numero_a_emission.sql "
-                + "dans Supabase."
-            });
-          }
-          patch.number = legalNumber;
-        }
-
-        const updated = await sbAdmin.update("invoices", `id=eq.${documentId}`, patch);
-        if (!updated || !updated[0]) {
+        // v8.204 — Attribution du numéro et passage en « émise » dans UNE
+        // SEULE transaction, via `issue_invoice`.
+        //
+        // Avant, c'étaient deux requêtes HTTP distinctes : d'abord
+        // `allocate_document_number`, qui faisait avancer le compteur ET le
+        // validait, puis l'UPDATE qui écrivait le numéro. Quand la seconde
+        // échouait — déclencheur de hachage en défaut, réseau, contrainte — le
+        // compteur avait déjà bougé et personne ne le rendait. Chaque
+        // tentative ratée brûlait un numéro, et la séquence se trouait.
+        //
+        // C'est ce qui a creusé FAC-2026-0028 à 0034 et 0039 entre le 2 et le
+        // 15 septembre 2026. Avec une transaction unique, un échec annule
+        // aussi l'incrément : le numéro reste disponible pour l'essai suivant.
+        //
+        // La fonction est idempotente : réémettre une facture déjà émise la
+        // renvoie telle quelle sans consommer de numéro.
+        const emise = await sbAdmin.rpc("issue_invoice", { p_invoice_id: documentId });
+        const ligneEmise = Array.isArray(emise) ? emise[0] : emise;
+        if (!ligneEmise || !ligneEmise.id) {
           return json(res, 500, {
-            error: "Échec de l'émission. Si vous n'avez pas exécuté la migration v8.10, allez dans Supabase SQL Editor et lancez le contenu de migration_v8_10_fix_hash_chain.sql"
+            error: "Échec de l'émission. Si la fonction n'existe pas encore, lancez "
+              + "sql/2026-09-22-emission-atomique.sql dans Supabase. Si l'erreur persiste, "
+              + "vérifiez la chaîne de hachage (migration_v8_10_fix_hash_chain.sql)."
           });
         }
-        Object.assign(doc, updated[0]);
+        Object.assign(doc, ligneEmise);
 
         // v8.59 — Émettre une facture au nom d'un client le fait sortir du
         // stade prospect : c'est le moment où la relation devient commerciale.
