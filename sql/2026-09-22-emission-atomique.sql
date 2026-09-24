@@ -28,10 +28,27 @@
 --  modifié. Tant que le code déployé ne l'appelle pas, elle dort sans effet.
 -- ═══════════════════════════════════════════════════════════════════
 
+-- SECURITY INVOKER, et c'est délibéré.
+--
+-- La première version était SECURITY DEFINER, avec un contrôle d'accès écrit
+-- à la main. Elle refusait tout le monde, serveur compris : dans une fonction
+-- SECURITY DEFINER, `current_user` désigne le PROPRIÉTAIRE de la fonction et
+-- jamais l'appelant, donc la comparaison à 'service_role' était toujours
+-- fausse. Le garde-fou copié du déclencheur IOCAR ne s'y transposait pas —
+-- celui-là n'est pas SECURITY DEFINER.
+--
+-- En INVOKER, la RLS s'applique et fait le travail bien mieux qu'un contrôle
+-- maison : `invoices_select` limite déjà chaque entreprise à ses propres
+-- factures. Viser la facture d'un autre ne lève pas une erreur d'accès, elle
+-- reste simplement introuvable.
+--
+-- Le reste ne bouge pas : `allocate_document_number` garde son SECURITY
+-- DEFINER pour pouvoir incrémenter le compteur, et le déclencheur de hachage
+-- aussi — il filtre déjà lui-même sur company_id.
 CREATE OR REPLACE FUNCTION public.issue_invoice(p_invoice_id UUID)
 RETURNS public.invoices
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, extensions   -- `extensions` : digest() y vit, et le
                                        -- déclencheur de hachage s'en sert.
                                        -- L'oublier casse toute émission — on
@@ -42,17 +59,11 @@ DECLARE
   v_number TEXT;
 BEGIN
   -- Verrou sur la facture : deux émissions simultanées ne peuvent pas se
-  -- croiser et réclamer le même numéro.
+  -- croiser et réclamer le même numéro. La RLS s'applique à ce SELECT : une
+  -- facture qu'on n'a pas le droit de voir est simplement introuvable.
   SELECT * INTO v_inv FROM public.invoices WHERE id = p_invoice_id FOR UPDATE;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Facture introuvable';
-  END IF;
-
-  -- La fonction est SECURITY DEFINER, donc elle contourne la RLS : on vérifie
-  -- nous-mêmes que l'appelant a le droit d'émettre cette facture-là.
-  IF current_user <> 'service_role'
-     AND v_inv.company_id IS DISTINCT FROM public.current_company_id() THEN
-    RAISE EXCEPTION 'Accès refusé';
+    RAISE EXCEPTION 'Facture introuvable ou accès refusé';
   END IF;
 
   -- Idempotent : réémettre une facture déjà émise ne consomme pas un second
