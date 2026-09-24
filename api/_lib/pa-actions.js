@@ -864,7 +864,19 @@ export async function paInboxFile(company, payload) {
   // v8.108 — Le front doit savoir ce qu'il reçoit : une facture arrivée en
   // Peppol est un XML, pas un PDF, et une <iframe> n'en affiche que le source.
   const ext = (filePath.split(".").pop() || "").toLowerCase();
-  return { ok: true, url: SUPA_URL + "/storage/v1" + j.signedURL, ext };
+  const url = SUPA_URL + "/storage/v1" + j.signedURL;
+  // v8.109 — Servie telle quelle, la pièce s'ouvre dans l'onglet : le
+  // navigateur affiche un XML, et sur iOS ne propose rien à enregistrer.
+  // `download` force Content-Disposition: attachment, sous un nom lisible
+  // plutôt que l'identifiant de la Plateforme Agréée.
+  const nom = (row.invoice_number || row.pa_document_id || "facture")
+    .replace(/[^a-zA-Z0-9._-]/g, "_") + (ext ? "." + ext : "");
+  return {
+    ok: true,
+    url,
+    ext,
+    download_url: url + (url.includes("?") ? "&" : "?") + "download=" + encodeURIComponent(nom)
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════

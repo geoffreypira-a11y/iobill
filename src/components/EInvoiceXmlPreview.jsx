@@ -136,6 +136,11 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
               {inv.dueDate && (
                 <div style={{ fontSize: 11, color: "var(--muted)" }}>Échéance {dateFr(inv.dueDate)}</div>
               )}
+              {inv.period && (
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Période {dateFr(inv.period.start)} → {dateFr(inv.period.end)}
+                </div>
+              )}
               {inv.orderRef && (
                 <div style={{ fontSize: 11, color: "var(--muted)" }}>Commande {inv.orderRef}</div>
               )}
@@ -161,6 +166,11 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
                   <tr key={i}>
                     <td style={tdSt}>
                       <div>{l.label || "—"}</div>
+                      {l.period && (
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {dateFr(l.period.start)} → {dateFr(l.period.end)}
+                        </div>
+                      )}
                       {l.description && (
                         <div style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "pre-wrap" }}>
                           {l.description}
@@ -243,7 +253,7 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
                 )}
                 {inv.payments.map((m, i) => (
                   <div key={i} style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: 12 }}>{moyenPaiement(m.code).label}</div>
+                    <div style={{ fontSize: 12 }}>{moyenPaiement(m.code, m.label).label}</div>
                     {m.iban && <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>{m.iban}</div>}
                     {m.information && (
                       <div style={{ fontSize: 11, color: "var(--muted)" }}>{m.information}</div>
@@ -263,7 +273,17 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
             <div style={{ ...cardSt, marginTop: 12 }}>
               <div style={{ ...labelSt, marginBottom: 6 }}>Mentions</div>
               {inv.notes.map((n, i) => (
-                <div key={i} style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "pre-wrap" }}>{n}</div>
+                <div key={i} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                  {n.code && (
+                    <span className="mono" style={{
+                      fontSize: 9, color: "var(--muted)", border: "1px solid var(--border)",
+                      borderRadius: 3, padding: "1px 4px", flexShrink: 0, lineHeight: 1.5
+                    }}>
+                      {n.code}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "pre-wrap" }}>{n.text}</span>
+                </div>
               ))}
             </div>
           )}

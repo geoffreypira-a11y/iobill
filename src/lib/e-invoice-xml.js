@@ -50,6 +50,28 @@ export function dateFr(v) {
   return s;
 }
 
+/* ─── Mentions ────────────────────────────────────────────────────
+   Le code sujet (UNTDID 4451) a sa place dans le CII (SubjectCode),
+   mais beaucoup d'émetteurs — OVH par exemple — le collent en tête du
+   texte sous la forme #PMD#. On le sépare pour que la mention se lise,
+   sans traduire le code : inventer un libellé faux serait pire que de
+   montrer le code nu.                                                */
+function decoupeMention(texte, codeXml = "") {
+  const t = (texte || "").trim();
+  const m = t.match(/^#([A-Z0-9]{2,4})#\s*/);
+  return m
+    ? { code: m[1], text: t.slice(m[0].length) }
+    : { code: codeXml || "", text: t };
+}
+
+/* ─── Période couverte (BT-73 / BT-74) ─────────────────────────────
+   Sur un abonnement, c'est la seule donnée qui dit à quel mois la
+   dépense se rattache — et donc à quelle déclaration de TVA.         */
+function periode(start, end) {
+  if (!start && !end) return null;
+  return { start, end };
+}
+
 /* ─── Moyen de paiement (BT-81, codes UNTDID 4461) ────────────────
    La question pratique que pose toute facture reçue : est-ce que le
    fournisseur se sert tout seul, ou est-ce que je dois payer ?        */
@@ -70,9 +92,15 @@ const MOYENS = {
   ZZZ:  { label: "Autre",                        action: null }
 };
 
-export function moyenPaiement(code) {
+export function moyenPaiement(code, libelleEmetteur = "") {
   const c = String(code || "").trim().toUpperCase();
-  return MOYENS[c] || { label: c ? "Code " + c : "Non précisé", action: null };
+  const connu = MOYENS[c];
+  // L'émetteur nomme parfois son moyen lui-même (attribut @name) : sa
+  // formulation vaut mieux que la nôtre. Le code reste ce qui décide de
+  // la consigne.
+  const label = (libelleEmetteur || "").trim()
+    || (connu ? connu.label : c ? "Code " + c : "Non précisé");
+  return { label, action: connu ? connu.action : null };
 }
 
 /**
@@ -138,6 +166,10 @@ function parseCII(root) {
         digTxt(agr, "NetPriceProductTradePrice", "ChargeAmount") ||
         digTxt(agr, "GrossPriceProductTradePrice", "ChargeAmount"),
       vatRate: digTxt(set, "ApplicableTradeTax", "RateApplicablePercent"),
+      period: periode(
+        digTxt(set, "BillingSpecifiedPeriod", "StartDateTime", "DateTimeString"),
+        digTxt(set, "BillingSpecifiedPeriod", "EndDateTime", "DateTimeString")
+      ),
       total: digTxt(set, "SpecifiedTradeSettlementLineMonetarySummation", "LineTotalAmount")
     };
   });
@@ -152,6 +184,7 @@ function parseCII(root) {
 
   const payments = kids(settlement, "SpecifiedTradeSettlementPaymentMeans").map((m) => ({
     code: digTxt(m, "TypeCode"),
+    label: (kid(m, "TypeCode") && kid(m, "TypeCode").getAttribute("name")) || "",
     information: digTxt(m, "Information"),
     iban: digTxt(m, "PayeePartyCreditorFinancialAccount", "IBANID")
   }));
@@ -179,7 +212,13 @@ function parseCII(root) {
       due: digTxt(sums, "DuePayableAmount"),
       paid: digTxt(sums, "TotalPrepaidAmount")
     },
-    notes: kids(exch, "IncludedNote").map((n) => digTxt(n, "Content")).filter(Boolean)
+    period: periode(
+      digTxt(tx, "ApplicableHeaderTradeDelivery", "BillingSpecifiedPeriod", "StartDateTime", "DateTimeString"),
+      digTxt(tx, "ApplicableHeaderTradeDelivery", "BillingSpecifiedPeriod", "EndDateTime", "DateTimeString")
+    ),
+    notes: kids(exch, "IncludedNote")
+      .map((n) => decoupeMention(digTxt(n, "Content"), digTxt(n, "SubjectCode")))
+      .filter((n) => n.text)
   };
 }
 
@@ -216,6 +255,7 @@ function parseUBL(root) {
       unit: qtyNode ? qtyNode.getAttribute("unitCode") || "" : "",
       unitPrice: digTxt(price, "PriceAmount"),
       vatRate: digTxt(item, "ClassifiedTaxCategory", "Percent"),
+      period: periode(digTxt(li, "InvoicePeriod", "StartDate"), digTxt(li, "InvoicePeriod", "EndDate")),
       total: digTxt(li, "LineExtensionAmount")
     };
   });
@@ -233,6 +273,7 @@ function parseUBL(root) {
   const totalNode = kid(root, "LegalMonetaryTotal");
   const payments = kids(root, "PaymentMeans").map((m) => ({
     code: digTxt(m, "PaymentMeansCode"),
+    label: (kid(m, "PaymentMeansCode") && kid(m, "PaymentMeansCode").getAttribute("name")) || "",
     information: digTxt(m, "PaymentID"),
     iban: digTxt(m, "PayeeFinancialAccount", "ID")
   }));
@@ -260,7 +301,11 @@ function parseUBL(root) {
       due: digTxt(totalNode, "PayableAmount"),
       paid: digTxt(totalNode, "PrepaidAmount")
     },
-    notes: kids(root, "Note").map(txt).filter(Boolean)
+    period: periode(
+      digTxt(root, "InvoicePeriod", "StartDate"),
+      digTxt(root, "InvoicePeriod", "EndDate")
+    ),
+    notes: kids(root, "Note").map((n) => decoupeMention(txt(n))).filter((n) => n.text)
   };
 }
 
