@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { sb } from "../../lib/supabase.js";
 import { fmtEUR } from "../../lib/helpers.js";
+import { EInvoiceXmlPreview } from "../../components/EInvoiceXmlPreview.jsx";
 
 /**
  * PaInboxSection — v8.48
@@ -93,7 +94,11 @@ export function PaInboxSection({ token, company, onConverted }) {
     setBusyId(row.id);
     try {
       const r = await call("pa_inbox_file", { inbound_id: row.id });
-      setPreview({ url: r.url, row });
+      // v8.108 — Le fichier détenu par la PA n'est pas toujours un PDF : une
+      // facture émise en Peppol arrive en XML. On demande le type au serveur
+      // et on retombe sur l'extension du chemin signé si besoin.
+      const ext = (r.ext || (r.url.split("?")[0].split(".").pop() || "")).toLowerCase();
+      setPreview({ url: r.url, ext, row });
     } catch (e) { setMsg({ t: "err", m: "Aperçu indisponible : " + e.message }); }
     finally { setBusyId(null); }
   }
@@ -271,7 +276,8 @@ export function PaInboxSection({ token, company, onConverted }) {
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                  {preview.row.invoice_date || "—"} · {fmtEUR(preview.row.total_ttc_cents)} TTC · Factur-X
+                  {preview.row.invoice_date || "—"} · {fmtEUR(preview.row.total_ttc_cents)} TTC
+                  {" · "}{preview.ext === "pdf" ? "Factur-X (PDF)" : preview.ext === "xml" ? "XML (facture électronique)" : "fichier joint"}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -284,8 +290,12 @@ export function PaInboxSection({ token, company, onConverted }) {
               </div>
             </div>
             <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
-              <iframe src={preview.url} title={preview.row.invoice_number || "facture"}
-                style={{ width: "100%", height: "100%", border: "none" }} />
+              {preview.ext === "xml" ? (
+                <EInvoiceXmlPreview url={preview.url} downloadHref={preview.url} />
+              ) : (
+                <iframe src={preview.url} title={preview.row.invoice_number || "facture"}
+                  style={{ width: "100%", height: "100%", border: "none" }} />
+              )}
             </div>
           </div>
         </div>

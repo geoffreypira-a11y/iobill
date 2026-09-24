@@ -12,7 +12,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { sbAdmin } from "./supabase-admin.js";
-import { getProvider, normalizeInbound, LIFECYCLE } from "./pa-adapter.js";
+import { getProvider, normalizeInbound, LIFECYCLE, sniffKind } from "./pa-adapter.js";
 
 const SUPA_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SR_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -755,6 +755,10 @@ export async function paInboxConvert(company, payload) {
   // Auto-guérison : si le PDF n'a jamais été récupéré (file_url vide),
   // on le fetch maintenant.
   let purchasesAttachPath = null;
+  // v8.108 — Le type doit survivre à la copie : étiqueter application/pdf un
+  // XML rendait l'aperçu de l'achat illisible, comme celui de la boîte de
+  // réception. On propage ce qu'on a vraiment.
+  let attachMime = "application/pdf";
   try {
     let sourcePath = row.file_url;
     let bytes = null;
@@ -780,7 +784,12 @@ export async function paInboxConvert(company, payload) {
     }
 
     if (bytes && bytes.length > 100) {
-      const filename = (row.invoice_number || row.pa_document_id).replace(/[^a-zA-Z0-9._-]/g, "_") + ".pdf";
+      // Les octets tranchent : le Content-Type renvoyé par le storage ou par
+      // la PA se trompe régulièrement (octet-stream sur un PDF, pdf sur un XML).
+      const kind = sniffKind(bytes, mime);
+      attachMime = kind === "pdf" ? "application/pdf" : kind === "xml" ? "application/xml" : mime;
+      const ext = kind === "pdf" ? "pdf" : kind === "xml" ? "xml" : "bin";
+      const filename = (row.invoice_number || row.pa_document_id).replace(/[^a-zA-Z0-9._-]/g, "_") + "." + ext;
       purchasesAttachPath = company.id + "/" + row.pa_document_id + "-" + filename;
       const enc = purchasesAttachPath.split("/").map(encodeURIComponent).join("/");
       const up = await fetch(SUPA_URL + "/storage/v1/object/purchases-attach/" + enc, {
@@ -818,7 +827,7 @@ export async function paInboxConvert(company, payload) {
     ocr_status: "done",
     status: "pending",
     file_url: purchasesAttachPath, // ⚠️ chemin dans purchases-attach maintenant
-    file_mime: "application/pdf",
+    file_mime: purchasesAttachPath ? attachMime : null,
     notes: "Reçue via plateforme agréée (" + row.provider + ") — doc " + row.pa_document_id
   }]);
   if (!ins || !ins[0]) throw fail(500, "Création de l'achat échouée : " + JSON.stringify(sbAdmin._lastError || {}));
@@ -852,7 +861,10 @@ export async function paInboxFile(company, payload) {
   });
   const j = await r.json();
   if (!r.ok) throw fail(500, "Signature échouée : " + JSON.stringify(j));
-  return { ok: true, url: SUPA_URL + "/storage/v1" + j.signedURL };
+  // v8.108 — Le front doit savoir ce qu'il reçoit : une facture arrivée en
+  // Peppol est un XML, pas un PDF, et une <iframe> n'en affiche que le source.
+  const ext = (filePath.split(".").pop() || "").toLowerCase();
+  return { ok: true, url: SUPA_URL + "/storage/v1" + j.signedURL, ext };
 }
 
 /* ══════════════════════════════════════════════════════════════════

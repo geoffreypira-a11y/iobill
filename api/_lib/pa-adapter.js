@@ -31,6 +31,44 @@
 const TOKEN_CACHE = new Map();
 const nowSec = () => Math.floor(Date.now() / 1000);
 
+/* ─── Reconnaissance du contenu reçu ──────────────────────────────
+   v8.108 — Un Content-Type de PA n'est pas fiable (octet-stream, ou
+   application/pdf sur un XML). On tranche sur les octets : %PDF pour un
+   PDF, un premier caractère < pour du XML, { ou [ pour du JSON. Le
+   Content-Type ne sert que de départage quand les octets ne disent rien. */
+export function sniffKind(buf, contentType = "") {
+  if (buf.length >= 5 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
+    return "pdf"; // %PDF
+  }
+  let i = 0;
+  // BOM UTF-8 puis espaces / retours à la ligne
+  if (buf.length > 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) i = 3;
+  while (i < buf.length && buf[i] <= 0x20) i++;
+  if (buf[i] === 0x3C) return "xml";            // <
+  if (buf[i] === 0x7B || buf[i] === 0x5B) return "json"; // { ou [
+
+  const ct = (contentType || "").toLowerCase();
+  if (ct.includes("pdf")) return "pdf";
+  if (ct.includes("xml")) return "xml";
+  if (ct.includes("json")) return "json";
+  return "bin";
+}
+
+/** Normalise une réponse fichier : le type réel prime sur l'en-tête. */
+function fileResult(buf, contentType = "") {
+  const kind = sniffKind(buf, contentType);
+  if (kind === "pdf") return { bytes: buf, contentType: "application/pdf", ext: "pdf" };
+  if (kind === "xml") {
+    const ct = (contentType || "").toLowerCase().includes("xml") ? contentType : "application/xml";
+    return { bytes: buf, contentType: ct, ext: "xml" };
+  }
+  return {
+    bytes: buf,
+    contentType: contentType || "application/octet-stream",
+    ext: kind === "json" ? "json" : "bin"
+  };
+}
+
 /* ─── Statuts cycle de vie AFNOR (codes fr:2xx) ────────────────────
    ⚠️ À reconfirmer dans la doc SUPER PDP : ce mapping est le seul
    endroit à corriger si un code diffère.                            */
@@ -482,16 +520,27 @@ const superpdp = {
     };
   },
 
-  /** Fichier d'une facture reçue. docType=Converted ⇒ format préféré (Factur-X). */
+  /**
+   * Fichier d'une facture reçue. docType=Converted ⇒ format préféré (Factur-X).
+   *
+   * v8.108 — On ne se contente plus de la première réponse 200 : plusieurs
+   * endpoints répondent, mais pas tous avec le même contenu. Une facture
+   * arrivée en Peppol est servie en XML par les routes AFNOR alors que le
+   * PDF existe sur une autre route. On balaie donc TOUTES les tentatives,
+   * on renifle les octets (un Content-Type ment souvent), et on retient en
+   * priorité le format demandé. Ce qu'on a trouvé d'autre sert de repli :
+   * mieux vaut un XML lisible que rien.
+   */
   async fetchFile(cfg, paDocId, kind = "pdf") {
     // v8.48.6 — La route /v1.beta/invoices/{id}?format=... renvoie 404.
     // SUPER PDP mentionne explicitement "l'API AFNOR" dans son UI, avec
-    // docType=Converted → format préféré. On tente les 4 conventions
+    // docType=Converted → format préféré. On tente les conventions
     // AFNOR/PA les plus probables, avec log précis dans Vercel.
     const token = await this.auth(cfg);
     const headers = { Authorization: "Bearer " + token, Accept: "application/pdf,application/xml,*/*" };
     const id = encodeURIComponent(paDocId);
     const docType = kind === "xml" ? "Original" : "Converted";
+    const wanted = kind === "xml" ? "xml" : "pdf";
 
     const attempts = [
       // API AFNOR (XP Z12-013) — la plus probable vu leur UI
@@ -508,52 +557,56 @@ const superpdp = {
     ];
 
     const errors = [];
+    let fallback = null;
+
     for (const url of attempts) {
       try {
         const r = await fetch(url, { headers });
         // Log CHAQUE tentative pour qu'on voie dans Vercel Logs ce qui répond quoi
         console.log("[PA] fetchFile try", r.status, url);
-        if (r.ok) {
-          const ct = r.headers.get("content-type") || "";
-          const buf = new Uint8Array(await r.arrayBuffer());
-          if (buf.length < 100) {
-            errors.push("empty(" + buf.length + ") " + url);
+        if (!r.ok) { errors.push(r.status + " " + url); continue; }
+
+        const ct = r.headers.get("content-type") || "";
+        let buf = new Uint8Array(await r.arrayBuffer());
+        if (buf.length < 100) { errors.push("empty(" + buf.length + ") " + url); continue; }
+
+        // Si c'est du JSON avec un lien vers le fichier, on va chercher
+        if (sniffKind(buf, ct) === "json") {
+          let link = null;
+          try {
+            const j = JSON.parse(new TextDecoder().decode(buf));
+            link = j.url || j.download_url || j.file_url || j.href;
+          } catch {
+            errors.push("bad-json " + url);
             continue;
           }
-          // Si c'est du JSON avec un lien vers le fichier, on va chercher
-          if (ct.includes("json")) {
-            try {
-              const j = JSON.parse(new TextDecoder().decode(buf));
-              const link = j.url || j.download_url || j.file_url || j.href;
-              if (link) {
-                console.log("[PA] fetchFile follow", link);
-                const r2 = await fetch(link, { headers });
-                if (r2.ok) {
-                  const ct2 = r2.headers.get("content-type") || "application/pdf";
-                  return {
-                    bytes: new Uint8Array(await r2.arrayBuffer()),
-                    contentType: ct2,
-                    ext: ct2.includes("xml") ? "xml" : "pdf"
-                  };
-                }
-              }
-              errors.push("json-no-link " + url);
-              continue;
-            } catch {
-              errors.push("bad-json " + url);
-              continue;
-            }
-          }
-          return {
-            bytes: buf,
-            contentType: ct || "application/pdf",
-            ext: ct.includes("xml") ? "xml" : "pdf"
-          };
+          if (!link) { errors.push("json-no-link " + url); continue; }
+          console.log("[PA] fetchFile follow", link);
+          const r2 = await fetch(link, { headers });
+          if (!r2.ok) { errors.push("follow-" + r2.status + " " + url); continue; }
+          buf = new Uint8Array(await r2.arrayBuffer());
+          if (buf.length < 100) { errors.push("follow-empty " + url); continue; }
+          const got2 = fileResult(buf, r2.headers.get("content-type") || "");
+          console.log("[PA] fetchFile follow →", got2.ext, buf.length + "o");
+          if (got2.ext === wanted) return got2;
+          fallback = fallback || got2;
+          continue;
         }
-        errors.push(r.status + " " + url);
+
+        const got = fileResult(buf, ct);
+        console.log("[PA] fetchFile got", got.ext, buf.length + "o", url);
+        if (got.ext === wanted) return got;
+        // Bon fichier, mauvais format : on garde et on continue à chercher.
+        fallback = fallback || got;
+        errors.push("got-" + got.ext + " " + url);
       } catch (e) {
         errors.push(e.message + " " + url);
       }
+    }
+
+    if (fallback) {
+      console.warn("[PA] fetchFile : aucun " + wanted + ", repli sur " + fallback.ext);
+      return fallback;
     }
     throw new Error("[PA] fetchFile aucun endpoint accessible — " + errors.join(" | "));
   },
