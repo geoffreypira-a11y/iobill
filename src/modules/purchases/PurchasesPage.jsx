@@ -8,6 +8,7 @@ import { capture, bumpModuleUsage } from "../../lib/telemetry.js";
 import { syncVatCurrentPeriod } from "../../lib/vat-sync.js";
 import { PaInboxSection } from "./PaInboxSection.jsx";
 import { useTableSort, SortableTh, sortRows } from "../../components/TableSort.jsx";
+import { EInvoiceXmlPreview } from "../../components/EInvoiceXmlPreview.jsx";
 
 const PURCHASE_STATUTS = {
   pending:   { label: "En attente",        cls: "badge-muted",  icon: "📥" },
@@ -662,6 +663,9 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
   const imageExts = ["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"];
   const isImage = imageMimes.some((m) => mime.startsWith(m)) || imageExts.includes(ext);
   const isPdf = mime === "application/pdf" || ext === "pdf";
+  // v8.108 — Une facture reçue via la Plateforme Agréée peut être un XML
+  // (CII ou UBL). Une <iframe> n'en montre que le source : on le rend lisible.
+  const isXml = mime.includes("xml") || ext === "xml";
   // Si on ne sait pas, on tente d'abord image (plus tolerant que iframe)
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -702,6 +706,8 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
         <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
           {isPdf ? (
             <iframe src={url} title={purchase.vendor_name} style={{ width: "100%", height: "100%", border: "none" }} />
+          ) : isXml ? (
+            <EInvoiceXmlPreview url={url} downloadHref={url} />
           ) : isImage ? (
             <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "auto", padding: 16 }}>
               <img
