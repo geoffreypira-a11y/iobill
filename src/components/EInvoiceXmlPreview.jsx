@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { parseEInvoiceXml, eur, num, dateFr } from "../lib/e-invoice-xml.js";
+import { parseEInvoiceXml, eur, num, dateFr, moyenPaiement, consigneReglement } from "../lib/e-invoice-xml.js";
 
 /**
  * EInvoiceXmlPreview — v8.108
@@ -84,6 +84,8 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
 
   const showRaw = raw || state.status === "unparsed";
   const inv = state.inv;
+  // Ce que la facture dit du règlement : prélevée, ou à payer ?
+  const consigne = inv ? consigneReglement(inv) : null;
 
   return (
     <div style={{ height: "100%", overflow: "auto", padding: 18 }}>
@@ -228,11 +230,25 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
               ))}
             </div>
 
-            {(inv.accounts.length > 0 || inv.paymentTerms) && (
+            {(inv.payments.length > 0 || inv.paymentTerms || consigne) && (
               <div style={cardSt}>
                 <div style={{ ...labelSt, marginBottom: 6 }}>Règlement</div>
-                {inv.accounts.map((a, i) => (
-                  <div key={i} className="mono" style={{ fontSize: 12 }}>{a}</div>
+                {consigne && (
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, marginBottom: 8,
+                    color: consigne.ton === "ok" ? "#3ecf7a" : "var(--gold)"
+                  }}>
+                    {consigne.ton === "ok" ? "✅ " : "⚠️ "}{consigne.texte}
+                  </div>
+                )}
+                {inv.payments.map((m, i) => (
+                  <div key={i} style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 12 }}>{moyenPaiement(m.code).label}</div>
+                    {m.iban && <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>{m.iban}</div>}
+                    {m.information && (
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{m.information}</div>
+                    )}
+                  </div>
                 ))}
                 {inv.paymentTerms && (
                   <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, whiteSpace: "pre-wrap" }}>
