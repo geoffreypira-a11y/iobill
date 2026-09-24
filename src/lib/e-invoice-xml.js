@@ -50,6 +50,53 @@ export function dateFr(v) {
   return s;
 }
 
+/* ─── Moyen de paiement (BT-81, codes UNTDID 4461) ────────────────
+   La question pratique que pose toute facture reçue : est-ce que le
+   fournisseur se sert tout seul, ou est-ce que je dois payer ?        */
+const MOYENS = {
+  "1":  { label: "Non précisé",                  action: null },
+  "10": { label: "Espèces",                      action: "payer" },
+  "20": { label: "Chèque",                       action: "payer" },
+  "30": { label: "Virement",                     action: "payer" },
+  "31": { label: "Virement",                     action: "payer" },
+  "42": { label: "Versement sur compte bancaire", action: "payer" },
+  "48": { label: "Carte bancaire",               action: "encaisse" },
+  "49": { label: "Prélèvement",                  action: "encaisse" },
+  "57": { label: "Accord permanent",             action: "encaisse" },
+  "58": { label: "Virement SEPA",                action: "payer" },
+  "59": { label: "Prélèvement SEPA",             action: "encaisse" },
+  "68": { label: "Paiement en ligne",            action: "encaisse" },
+  "97": { label: "Compensation",                 action: null },
+  ZZZ:  { label: "Autre",                        action: null }
+};
+
+export function moyenPaiement(code) {
+  const c = String(code || "").trim().toUpperCase();
+  return MOYENS[c] || { label: c ? "Code " + c : "Non précisé", action: null };
+}
+
+/**
+ * Qui agit ? On ne répond que si la facture le dit :
+ *   "encaisse" → le fournisseur se sert (prélèvement, carte, paiement en ligne)
+ *   "payer"    → c'est à nous d'émettre le règlement
+ *   null       → la facture ne le précise pas, on n'invente pas.
+ * Un net à payer à zéro tranche dans tous les cas : il n'y a rien à faire.
+ */
+export function consigneReglement(inv) {
+  const due = parseFloat(String(inv.totals.due || "").replace(",", "."));
+  if (isFinite(due) && due === 0) {
+    return { ton: "ok", texte: "Rien à payer — net à payer à 0." };
+  }
+  const actions = inv.payments.map((m) => moyenPaiement(m.code).action).filter(Boolean);
+  if (actions.includes("encaisse") && !actions.includes("payer")) {
+    return { ton: "ok", texte: "Le fournisseur encaisse lui-même — aucun virement à faire." };
+  }
+  if (actions.includes("payer")) {
+    return { ton: "todo", texte: "À régler par vos soins." };
+  }
+  return null;
+}
+
 /* ─── CII (UN/CEFACT) — Factur-X, profils MINIMUM à EXTENDED ─── */
 function parseCII(root) {
   const exch = dig(root, "ExchangedDocument");
@@ -103,9 +150,11 @@ function parseCII(root) {
     exemption: digTxt(t, "ExemptionReason")
   }));
 
-  const accounts = kids(settlement, "SpecifiedTradeSettlementPaymentMeans").map((m) =>
-    digTxt(m, "PayeePartyCreditorFinancialAccount", "IBANID")
-  ).filter(Boolean);
+  const payments = kids(settlement, "SpecifiedTradeSettlementPaymentMeans").map((m) => ({
+    code: digTxt(m, "TypeCode"),
+    information: digTxt(m, "Information"),
+    iban: digTxt(m, "PayeePartyCreditorFinancialAccount", "IBANID")
+  }));
 
   return {
     flavour: "CII (Factur-X / UN-CEFACT)",
@@ -119,7 +168,7 @@ function parseCII(root) {
     reference: digTxt(agreement, "BuyerReference"),
     orderRef: digTxt(agreement, "BuyerOrderReferencedDocument", "IssuerAssignedID"),
     paymentTerms: digTxt(settlement, "SpecifiedTradePaymentTerms", "Description"),
-    accounts,
+    payments,
     lines,
     taxes,
     totals: {
@@ -182,9 +231,11 @@ function parseUBL(root) {
   );
 
   const totalNode = kid(root, "LegalMonetaryTotal");
-  const accounts = kids(root, "PaymentMeans")
-    .map((m) => digTxt(m, "PayeeFinancialAccount", "ID"))
-    .filter(Boolean);
+  const payments = kids(root, "PaymentMeans").map((m) => ({
+    code: digTxt(m, "PaymentMeansCode"),
+    information: digTxt(m, "PaymentID"),
+    iban: digTxt(m, "PayeeFinancialAccount", "ID")
+  }));
 
   return {
     flavour: "UBL 2.1 (Peppol BIS)",
@@ -198,7 +249,7 @@ function parseUBL(root) {
     reference: digTxt(root, "BuyerReference"),
     orderRef: digTxt(root, "OrderReference", "ID"),
     paymentTerms: digTxt(root, "PaymentTerms", "Note"),
-    accounts,
+    payments,
     lines,
     taxes,
     totals: {
