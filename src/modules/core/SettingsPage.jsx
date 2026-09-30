@@ -1698,6 +1698,8 @@ const VAT_REGIMES = [
   ["vat_exemption", "Franchise en base de TVA"]
 ];
 
+const libelleRegime = (v) => (VAT_REGIMES.find(([k]) => k === v) || [v, v])[1];
+
 const VERIF_LABEL = {
   verified:     { text: "✅ Vérifié",                       color: "var(--green, #3ecf7a)" },
   needs_review: { text: "⏳ Vérification manuelle en cours", color: "var(--gold, #d4a843)" },
@@ -1710,7 +1712,15 @@ function PaLinkPanel({ token, company, cfg }) {
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState({ kind: null, text: "" });
   const [status, setStatus] = useState(null);
-  const [vatRegime, setVatRegime] = useState("");
+  // Régime déjà transmis à la plateforme (relu depuis le journal pa_events) :
+  // il préremplit la liste au lieu de « — Choisir — » à chaque ouverture.
+  const [vatTransmis, setVatTransmis] = useState({ regime: cfg.vat_regime || null, at: cfg.vat_regime_at || null });
+  const [vatRegime, setVatRegime] = useState(cfg.vat_regime || "");
+  useEffect(() => {
+    if (!cfg.vat_regime) return;
+    setVatTransmis({ regime: cfg.vat_regime, at: cfg.vat_regime_at || null });
+    setVatRegime(v => v || cfg.vat_regime);
+  }, [cfg.vat_regime, cfg.vat_regime_at]);
   const [env, setEnv] = useState(cfg.environment || "production");
 
   // Message de retour du tunnel (?pa_link=ok|err)
@@ -1771,9 +1781,19 @@ function PaLinkPanel({ token, company, cfg }) {
 
   async function saveVat() {
     if (!vatRegime) return;
+    // Changer un régime déjà transmis change le rythme de l'e-reporting :
+    // possible (la société peut changer de régime), mais jamais par mégarde.
+    if (vatTransmis.regime && vatTransmis.regime !== vatRegime) {
+      const avant = libelleRegime(vatTransmis.regime);
+      const apres = libelleRegime(vatRegime);
+      if (!window.confirm(`Changer le régime de TVA transmis à la plateforme ?\n\n${avant} → ${apres}\n\n`
+        + "Le rythme de l'e-reporting envoyé à l'administration change en conséquence. "
+        + "Ne le faites que si le régime de la société a réellement changé.")) return;
+    }
     setBusy("vat"); setMsg({ kind: null, text: "" });
     try {
-      await call("pa_vat_regime", { vat_regime: vatRegime });
+      const j = await call("pa_vat_regime", { vat_regime: vatRegime });
+      setVatTransmis({ regime: vatRegime, at: j.vat_regime_at || new Date().toISOString() });
       setMsg({ kind: "ok", text: "Régime de TVA transmis à la plateforme." });
     } catch (e) { setMsg({ kind: "err", text: e.message }); }
     finally { setBusy(null); }
@@ -1916,9 +1936,17 @@ function PaLinkPanel({ token, company, cfg }) {
               <option value="">— Choisir —</option>
               {VAT_REGIMES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
-            <button className="btn" onClick={saveVat} disabled={busy === "vat" || !vatRegime}>
-              {busy === "vat" ? "Envoi…" : "Transmettre"}
+            <button className="btn" onClick={saveVat}
+              disabled={busy === "vat" || !vatRegime || vatRegime === vatTransmis.regime}>
+              {busy === "vat" ? "Envoi…" : vatTransmis.regime ? "Modifier" : "Transmettre"}
             </button>
+          </div>
+          <div style={{ fontSize: 12, marginTop: 6,
+            color: vatTransmis.regime ? "var(--green, #3ecf7a)" : "var(--gold, #d4a843)" }}>
+            {vatTransmis.regime
+              ? `✅ Transmis : ${libelleRegime(vatTransmis.regime)}`
+                + (vatTransmis.at ? ` — le ${new Date(vatTransmis.at).toLocaleDateString("fr-FR")}` : "")
+              : "⚠️ Aucun régime transmis : la plateforme applique son rythme par défaut."}
           </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>

@@ -230,7 +230,27 @@ export async function paConfigGet(company) {
     "pa_credential_requests",
     "company_id=eq." + company.id + "&status=eq.pending&select=*&order=created_at.desc&limit=5"
   );
-  return { config: publicCfg(rows[0], company.id), pending_requests: pending };
+  const vat = await dernierRegimeTransmis(company.id);
+  return { config: { ...publicCfg(rows[0], company.id), ...vat }, pending_requests: pending };
+}
+
+/** Dernier régime de TVA transmis avec succès à la plateforme.
+    La plateforme ne le renvoie pas dans la session : sans cette lecture,
+    l'écran repartait sur « — Choisir — » à chaque ouverture et l'abonné
+    ne savait plus ce qui avait été transmis. Chaque envoi réussi est déjà
+    journalisé dans pa_events (paVatRegimeSave) : on relit le dernier. */
+async function dernierRegimeTransmis(companyId) {
+  try {
+    const ev = await sbAdmin.selectOne(
+      "pa_events",
+      "company_id=eq." + companyId
+        + "&event_type=eq.company.vat_regime&status=eq.ok&order=created_at.desc",
+      "message,created_at"
+    );
+    return ev ? { vat_regime: ev.message, vat_regime_at: ev.created_at } : { vat_regime: null, vat_regime_at: null };
+  } catch (_) {
+    return { vat_regime: null, vat_regime_at: null };
+  }
 }
 
 /** Écriture par l'abonné : autorisée UNIQUEMENT si self_service_allowed. */
@@ -1502,7 +1522,7 @@ export async function paVatRegimeSave(company, payload = {}) {
     company_id: company.id, direction: "admin", provider: creds.provider,
     event_type: "company.vat_regime", status: "ok", message: payload.vat_regime
   });
-  return { ok: true, company: out };
+  return { ok: true, company: out, vat_regime: payload.vat_regime, vat_regime_at: new Date().toISOString() };
 }
 
 /** Débranche la société : révoque le refresh_token puis efface les jetons. */
