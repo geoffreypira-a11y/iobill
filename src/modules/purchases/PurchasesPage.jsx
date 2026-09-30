@@ -249,7 +249,14 @@ export function PurchasesPage({ token, company }) {
     const signed = await sb.getSignedUrl(token, "purchases-attach", p.file_url, 600);
     console.log("[viewDocument] signed URL:", signed);
     if (signed) {
-      setViewing({ url: signed, purchase: p });
+      // v8.109 — Une seconde URL, celle-ci servie en pièce jointe, sous un
+      // nom lisible : le bouton Télécharger doit enregistrer le fichier,
+      // pas l'ouvrir dans un onglet.
+      const ext = (p.file_url.split(".").pop() || "").toLowerCase();
+      const nom = ((p.number || p.vendor_name || "piece") + (ext ? "." + ext : ""))
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+      const download = await sb.getSignedUrl(token, "purchases-attach", p.file_url, 600, nom);
+      setViewing({ url: signed, downloadUrl: download || signed, purchase: p });
     } else {
       showToast("Impossible d'accéder au document (fichier introuvable ou supprimé)", "error");
     }
@@ -559,6 +566,7 @@ export function PurchasesPage({ token, company }) {
       {viewing && (
         <PdfViewerModal
           url={viewing.url}
+          downloadUrl={viewing.downloadUrl || viewing.url}
           purchase={viewing.purchase}
           onEdit={() => { setEditing(viewing.purchase); setViewing(null); }}
           onClose={() => setViewing(null)}
@@ -654,7 +662,8 @@ function KebabItem({ icon, label, onClick, danger }) {
 }
 
 /* ─── Modale viewer PDF ─── */
-function PdfViewerModal({ url, purchase, onEdit, onClose }) {
+function PdfViewerModal({ url, downloadUrl, purchase, onEdit, onClose }) {
+  const dl = downloadUrl || url;
   // Detection robuste : MIME en priorite, puis extension du file_url
   const mime = (purchase.file_mime || "").toLowerCase();
   const filePath = (purchase.file_url || "").toLowerCase();
@@ -692,7 +701,7 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
               ✏️ Modifier
             </button>
             <a
-              href={url}
+              href={dl}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-ghost btn-sm"
@@ -707,7 +716,7 @@ function PdfViewerModal({ url, purchase, onEdit, onClose }) {
           {isPdf ? (
             <iframe src={url} title={purchase.vendor_name} style={{ width: "100%", height: "100%", border: "none" }} />
           ) : isXml ? (
-            <EInvoiceXmlPreview url={url} downloadHref={url} />
+            <EInvoiceXmlPreview url={url} downloadHref={dl} />
           ) : isImage ? (
             <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "auto", padding: 16 }}>
               <img

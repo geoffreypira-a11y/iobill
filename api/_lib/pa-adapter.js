@@ -54,13 +54,25 @@ export function sniffKind(buf, contentType = "") {
   return "bin";
 }
 
+/* v8.109 — Encodage déclaré par le document lui-même. Servi sans charset,
+   un XML s'affiche en mojibake dès qu'un lecteur suppose du Latin-1
+   (« a Ã©tÃ© prÃ©levÃ© »). Et un charset HTTP erroné est pire encore : pour
+   un type XML il prime sur le prologue côté consommateur. On fait donc
+   confiance à la déclaration de l'émetteur, qui décrit les octets qu'il a
+   réellement écrits ; en son absence, la valeur par défaut de XML est
+   UTF-8. Le prologue est en ASCII, le décoder en latin1 est sans risque. */
+function charsetXml(buf) {
+  const tete = new TextDecoder("latin1").decode(buf.slice(0, 200));
+  const m = tete.match(/<\?xml[^>]*encoding\s*=\s*["']([A-Za-z0-9._-]+)["']/i);
+  return m ? m[1].toLowerCase() : "utf-8";
+}
+
 /** Normalise une réponse fichier : le type réel prime sur l'en-tête. */
 function fileResult(buf, contentType = "") {
   const kind = sniffKind(buf, contentType);
   if (kind === "pdf") return { bytes: buf, contentType: "application/pdf", ext: "pdf" };
   if (kind === "xml") {
-    const ct = (contentType || "").toLowerCase().includes("xml") ? contentType : "application/xml";
-    return { bytes: buf, contentType: ct, ext: "xml" };
+    return { bytes: buf, contentType: "application/xml; charset=" + charsetXml(buf), ext: "xml" };
   }
   return {
     bytes: buf,

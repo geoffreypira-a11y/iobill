@@ -181,7 +181,12 @@ export const sb = {
     return r.json();
   },
 
-  async getSignedUrl(token, bucket, path, expiresIn = 300) {
+  async getSignedUrl(token, bucket, path, expiresIn = 300, downloadName = null) {
+    // v8.109 — downloadName demande à Supabase de servir le fichier en
+    // pièce jointe (Content-Disposition: attachment) sous ce nom. Sans ça
+    // un XML ou un PDF s'ouvre dans l'onglet au lieu d'être enregistré, et
+    // l'attribut HTML `download` n'y peut rien : il est ignoré en
+    // cross-origin. Seul le serveur peut trancher.
     // Encoder chaque segment du path (sans toucher aux /) pour gerer les
     // noms de fichiers avec espaces, accents, etc. dans les anciens fichiers.
     const safePath = path.split("/").map(encodeURIComponent).join("/");
@@ -192,6 +197,10 @@ export const sb = {
     });
     if (!r.ok) return null;
     const j = await r.json();
-    return j.signedURL ? `${SUPABASE_URL}/storage/v1${j.signedURL}` : null;
+    if (!j.signedURL) return null;
+    const url = `${SUPABASE_URL}/storage/v1${j.signedURL}`;
+    return downloadName
+      ? url + (url.includes("?") ? "&" : "?") + "download=" + encodeURIComponent(downloadName)
+      : url;
   }
 };

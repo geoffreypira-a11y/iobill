@@ -98,7 +98,7 @@ export function PaInboxSection({ token, company, onConverted }) {
       // facture émise en Peppol arrive en XML. On demande le type au serveur
       // et on retombe sur l'extension du chemin signé si besoin.
       const ext = (r.ext || (r.url.split("?")[0].split(".").pop() || "")).toLowerCase();
-      setPreview({ url: r.url, ext, row });
+      setPreview({ url: r.url, downloadUrl: r.download_url || r.url, ext, row });
     } catch (e) { setMsg({ t: "err", m: "Aperçu indisponible : " + e.message }); }
     finally { setBusyId(null); }
   }
@@ -281,7 +281,7 @@ export function PaInboxSection({ token, company, onConverted }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <a href={preview.url} target="_blank" rel="noopener noreferrer"
+                <a href={preview.downloadUrl} target="_blank" rel="noopener noreferrer"
                   className="btn btn-ghost btn-sm"
                   style={{ padding: "5px 12px", fontSize: 11, textDecoration: "none" }}>
                   ⬇ Télécharger
@@ -291,7 +291,7 @@ export function PaInboxSection({ token, company, onConverted }) {
             </div>
             <div style={{ flex: 1, overflow: "hidden", background: "#1a1b22" }}>
               {preview.ext === "xml" ? (
-                <EInvoiceXmlPreview url={preview.url} downloadHref={preview.url} />
+                <EInvoiceXmlPreview url={preview.url} downloadHref={preview.downloadUrl} />
               ) : (
                 <iframe src={preview.url} title={preview.row.invoice_number || "facture"}
                   style={{ width: "100%", height: "100%", border: "none" }} />
