@@ -344,80 +344,82 @@ function ClientsCards({ clients, stats, onOpen, onEdit, onDelete }) {
 function ClientsTable({ clients, stats, onOpen, onEdit, onDelete, sort, onSort }) {
   return (
     <div className="card" style={{ overflow: "hidden" }}>
-      <table>
-        <thead>
-          <tr>
-            <SortableTh label="Client" sortKey="name" sort={sort} onSort={onSort} />
-            <SortableTh label="Email" sortKey="email" sort={sort} onSort={onSort} />
-            <SortableTh label="Statut" sortKey="status" sort={sort} onSort={onSort} />
-            <SortableTh label="Encours" sortKey="unpaid" sort={sort} onSort={onSort} align="right" />
-            <SortableTh label="Score" sortKey="score" sort={sort} onSort={onSort} />
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {clients.map((c) => {
-            const st = stats[c.id] || {};
-            const statusInfo = CLIENT_STATUTS[c.status] || CLIENT_STATUTS.prospect;
-            const score = PAYMENT_SCORES[c.payment_score || "normal"];
-            return (
-              <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => onOpen(c)}>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div className="avatar" style={{ width: 28, height: 28, fontSize: 10 }}>
-                      {initials(displayName(c))}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>
-                        {displayName(c)}
-                        {/* v8.43 — Petit indicateur "géré par" */}
-                        {c.external_managed && c.external_source && (
-                          <span style={{ fontSize: 9, color: "var(--gold)", marginLeft: 6 }}>
-                            {sourceAppEmoji(c.external_source)}
-                          </span>
+      <div className="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <SortableTh label="Client" sortKey="name" sort={sort} onSort={onSort} />
+              <SortableTh label="Email" sortKey="email" sort={sort} onSort={onSort} />
+              <SortableTh label="Statut" sortKey="status" sort={sort} onSort={onSort} />
+              <SortableTh label="Encours" sortKey="unpaid" sort={sort} onSort={onSort} align="right" />
+              <SortableTh label="Score" sortKey="score" sort={sort} onSort={onSort} />
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {clients.map((c) => {
+              const st = stats[c.id] || {};
+              const statusInfo = CLIENT_STATUTS[c.status] || CLIENT_STATUTS.prospect;
+              const score = PAYMENT_SCORES[c.payment_score || "normal"];
+              return (
+                <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => onOpen(c)}>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div className="avatar" style={{ width: 28, height: 28, fontSize: 10 }}>
+                        {initials(displayName(c))}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {displayName(c)}
+                          {/* v8.43 — Petit indicateur "géré par" */}
+                          {c.external_managed && c.external_source && (
+                            <span style={{ fontSize: 9, color: "var(--gold)", marginLeft: 6 }}>
+                              {sourceAppEmoji(c.external_source)}
+                            </span>
+                          )}
+                        </div>
+                        {c.contact_person && (
+                          <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.contact_person}</div>
                         )}
                       </div>
-                      {c.contact_person && (
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.contact_person}</div>
-                      )}
                     </div>
-                  </div>
-                </td>
-                <td>{c.email || "—"}</td>
-                <td>
-                  <span className={"badge " + statusInfo.cls}>{statusInfo.icon} {statusInfo.label}</span>
-                </td>
-                <td className="mono" style={{ textAlign: "right", color: st.unpaid_cents ? "var(--orange)" : "var(--muted)" }}>
-                  {st.unpaid_cents ? fmtEUR(st.unpaid_cents) : "—"}
-                </td>
-                <td>
-                  <span className={"badge " + score.cls}>{score.icon} {score.label}</span>
-                </td>
-                <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
-                  <button
-                    className="btn btn-ghost btn-xs"
-                    onClick={() => { if (!c.external_managed) onEdit(c); }}
-                    disabled={c.external_managed}
-                    title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Modifier"}
-                    style={c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}}
-                  >
-                    <Icon name="edit" size={12} />
-                  </button>
-                  <button
-                    className="btn btn-danger btn-xs"
-                    onClick={() => { if (!c.external_managed) onDelete(c); }}
-                    disabled={c.external_managed}
-                    title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Supprimer"}
-                    style={{ marginLeft: 6, ...(c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}
-                  >
-                    <Icon name="trash" size={12} />
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </td>
+                  <td>{c.email || "—"}</td>
+                  <td>
+                    <span className={"badge " + statusInfo.cls}>{statusInfo.icon} {statusInfo.label}</span>
+                  </td>
+                  <td className="mono" style={{ textAlign: "right", color: st.unpaid_cents ? "var(--orange)" : "var(--muted)" }}>
+                    {st.unpaid_cents ? fmtEUR(st.unpaid_cents) : "—"}
+                  </td>
+                  <td>
+                    <span className={"badge " + score.cls}>{score.icon} {score.label}</span>
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      onClick={() => { if (!c.external_managed) onEdit(c); }}
+                      disabled={c.external_managed}
+                      title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Modifier"}
+                      style={c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+                    >
+                      <Icon name="edit" size={12} />
+                    </button>
+                    <button
+                      className="btn btn-danger btn-xs"
+                      onClick={() => { if (!c.external_managed) onDelete(c); }}
+                      disabled={c.external_managed}
+                      title={c.external_managed ? `Géré par ${sourceAppLabel(c.external_source)}` : "Supprimer"}
+                      style={{ marginLeft: 6, ...(c.external_managed ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}
+                    >
+                      <Icon name="trash" size={12} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

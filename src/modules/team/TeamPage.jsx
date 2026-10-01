@@ -148,66 +148,68 @@ export function TeamPage({ token, company, user }) {
 
       {/* Liste membres */}
       <div className="card" style={{ overflow: "hidden" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Email / Utilisateur</th>
-              <th>Rôle</th>
-              <th>Invité le</th>
-              <th>Acceptée</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {members.map((m) => {
-              const info = ROLE_LABELS[m.role] || ROLE_LABELS.readonly;
-              const isMe = m.user_id === user.id;
-              return (
-                <tr key={m.id}>
-                  <td>
-                    {m.invited_email || (isMe ? user.email : "—")}
-                    {isMe && <span className="badge badge-muted" style={{ marginLeft: 6, fontSize: 10 }}>Moi</span>}
-                  </td>
-                  <td>
-                    {canManage && !isMe && m.role !== "owner" ? (
-                      <select
-                        className="form-input"
-                        style={{ padding: "4px 8px", fontSize: 12, width: "auto" }}
-                        value={m.role}
-                        onChange={(e) => changeRole(m.id, e.target.value)}
-                      >
-                        {Object.entries(ROLE_LABELS).filter(([k]) => k !== "owner").map(([k, ri]) => (
-                          <option key={k} value={k}>{ri.label}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span style={{ color: info.color, fontSize: 12, fontWeight: 500 }}>{info.label}</span>
-                    )}
-                  </td>
-                  <td>{fmtDate(m.invited_at || m.created_at)}</td>
-                  <td>
-                    {m.accepted_at ? (
-                      <span className="badge badge-green">{fmtDate(m.accepted_at)}</span>
-                    ) : (
-                      <span className="badge badge-muted">En attente</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {canManage && !isMe && m.role !== "owner" && (
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        style={{ color: "var(--red)" }}
-                        onClick={() => removeMember(m.id, m.invited_email)}
-                      >
-                        Retirer
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Email / Utilisateur</th>
+                <th>Rôle</th>
+                <th>Invité le</th>
+                <th>Acceptée</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map((m) => {
+                const info = ROLE_LABELS[m.role] || ROLE_LABELS.readonly;
+                const isMe = m.user_id === user.id;
+                return (
+                  <tr key={m.id}>
+                    <td>
+                      {m.invited_email || (isMe ? user.email : "—")}
+                      {isMe && <span className="badge badge-muted" style={{ marginLeft: 6, fontSize: 10 }}>Moi</span>}
+                    </td>
+                    <td>
+                      {canManage && !isMe && m.role !== "owner" ? (
+                        <select
+                          className="form-input"
+                          style={{ padding: "4px 8px", fontSize: 12, width: "auto" }}
+                          value={m.role}
+                          onChange={(e) => changeRole(m.id, e.target.value)}
+                        >
+                          {Object.entries(ROLE_LABELS).filter(([k]) => k !== "owner").map(([k, ri]) => (
+                            <option key={k} value={k}>{ri.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span style={{ color: info.color, fontSize: 12, fontWeight: 500 }}>{info.label}</span>
+                      )}
+                    </td>
+                    <td>{fmtDate(m.invited_at || m.created_at)}</td>
+                    <td>
+                      {m.accepted_at ? (
+                        <span className="badge badge-green">{fmtDate(m.accepted_at)}</span>
+                      ) : (
+                        <span className="badge badge-muted">En attente</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {canManage && !isMe && m.role !== "owner" && (
+                        <button
+                          className="btn btn-ghost btn-xs"
+                          style={{ color: "var(--red)" }}
+                          onClick={() => removeMember(m.id, m.invited_email)}
+                        >
+                          Retirer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

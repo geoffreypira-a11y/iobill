@@ -19,26 +19,28 @@ export function SkeletonBox({ height = 14, width = "100%", radius = 4, style = {
 export function SkeletonTable({ rows = 6, cols = 5 }) {
   return (
     <div className="card" style={{ overflow: "hidden" }}>
-      <table>
-        <thead>
-          <tr>
-            {Array.from({ length: cols }).map((_, i) => (
-              <th key={i}><SkeletonBox height={12} width="60%" /></th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: rows }).map((_, r) => (
-            <tr key={r}>
-              {Array.from({ length: cols }).map((_, c) => (
-                <td key={c}>
-                  <SkeletonBox height={12} width={c === 0 ? "70%" : c === cols - 1 ? "40%" : "85%"} />
-                </td>
+      <div className="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              {Array.from({ length: cols }).map((_, i) => (
+                <th key={i}><SkeletonBox height={12} width="60%" /></th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {Array.from({ length: rows }).map((_, r) => (
+              <tr key={r}>
+                {Array.from({ length: cols }).map((_, c) => (
+                  <td key={c}>
+                    <SkeletonBox height={12} width={c === 0 ? "70%" : c === cols - 1 ? "40%" : "85%"} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

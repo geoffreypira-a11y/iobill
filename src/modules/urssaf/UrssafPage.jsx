@@ -173,35 +173,37 @@ export function UrssafPage({ token, company }) {
             Aucune déclaration enregistrée.
           </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Période</th>
-                <th>Type</th>
-                <th style={{ textAlign: "right" }}>CA encaissé</th>
-                <th>Taux</th>
-                <th style={{ textAlign: "right" }}>Cotisations</th>
-                <th>Statut</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {returns.map((r) => (
-                <tr key={r.id}>
-                  <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
-                  <td>{r.period_type === "quarterly" ? "Trimestrielle" : "Mensuelle"}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ca_encaisse_cents)}</td>
-                  <td className="mono">{r.rate_applied}%</td>
-                  <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>{fmtEUR(r.cotisations_cents)}</td>
-                  <td><span className={"badge " + URSSAF_STATUTS[r.status]?.cls}>{URSSAF_STATUTS[r.status]?.icon} {URSSAF_STATUTS[r.status]?.label}</span></td>
-                  <td style={{ textAlign: "right" }}>
-                    {r.status === "draft" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
-                    {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
-                  </td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Période</th>
+                  <th>Type</th>
+                  <th style={{ textAlign: "right" }}>CA encaissé</th>
+                  <th>Taux</th>
+                  <th style={{ textAlign: "right" }}>Cotisations</th>
+                  <th>Statut</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {returns.map((r) => (
+                  <tr key={r.id}>
+                    <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
+                    <td>{r.period_type === "quarterly" ? "Trimestrielle" : "Mensuelle"}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ca_encaisse_cents)}</td>
+                    <td className="mono">{r.rate_applied}%</td>
+                    <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>{fmtEUR(r.cotisations_cents)}</td>
+                    <td><span className={"badge " + URSSAF_STATUTS[r.status]?.cls}>{URSSAF_STATUTS[r.status]?.icon} {URSSAF_STATUTS[r.status]?.label}</span></td>
+                    <td style={{ textAlign: "right" }}>
+                      {r.status === "draft" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
+                      {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

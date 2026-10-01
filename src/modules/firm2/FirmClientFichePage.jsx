@@ -754,86 +754,88 @@ function CreditNotesTab({ token, firm, company, signals, onSignalCreated }) {
       {sorted.length === 0 ? <NoResults onReset={filters.reset} /> : (
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={tableStyle}>
-              <thead>
-                <tr>
-                  <SortableTh label="N°"              sortKey="number"     sort={sort} onSort={toggleSort} />
-                  <SortableTh label="Date"            sortKey="issue_date" sort={sort} onSort={toggleSort} />
-                  <SortableTh label="Facture d'origine" sortKey="source"   sort={sort} onSort={toggleSort} />
-                  <SortableTh label="HT"              sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
-                  <SortableTh label="TVA"             sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
-                  <SortableTh label="TTC"             sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
-                  <SortableTh label="Statut"          sortKey="status"     sort={sort} onSort={toggleSort} />
-                  <th style={{ textAlign: "right" }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((c) => {
-                  const cnSignals = (signals || []).filter((sg) => sg.target_id === c.id && sg.status === "open");
-                  const emisCe = c.status === "issued";
-                  return (
-                    <tr key={c.id}>
-                      <td>
-                        <span style={{ fontFamily: "monospace" }}>{c.number}</span>
-                        {cnSignals.length > 0 && (
-                          <span style={{ marginLeft: 6 }} title={cnSignals.map((sg) => sg.title).join("\n")}>
-                            {SEV_EMOJI[cnSignals[0].severity]}
+            <div className="tbl-wrap">
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <SortableTh label="N°"              sortKey="number"     sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Date"            sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Facture d'origine" sortKey="source"   sort={sort} onSort={toggleSort} />
+                    <SortableTh label="HT"              sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="TVA"             sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="TTC"             sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="Statut"          sortKey="status"     sort={sort} onSort={toggleSort} />
+                    <th style={{ textAlign: "right" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((c) => {
+                    const cnSignals = (signals || []).filter((sg) => sg.target_id === c.id && sg.status === "open");
+                    const emisCe = c.status === "issued";
+                    return (
+                      <tr key={c.id}>
+                        <td>
+                          <span style={{ fontFamily: "monospace" }}>{c.number}</span>
+                          {cnSignals.length > 0 && (
+                            <span style={{ marginLeft: 6 }} title={cnSignals.map((sg) => sg.title).join("\n")}>
+                              {SEV_EMOJI[cnSignals[0].severity]}
+                            </span>
+                          )}
+                          {c.reason && (
+                            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>{c.reason}</div>
+                          )}
+                        </td>
+                        <td>{fmtDate(c.issue_date)}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 11 }}>
+                          {c.source_invoice_number || <span style={{ color: "var(--muted2)" }}>—</span>}
+                        </td>
+                        {/* Les montants sont POSITIFS en base — c'est le type du
+                            document qui dit qu'il annule. On les affiche en
+                            négatif ici : le comptable lit une déduction. */}
+                        <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.subtotal_ht_cents || 0)}</td>
+                        <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.vat_total_cents || 0)}</td>
+                        <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>−{fmtEUR(c.total_ttc_cents || 0)}</td>
+                        <td>
+                          <span
+                            className="badge"
+                            style={{
+                              background: emisCe ? "rgba(62,207,122,0.12)" : "rgba(255,255,255,0.05)",
+                              color: emisCe ? "var(--green)" : "var(--muted)",
+                              border: `1px solid ${emisCe ? "rgba(62,207,122,0.35)" : "var(--border2, rgba(255,255,255,0.12))"}`
+                            }}
+                            title={emisCe
+                              ? "Avoir émis — vient en déduction de la TVA collectée"
+                              : "Brouillon — sans effet sur la déclaration tant qu'il n'est pas émis"}
+                          >
+                            {emisCe ? "Émis" : "Brouillon"}
                           </span>
-                        )}
-                        {c.reason && (
-                          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>{c.reason}</div>
-                        )}
-                      </td>
-                      <td>{fmtDate(c.issue_date)}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: 11 }}>
-                        {c.source_invoice_number || <span style={{ color: "var(--muted2)" }}>—</span>}
-                      </td>
-                      {/* Les montants sont POSITIFS en base — c'est le type du
-                          document qui dit qu'il annule. On les affiche en
-                          négatif ici : le comptable lit une déduction. */}
-                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.subtotal_ht_cents || 0)}</td>
-                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>−{fmtEUR(c.vat_total_cents || 0)}</td>
-                      <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>−{fmtEUR(c.total_ttc_cents || 0)}</td>
-                      <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background: emisCe ? "rgba(62,207,122,0.12)" : "rgba(255,255,255,0.05)",
-                            color: emisCe ? "var(--green)" : "var(--muted)",
-                            border: `1px solid ${emisCe ? "rgba(62,207,122,0.35)" : "var(--border2, rgba(255,255,255,0.12))"}`
-                          }}
-                          title={emisCe
-                            ? "Avoir émis — vient en déduction de la TVA collectée"
-                            : "Brouillon — sans effet sur la déclaration tant qu'il n'est pas émis"}
-                        >
-                          {emisCe ? "Émis" : "Brouillon"}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        {c.pdf_url && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => { setPreviewUrl(c.pdf_url); setPreviewTitle(`Avoir ${c.number}`); }}
-                            style={{ padding: "4px 8px", marginRight: 4 }}
-                            title="Voir le PDF"
-                          >👁</button>
-                        )}
-                        <SignalButton
-                          token={token}
-                          firm_id={firm.id}
-                          company_id={company.id}
-                          target_type="credit_note"
-                          target_id={c.id}
-                          targetLabel={`Avoir ${c.number}`}
-                          compact
-                          onCreated={onSignalCreated}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          {c.pdf_url && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => { setPreviewUrl(c.pdf_url); setPreviewTitle(`Avoir ${c.number}`); }}
+                              style={{ padding: "4px 8px", marginRight: 4 }}
+                              title="Voir le PDF"
+                            >👁</button>
+                          )}
+                          <SignalButton
+                            token={token}
+                            firm_id={firm.id}
+                            company_id={company.id}
+                            target_type="credit_note"
+                            target_id={c.id}
+                            targetLabel={`Avoir ${c.number}`}
+                            compact
+                            onCreated={onSignalCreated}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -1124,111 +1126,113 @@ function PurchasesTab({ token, firm, company, signals, onSignalCreated }) {
     </div>
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
-        <table style={tableStyle}>
-          <thead>
-            <tr>
-              <th style={{ width: 32, textAlign: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={withPdf.length > 0 && selected.size === withPdf.length}
-                  ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < withPdf.length; }}
-                  onChange={toggleAll}
-                  title="Tout sélectionner"
-                  disabled={withPdf.length === 0}
-                />
-              </th>
-              <SortableTh label="N°"          sortKey="number"     sort={sort} onSort={toggleSort} />
-              <SortableTh label="Fournisseur" sortKey="vendor"     sort={sort} onSort={toggleSort} />
-              <SortableTh label="Date"        sortKey="issue_date" sort={sort} onSort={toggleSort} />
-              <SortableTh label="Catégorie"   sortKey="category"   sort={sort} onSort={toggleSort} />
-              <SortableTh label="HT"          sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
-              <SortableTh label="TVA"         sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
-              <SortableTh label="TTC"         sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
-              <th style={{ textAlign: "right" }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedPurchases.map((p) => {
-              const pSignals = signals.filter((s) => s.target_type === "purchase" && s.target_id === p.id && s.status === "open");
-              return (
-                <tr key={p.id}>
-                  <td style={{ textAlign: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(p.id)}
-                      onChange={() => toggleOne(p.id)}
-                      disabled={!p.file_url}
-                      title={p.file_url ? "Sélectionner pour le ZIP" : "Pas de justificatif"}
-                    />
-                  </td>
-                  <td>
-                    <span style={{ fontFamily: "monospace" }}>{p.number || "—"}</span>
-                    {pSignals.length > 0 && (
-                      <span style={{ marginLeft: 6 }} title={pSignals.map((s) => s.title).join("\n")}>
-                        {SEV_EMOJI[pSignals[0].severity]}
-                      </span>
-                    )}
-                  </td>
-                  <td>{p.vendor_name}</td>
-                  <td>{fmtDate(p.issue_date)}</td>
-                  <td style={{ fontSize: 11, color: "var(--muted2)" }}>{p.category || "—"}</td>
-                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(p.subtotal_ht_cents || 0)}</td>
-                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                    {fmtEUR(p.vat_total_cents || 0)}
-                    {/* v8.66 — Accès rapide TVA récupérable côté cabinet (option 1) */}
-                    {(p.vat_total_cents || 0) > 0 && (() => {
-                      const vatC = p.vat_total_cents || 0;
-                      const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
-                      const isFull = dedC >= vatC, isNone = dedC <= 0;
-                      const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
-                      const tint = isNone
-                        ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
-                        : isFull
-                          ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
-                          : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
-                      return (
-                        <div style={{ marginTop: 4 }}>
-                          <span
-                            onClick={() => setDedFor(p)}
-                            title="Modifier la TVA récupérable"
-                            style={{
-                              display: "inline-flex", alignItems: "center", gap: 4,
-                              padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
-                              cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
-                            }}
-                          >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
-                        </div>
-                      );
-                    })()}
-                  </td>
-                  <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fmtEUR(p.total_ttc_cents || 0)}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    {p.file_url && (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => openPreview(p)}
-                        style={{ padding: "4px 8px", marginRight: 4 }}
-                        title="Voir le document scanné"
-                      >
-                        👁
-                      </button>
-                    )}
-                    <SignalButton
-                      token={token}
-                      firm_id={firm.id}
-                      company_id={company.id}
-                      target_type="purchase"
-                      target_id={p.id}
-                      targetLabel={`Achat ${p.vendor_name} ${fmtDate(p.issue_date)}`}
-                      compact
-                      onCreated={onSignalCreated}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="tbl-wrap">
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={{ width: 32, textAlign: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={withPdf.length > 0 && selected.size === withPdf.length}
+                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < withPdf.length; }}
+                    onChange={toggleAll}
+                    title="Tout sélectionner"
+                    disabled={withPdf.length === 0}
+                  />
+                </th>
+                <SortableTh label="N°"          sortKey="number"     sort={sort} onSort={toggleSort} />
+                <SortableTh label="Fournisseur" sortKey="vendor"     sort={sort} onSort={toggleSort} />
+                <SortableTh label="Date"        sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                <SortableTh label="Catégorie"   sortKey="category"   sort={sort} onSort={toggleSort} />
+                <SortableTh label="HT"          sortKey="ht"         sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TVA"         sortKey="vat"        sort={sort} onSort={toggleSort} align="right" />
+                <SortableTh label="TTC"         sortKey="ttc"        sort={sort} onSort={toggleSort} align="right" />
+                <th style={{ textAlign: "right" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedPurchases.map((p) => {
+                const pSignals = signals.filter((s) => s.target_type === "purchase" && s.target_id === p.id && s.status === "open");
+                return (
+                  <tr key={p.id}>
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        disabled={!p.file_url}
+                        title={p.file_url ? "Sélectionner pour le ZIP" : "Pas de justificatif"}
+                      />
+                    </td>
+                    <td>
+                      <span style={{ fontFamily: "monospace" }}>{p.number || "—"}</span>
+                      {pSignals.length > 0 && (
+                        <span style={{ marginLeft: 6 }} title={pSignals.map((s) => s.title).join("\n")}>
+                          {SEV_EMOJI[pSignals[0].severity]}
+                        </span>
+                      )}
+                    </td>
+                    <td>{p.vendor_name}</td>
+                    <td>{fmtDate(p.issue_date)}</td>
+                    <td style={{ fontSize: 11, color: "var(--muted2)" }}>{p.category || "—"}</td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtEUR(p.subtotal_ht_cents || 0)}</td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                      {fmtEUR(p.vat_total_cents || 0)}
+                      {/* v8.66 — Accès rapide TVA récupérable côté cabinet (option 1) */}
+                      {(p.vat_total_cents || 0) > 0 && (() => {
+                        const vatC = p.vat_total_cents || 0;
+                        const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
+                        const isFull = dedC >= vatC, isNone = dedC <= 0;
+                        const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
+                        const tint = isNone
+                          ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
+                          : isFull
+                            ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
+                            : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
+                        return (
+                          <div style={{ marginTop: 4 }}>
+                            <span
+                              onClick={() => setDedFor(p)}
+                              title="Modifier la TVA récupérable"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                                cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
+                              }}
+                            >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fmtEUR(p.total_ttc_cents || 0)}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {p.file_url && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => openPreview(p)}
+                          style={{ padding: "4px 8px", marginRight: 4 }}
+                          title="Voir le document scanné"
+                        >
+                          👁
+                        </button>
+                      )}
+                      <SignalButton
+                        token={token}
+                        firm_id={firm.id}
+                        company_id={company.id}
+                        target_type="purchase"
+                        target_id={p.id}
+                        targetLabel={`Achat ${p.vendor_name} ${fmtDate(p.issue_date)}`}
+                        compact
+                        onCreated={onSignalCreated}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
     </>
@@ -1775,58 +1779,60 @@ function VatSummaryTable({ periodData, token }) {
           <tr>
             <td colSpan={4} style={{ padding: 0, background: "rgba(0,0,0,0.18)" }}>
               {hasItems ? (
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                  <thead>
-                    <tr style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      <th style={{ padding: "6px 12px 6px 40px", textAlign: "left" }}>Document</th>
-                      <th style={{ padding: "6px 12px", textAlign: "right" }}>HT</th>
-                      <th style={{ padding: "6px 12px", textAlign: "right", width: 50 }}>Taux</th>
-                      <th style={{ padding: "6px 12px", textAlign: "right" }}>TVA</th>
-                      <th style={{ padding: "6px 12px", width: 110 }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {docs.map((d) => {
-                      const sign = kind === "creditNotes" ? -1 : 1;
-                      const ht = sign * (d.subtotal_ht_cents || 0);
-                      const vat = sign * (d.vat_total_cents || 0);
-                      const bd = d.vat_breakdown || [];
-                      let rateLabel = "—";
-                      if (bd.length === 1) rateLabel = `${bd[0].rate}%`;
-                      else if (bd.length > 1) rateLabel = "Multi";
-                      else if (ht !== 0 && vat !== 0) rateLabel = `~${Math.round(Math.abs(vat / ht) * 100)}%`;
-                      const pdfUrl = d.facturx_pdf_url || d.pdf_url || d.file_url || null;
-                      const docLabel = kind === "purchases"
-                        ? `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`
-                        : (d.number || "Sans n°");
-                      return (
-                        <tr key={d.id} style={{ borderTop: "1px solid var(--border2)" }}>
-                          <td style={{ padding: "8px 12px 8px 40px" }}>
-                            <div style={{ fontSize: 12, fontWeight: 500 }}>{docLabel}</div>
-                            <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                              {fmtDate(d.issue_date)}{d.status ? ` · ${d.status}` : ""}
-                              {kind === "creditNotes" && d.reason ? ` · ${d.reason}` : ""}
-                            </div>
-                          </td>
-                          <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12 }}>{fmtEUR(ht)}</td>
-                          <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, color: "var(--muted)" }}>{rateLabel}</td>
-                          <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12, color: accentColor }}>{fmtEUR(vat)}</td>
-                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                            {pdfUrl && (
-                              <button
-                                onClick={(e) => openPdf(d, e, kind)}
-                                className="btn btn-ghost btn-xs"
-                                style={{ fontSize: 10, padding: "3px 8px" }}
-                              >
-                                👁 Voir
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div className="tbl-wrap">
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                        <th style={{ padding: "6px 12px 6px 40px", textAlign: "left" }}>Document</th>
+                        <th style={{ padding: "6px 12px", textAlign: "right" }}>HT</th>
+                        <th style={{ padding: "6px 12px", textAlign: "right", width: 50 }}>Taux</th>
+                        <th style={{ padding: "6px 12px", textAlign: "right" }}>TVA</th>
+                        <th style={{ padding: "6px 12px", width: 110 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docs.map((d) => {
+                        const sign = kind === "creditNotes" ? -1 : 1;
+                        const ht = sign * (d.subtotal_ht_cents || 0);
+                        const vat = sign * (d.vat_total_cents || 0);
+                        const bd = d.vat_breakdown || [];
+                        let rateLabel = "—";
+                        if (bd.length === 1) rateLabel = `${bd[0].rate}%`;
+                        else if (bd.length > 1) rateLabel = "Multi";
+                        else if (ht !== 0 && vat !== 0) rateLabel = `~${Math.round(Math.abs(vat / ht) * 100)}%`;
+                        const pdfUrl = d.facturx_pdf_url || d.pdf_url || d.file_url || null;
+                        const docLabel = kind === "purchases"
+                          ? `${d.vendor_name || "Fournisseur"}${d.number ? ` · ${d.number}` : ""}`
+                          : (d.number || "Sans n°");
+                        return (
+                          <tr key={d.id} style={{ borderTop: "1px solid var(--border2)" }}>
+                            <td style={{ padding: "8px 12px 8px 40px" }}>
+                              <div style={{ fontSize: 12, fontWeight: 500 }}>{docLabel}</div>
+                              <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                                {fmtDate(d.issue_date)}{d.status ? ` · ${d.status}` : ""}
+                                {kind === "creditNotes" && d.reason ? ` · ${d.reason}` : ""}
+                              </div>
+                            </td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12 }}>{fmtEUR(ht)}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, color: "var(--muted)" }}>{rateLabel}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontSize: 12, color: accentColor }}>{fmtEUR(vat)}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                              {pdfUrl && (
+                                <button
+                                  onClick={(e) => openPdf(d, e, kind)}
+                                  className="btn btn-ghost btn-xs"
+                                  style={{ fontSize: 10, padding: "3px 8px" }}
+                                >
+                                  👁 Voir
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div style={{ padding: "16px 40px", color: "var(--muted)", fontSize: 11, fontStyle: "italic" }}>
                   Aucun document sur la période
@@ -1841,66 +1847,68 @@ function VatSummaryTable({ periodData, token }) {
 
   return (
     <>
-    <table style={tableStyle}>
-      <thead>
-        <tr>
-          <th style={{ width: 24 }}></th>
-          <th>Catégorie</th>
-          <th style={{ textAlign: "right" }}>Base HT</th>
-          <th style={{ textAlign: "right" }}>TVA</th>
-        </tr>
-      </thead>
-      <tbody>
-        <CategoryRow
-          kind="invoices"
-          label="Factures émises"
-          docs={invoices}
-          ht={invHT}
-          vat={invVAT}
-          accentColor="var(--gold)"
-        />
-        {creditNotes.length > 0 && (
+    <div className="tbl-wrap">
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={{ width: 24 }}></th>
+            <th>Catégorie</th>
+            <th style={{ textAlign: "right" }}>Base HT</th>
+            <th style={{ textAlign: "right" }}>TVA</th>
+          </tr>
+        </thead>
+        <tbody>
           <CategoryRow
-            kind="creditNotes"
-            label="Avoirs émis (déduction)"
-            docs={creditNotes}
-            ht={-cnHT}
-            vat={-cnVAT}
-            accentColor="var(--red, #d46a6a)"
+            kind="invoices"
+            label="Factures émises"
+            docs={invoices}
+            ht={invHT}
+            vat={invVAT}
+            accentColor="var(--gold)"
           />
-        )}
-        <CategoryRow
-          kind="purchases"
-          label="Achats"
-          docs={purchases}
-          ht={purHT}
-          vat={purVAT}
-          accentColor="var(--green)"
-        />
-      </tbody>
-      <tfoot>
-        <tr style={{ fontWeight: 700, background: "rgba(255,255,255,0.02)" }}>
-          <td></td>
-          <td>TOTAL</td>
-          <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Collecté {fmtEUR(collHT)}</div>
-            <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Déductible {fmtEUR(purHT)}</div>
-          </td>
-          <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-            <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 400 }}>Coll. {fmtEUR(collVAT)}</div>
-            <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 400 }}>Déd. {fmtEUR(purVAT)}</div>
-          </td>
-        </tr>
-        <tr style={{ background: "rgba(212,168,67,0.08)", fontWeight: 700 }}>
-          <td colSpan={3} style={{ textAlign: "right" }}>
-            TVA nette {(collVAT - purVAT) >= 0 ? "à reverser" : "crédit"}
-          </td>
-          <td style={{ textAlign: "right", fontFamily: "monospace", color: "var(--gold)" }}>
-            {fmtEUR(Math.abs(collVAT - purVAT))}
-          </td>
-        </tr>
-      </tfoot>
-    </table>
+          {creditNotes.length > 0 && (
+            <CategoryRow
+              kind="creditNotes"
+              label="Avoirs émis (déduction)"
+              docs={creditNotes}
+              ht={-cnHT}
+              vat={-cnVAT}
+              accentColor="var(--red, #d46a6a)"
+            />
+          )}
+          <CategoryRow
+            kind="purchases"
+            label="Achats"
+            docs={purchases}
+            ht={purHT}
+            vat={purVAT}
+            accentColor="var(--green)"
+          />
+        </tbody>
+        <tfoot>
+          <tr style={{ fontWeight: 700, background: "rgba(255,255,255,0.02)" }}>
+            <td></td>
+            <td>TOTAL</td>
+            <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Collecté {fmtEUR(collHT)}</div>
+              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>Déductible {fmtEUR(purHT)}</div>
+            </td>
+            <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+              <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 400 }}>Coll. {fmtEUR(collVAT)}</div>
+              <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 400 }}>Déd. {fmtEUR(purVAT)}</div>
+            </td>
+          </tr>
+          <tr style={{ background: "rgba(212,168,67,0.08)", fontWeight: 700 }}>
+            <td colSpan={3} style={{ textAlign: "right" }}>
+              TVA nette {(collVAT - purVAT) >= 0 ? "à reverser" : "crédit"}
+            </td>
+            <td style={{ textAlign: "right", fontFamily: "monospace", color: "var(--gold)" }}>
+              {fmtEUR(Math.abs(collVAT - purVAT))}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
     {preview && (
       <PdfPreviewModal
         token={token}

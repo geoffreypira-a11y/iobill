@@ -342,80 +342,82 @@ export function BankingPage({ token, company }) {
           </div>
 
           <div className="card" style={{ overflow: "hidden" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Description</th>
-                  <th style={{ textAlign: "right" }}>Montant</th>
-                  <th>Lettrage</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((t) => {
-                  const matched = invoices.find((i) => i.id === t.matched_invoice_id);
-                  const candidates = t.amount_cents > 0
-                    ? invoices.filter((i) => Math.abs(i.total_ttc_cents - i.paid_cents - t.amount_cents) < 100)
-                    : [];
-                  return (
-                    <tr key={t.id}>
-                      <td>{fmtDate(t.transaction_date)}</td>
-                      <td>
-                        <div style={{ fontSize: 13 }}>{t.description || "—"}</div>
-                        {t.counterparty && (
-                          <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.counterparty}</div>
-                        )}
-                      </td>
-                      <td className="mono" style={{ textAlign: "right", color: t.amount_cents > 0 ? "var(--green)" : "var(--text)" }}>
-                        {t.amount_cents > 0 ? "+" : ""}{fmtEUR(t.amount_cents)}
-                      </td>
-                      <td>
-                        {t.match_status === "matched" && matched ? (
-                          <span className="mono" style={{ fontSize: 11, color: "var(--green)" }}>
-                            ✅ {matched.number}
-                          </span>
-                        ) : t.match_status === "ignored" ? (
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>Ignorée</span>
-                        ) : t.amount_cents > 0 ? (
-                          <select
-                            className="form-input"
-                            style={{ fontSize: 11, padding: "4px 8px" }}
-                            defaultValue=""
-                            onChange={(e) => e.target.value && matchTransaction(t.id, e.target.value)}
-                          >
-                            <option value="">— Lettrer avec —</option>
-                            {candidates.length > 0 && (
-                              <optgroup label="Suggestions (montant exact)">
-                                {candidates.map((inv) => (
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: "right" }}>Montant</th>
+                    <th>Lettrage</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((t) => {
+                    const matched = invoices.find((i) => i.id === t.matched_invoice_id);
+                    const candidates = t.amount_cents > 0
+                      ? invoices.filter((i) => Math.abs(i.total_ttc_cents - i.paid_cents - t.amount_cents) < 100)
+                      : [];
+                    return (
+                      <tr key={t.id}>
+                        <td>{fmtDate(t.transaction_date)}</td>
+                        <td>
+                          <div style={{ fontSize: 13 }}>{t.description || "—"}</div>
+                          {t.counterparty && (
+                            <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.counterparty}</div>
+                          )}
+                        </td>
+                        <td className="mono" style={{ textAlign: "right", color: t.amount_cents > 0 ? "var(--green)" : "var(--text)" }}>
+                          {t.amount_cents > 0 ? "+" : ""}{fmtEUR(t.amount_cents)}
+                        </td>
+                        <td>
+                          {t.match_status === "matched" && matched ? (
+                            <span className="mono" style={{ fontSize: 11, color: "var(--green)" }}>
+                              ✅ {matched.number}
+                            </span>
+                          ) : t.match_status === "ignored" ? (
+                            <span style={{ fontSize: 11, color: "var(--muted)" }}>Ignorée</span>
+                          ) : t.amount_cents > 0 ? (
+                            <select
+                              className="form-input"
+                              style={{ fontSize: 11, padding: "4px 8px" }}
+                              defaultValue=""
+                              onChange={(e) => e.target.value && matchTransaction(t.id, e.target.value)}
+                            >
+                              <option value="">— Lettrer avec —</option>
+                              {candidates.length > 0 && (
+                                <optgroup label="Suggestions (montant exact)">
+                                  {candidates.map((inv) => (
+                                    <option key={inv.id} value={inv.id}>
+                                      ⚡ {inv.number} — {fmtEUR(inv.total_ttc_cents - inv.paid_cents)}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="Toutes les factures">
+                                {invoices.map((inv) => (
                                   <option key={inv.id} value={inv.id}>
-                                    ⚡ {inv.number} — {fmtEUR(inv.total_ttc_cents - inv.paid_cents)}
+                                    {inv.number} — {fmtEUR(inv.total_ttc_cents - inv.paid_cents)}
                                   </option>
                                 ))}
                               </optgroup>
-                            )}
-                            <optgroup label="Toutes les factures">
-                              {invoices.map((inv) => (
-                                <option key={inv.id} value={inv.id}>
-                                  {inv.number} — {fmtEUR(inv.total_ttc_cents - inv.paid_cents)}
-                                </option>
-                              ))}
-                            </optgroup>
-                          </select>
-                        ) : (
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>(débit)</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {t.match_status === "unmatched" && (
-                          <button className="btn btn-ghost btn-xs" onClick={() => ignoreTx(t.id)}>Ignorer</button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            </select>
+                          ) : (
+                            <span style={{ fontSize: 11, color: "var(--muted)" }}>(débit)</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {t.match_status === "unmatched" && (
+                            <button className="btn btn-ghost btn-xs" onClick={() => ignoreTx(t.id)}>Ignorer</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

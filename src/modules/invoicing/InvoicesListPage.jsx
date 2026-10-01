@@ -792,259 +792,261 @@ export function InvoicesListPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Émise le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Échéance" sortKey="due_date" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((inv) => {
-                const eff = effectiveStatus(inv);
-                const badge = invoiceStatusBadge(eff);
-                // v8.37 — Factures venant d'une app externe (IOCAR, IOBTP...)
-                // sont en LECTURE SEULE côté IOBILL. Les modifs se font dans
-                // l'app source pour garantir la cohérence.
-                const isExternal = !!inv.external_source && inv.external_source !== "iobill";
-                const sourceLabel = sourceAppLabel(inv.external_source)
-                                  || String(inv.external_source || "").toUpperCase();
-
-                const canEdit = !isExternal && inv.status === "draft";
-                const canIssue = !isExternal && inv.status === "draft";
-                const canSend = !isExternal && ["issued", "sent", "partial", "overdue"].includes(inv.status);
-                const canDelete = !isExternal && inv.status === "draft";
-                // Transmettre PDP reste possible pour les factures externes
-                // (utile : la PDP est gérée centralement côté IOBILL)
-                const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
-                const alreadyTransmitted = !!inv.pdp_transmitted_at;
-
-                return (
-                  <tr key={inv.id}>
-                    <td className="mono">
-                      {inv.number
-                        ? (isProvisionalNumber(inv.number)
-                            ? <span style={{ color: "var(--muted)", fontStyle: "italic" }}
-                                    title="Numéro provisoire — le numéro définitif sera attribué à l'émission">
-                                {inv.number}
-                              </span>
-                            : inv.number)
-                        : <span style={{ color: "var(--muted)" }}>—</span>}
-                      {isExternal && (
-                        <span
-                          title={`Facture créée et gérée depuis ${sourceLabel}. Lecture seule ici.`}
-                          style={{
-                            display: "inline-block",
-                            marginLeft: 6,
-                            padding: "1px 6px",
-                            borderRadius: 8,
-                            background: "rgba(212,168,67,0.15)",
-                            color: "var(--gold, #d4a843)",
-                            fontSize: 9,
-                            fontWeight: 700,
-                            letterSpacing: 0.3,
-                            verticalAlign: "middle"
-                          }}
-                        >
-                          {sourceAppEmoji(inv.external_source)} {sourceLabel}
-                        </span>
-                      )}
-                      {signalsByInvoiceId[inv.id] && (
-                        <NotifBadge
-                          count={signalsByInvoiceId[inv.id].count}
-                          severity={signalsByInvoiceId[inv.id].maxSeverity}
-                          title={`${signalsByInvoiceId[inv.id].count} signalement(s) ouvert(s) de votre cabinet`}
-                        />
-                      )}
-                    </td>
-                    <td>{snapshotDisplayName(inv.client_snapshot)}</td>
-                    <td>{fmtDate(inv.issue_date)}</td>
-                    <td style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
-                      {fmtDate(inv.due_date)}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right" }}>
-                      {/* v8.49 — Affiche le grand_total (TTC + débours) comme montant principal
-                          = ce que le client paye réellement. Sous-ligne discrète "dont TVA · débours"
-                          pour la transparence fiscale (art. 267 II 2° CGI). */}
-                      {(() => {
-                        const debTotal = inv.debour_total_cents || 0;
-                        const vatTotal = inv.vat_total_cents || 0;
-                        const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
-                        const parts = [];
-                        if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
-                        if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
-                        return (
-                          <>
-                            <div>{fmtEUR(grandTotal)}</div>
-                            {parts.length > 0 && (
-                              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "inherit" }}>
-                                dont {parts.join(" · ")}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </td>
-                    <td>
-                      <span className={"badge " + badge.cls}>{badge.label}</span>
-                      {inv.status === "partial" && (() => {
-                        const tot = inv.grand_total_cents || inv.total_ttc_cents || 0;
-                        const reste = Math.max(0, tot - (inv.paid_cents || 0));
-                        return (
-                          <div style={{ fontSize: 10.5, color: "var(--orange)", marginTop: 3, whiteSpace: "nowrap" }}>
-                            reste {fmtEUR(reste)}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
-                        {/* Bouton principal : Voir (preview PDF) si emise, sinon Modifier */}
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => canEdit ? setEditModal(inv) : setPreviewInvoice(inv)}
-                          style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
-                          title={canEdit ? "Modifier cette facture" : "Aperçu PDF avec statut"}
-                        >
-                          {canEdit ? "✏️ Modifier" : "👁 Voir"}
-                        </button>
-
-                        {/* Action contextuelle principale */}
-                        {canIssue && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => setPendingIssue(inv)}
-                            disabled={actionLoading === `issue-${inv.id}`}
-                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
-                            title="Émettre et verrouiller cette facture"
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Émise le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Échéance" sortKey="due_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((inv) => {
+                  const eff = effectiveStatus(inv);
+                  const badge = invoiceStatusBadge(eff);
+                  // v8.37 — Factures venant d'une app externe (IOCAR, IOBTP...)
+                  // sont en LECTURE SEULE côté IOBILL. Les modifs se font dans
+                  // l'app source pour garantir la cohérence.
+                  const isExternal = !!inv.external_source && inv.external_source !== "iobill";
+                  const sourceLabel = sourceAppLabel(inv.external_source)
+                                    || String(inv.external_source || "").toUpperCase();
+  
+                  const canEdit = !isExternal && inv.status === "draft";
+                  const canIssue = !isExternal && inv.status === "draft";
+                  const canSend = !isExternal && ["issued", "sent", "partial", "overdue"].includes(inv.status);
+                  const canDelete = !isExternal && inv.status === "draft";
+                  // Transmettre PDP reste possible pour les factures externes
+                  // (utile : la PDP est gérée centralement côté IOBILL)
+                  const canTransmit = ["issued", "sent", "partial", "paid", "overdue"].includes(inv.status) && !inv.pdp_transmitted_at;
+                  const alreadyTransmitted = !!inv.pdp_transmitted_at;
+  
+                  return (
+                    <tr key={inv.id}>
+                      <td className="mono">
+                        {inv.number
+                          ? (isProvisionalNumber(inv.number)
+                              ? <span style={{ color: "var(--muted)", fontStyle: "italic" }}
+                                      title="Numéro provisoire — le numéro définitif sera attribué à l'émission">
+                                  {inv.number}
+                                </span>
+                              : inv.number)
+                          : <span style={{ color: "var(--muted)" }}>—</span>}
+                        {isExternal && (
+                          <span
+                            title={`Facture créée et gérée depuis ${sourceLabel}. Lecture seule ici.`}
+                            style={{
+                              display: "inline-block",
+                              marginLeft: 6,
+                              padding: "1px 6px",
+                              borderRadius: 8,
+                              background: "rgba(212,168,67,0.15)",
+                              color: "var(--gold, #d4a843)",
+                              fontSize: 9,
+                              fontWeight: 700,
+                              letterSpacing: 0.3,
+                              verticalAlign: "middle"
+                            }}
                           >
-                            🔒 Émettre
-                          </button>
+                            {sourceAppEmoji(inv.external_source)} {sourceLabel}
+                          </span>
                         )}
-                        {canSend && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => sendInvoice(inv)}
-                            disabled={actionLoading === `send-${inv.id}`}
-                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
-                            title="Envoyer la facture par email"
-                          >
-                            {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
-                          </button>
+                        {signalsByInvoiceId[inv.id] && (
+                          <NotifBadge
+                            count={signalsByInvoiceId[inv.id].count}
+                            severity={signalsByInvoiceId[inv.id].maxSeverity}
+                            title={`${signalsByInvoiceId[inv.id].count} signalement(s) ouvert(s) de votre cabinet`}
+                          />
                         )}
-                        {canTransmit && pdpConfigured && transmissionEnabled && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => transmitToAdmin(inv)}
-                            disabled={actionLoading === `transmit-${inv.id}`}
-                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
-                            title="Transmettre la facture à l'administration via votre PDP"
-                          >
-                            {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
-                          </button>
-                        )}
-                        {/* v8.103/126 — Pas de transmission possible (PDP non
-                            configuré OU transmission désactivée) → encaissement local. */}
-                        {canTransmit && (!pdpConfigured || !transmissionEnabled) && inv.status !== "paid" && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => inv.pdp_transmission_id ? markEncaisseeLocal(inv) : setEncaisseModal(inv)}
-                            disabled={actionLoading === `encaisser-${inv.id}`}
-                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
-                            title="Marquer la facture comme encaissée (transmission PDP désactivée)"
-                          >
-                            {actionLoading === `encaisser-${inv.id}` ? "⏳" : "💰 Encaissée"}
-                          </button>
-                        )}
-                        {alreadyTransmitted && (() => {
-                          // v8.48.15 — Affiche le vrai statut cycle de vie PA
-                          // v8.57.8 — 5 états au lieu de 3
-                          const fx = inv.facturx_status || "transmitted";
-                          const meta = {
-                            transmitted:  { icon: "📤", label: "Transmise",           color: "#4a9eff" },
-                            accepted:     { icon: "✅", label: "Approuvée",           color: "#3ecf7a" },
-                            payment_sent: { icon: "💸", label: "Paiement transmis",   color: "#d4a843" },
-                            paid:         { icon: "💰", label: "Encaissée",           color: "#2ecc71" },
-                            rejected:     { icon: "❌", label: "Refusée",             color: "#e54949" }
-                          }[fx] || { icon: "📤", label: fx, color: "#8a8a96" };
-                          const when = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR") : "";
+                      </td>
+                      <td>{snapshotDisplayName(inv.client_snapshot)}</td>
+                      <td>{fmtDate(inv.issue_date)}</td>
+                      <td style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
+                        {fmtDate(inv.due_date)}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right" }}>
+                        {/* v8.49 — Affiche le grand_total (TTC + débours) comme montant principal
+                            = ce que le client paye réellement. Sous-ligne discrète "dont TVA · débours"
+                            pour la transparence fiscale (art. 267 II 2° CGI). */}
+                        {(() => {
+                          const debTotal = inv.debour_total_cents || 0;
+                          const vatTotal = inv.vat_total_cents || 0;
+                          const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                          const parts = [];
+                          if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
+                          if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
                           return (
-                            <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                              <span
-                                style={{
-                                  padding: "5px 10px", fontSize: 10, color: meta.color,
-                                  border: "1px solid " + meta.color + "55",
-                                  background: meta.color + "18",
-                                  borderRadius: 6, whiteSpace: "nowrap"
-                                }}
-                                title={"Transmise via " + (inv.pdp_provider || "PA") + (when ? " le " + when : "") + " · ID " + (inv.pdp_transmission_id || "?")}
-                              >
-                                {meta.icon} {meta.label}
-                              </span>
-                              {/* v8.57.2 — Bouton "Rafraîchir statut" : va lire côté SUPER PDP
-                                  le dernier événement de cycle de vie (fr:205, fr:210, fr:212...)
-                                  et met à jour facturx_status en base. Utile en attendant le
-                                  webhook automatique (v8.58). */}
-                              <button
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => refreshInvoiceStatus(inv, { force: true })}
-                                disabled={actionLoading === `refresh-${inv.id}`}
-                                style={{
-                                  padding: "2px 6px", fontSize: 10,
-                                  color: "var(--muted)", borderColor: "rgba(255,255,255,0.08)",
-                                  minWidth: 24, height: 24, lineHeight: 1
-                                }}
-                                title="Rafraîchir le statut PDP (accepté / refusé / encaissé)"
-                              >
-                                {actionLoading === `refresh-${inv.id}` ? "⏳" : "🔄"}
-                              </button>
-                            </span>
+                            <>
+                              <div>{fmtEUR(grandTotal)}</div>
+                              {parts.length > 0 && (
+                                <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "inherit" }}>
+                                  dont {parts.join(" · ")}
+                                </div>
+                              )}
+                            </>
                           );
                         })()}
-
-                        {/* Bouton kebab : trigger, menu rendu en portail plus bas */}
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (openMenu?.id === inv.id) {
-                              setOpenMenu(null);
-                              return;
-                            }
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            // v8.203 — Près du bas de l'écran, le menu
-                            // débordait sous la fenêtre et ses dernières
-                            // entrées devenaient inatteignables. On l'ouvre
-                            // alors VERS LE HAUT. Même garde que la page
-                            // Achats, qui avait déjà le correctif.
-                            const ESPACE_MINI = 320;
-                            const versLeHaut = window.innerHeight - rect.bottom < ESPACE_MINI;
-                            setOpenMenu({
-                              id: inv.id,
-                              invoice: inv,
-                              right: Math.max(12, window.innerWidth - rect.right),
-                              top: versLeHaut ? null : rect.bottom + 4,
-                              bottom: versLeHaut ? window.innerHeight - rect.top + 4 : null,
-                              canEdit, canDelete
-                            });
-                          }}
-                          style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
-                          title="Plus d'actions"
-                        >
-                          ⋯
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td>
+                        <span className={"badge " + badge.cls}>{badge.label}</span>
+                        {inv.status === "partial" && (() => {
+                          const tot = inv.grand_total_cents || inv.total_ttc_cents || 0;
+                          const reste = Math.max(0, tot - (inv.paid_cents || 0));
+                          return (
+                            <div style={{ fontSize: 10.5, color: "var(--orange)", marginTop: 3, whiteSpace: "nowrap" }}>
+                              reste {fmtEUR(reste)}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                          {/* Bouton principal : Voir (preview PDF) si emise, sinon Modifier */}
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => canEdit ? setEditModal(inv) : setPreviewInvoice(inv)}
+                            style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
+                            title={canEdit ? "Modifier cette facture" : "Aperçu PDF avec statut"}
+                          >
+                            {canEdit ? "✏️ Modifier" : "👁 Voir"}
+                          </button>
+  
+                          {/* Action contextuelle principale */}
+                          {canIssue && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setPendingIssue(inv)}
+                              disabled={actionLoading === `issue-${inv.id}`}
+                              style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                              title="Émettre et verrouiller cette facture"
+                            >
+                              🔒 Émettre
+                            </button>
+                          )}
+                          {canSend && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => sendInvoice(inv)}
+                              disabled={actionLoading === `send-${inv.id}`}
+                              style={{ padding: "5px 10px", fontSize: 11, color: "var(--gold)", borderColor: "rgba(212,168,67,0.4)", whiteSpace: "nowrap" }}
+                              title="Envoyer la facture par email"
+                            >
+                              {actionLoading === `send-${inv.id}` ? "⏳" : "📧 Envoyer"}
+                            </button>
+                          )}
+                          {canTransmit && pdpConfigured && transmissionEnabled && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => transmitToAdmin(inv)}
+                              disabled={actionLoading === `transmit-${inv.id}`}
+                              style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                              title="Transmettre la facture à l'administration via votre PDP"
+                            >
+                              {actionLoading === `transmit-${inv.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                            </button>
+                          )}
+                          {/* v8.103/126 — Pas de transmission possible (PDP non
+                              configuré OU transmission désactivée) → encaissement local. */}
+                          {canTransmit && (!pdpConfigured || !transmissionEnabled) && inv.status !== "paid" && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => inv.pdp_transmission_id ? markEncaisseeLocal(inv) : setEncaisseModal(inv)}
+                              disabled={actionLoading === `encaisser-${inv.id}`}
+                              style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                              title="Marquer la facture comme encaissée (transmission PDP désactivée)"
+                            >
+                              {actionLoading === `encaisser-${inv.id}` ? "⏳" : "💰 Encaissée"}
+                            </button>
+                          )}
+                          {alreadyTransmitted && (() => {
+                            // v8.48.15 — Affiche le vrai statut cycle de vie PA
+                            // v8.57.8 — 5 états au lieu de 3
+                            const fx = inv.facturx_status || "transmitted";
+                            const meta = {
+                              transmitted:  { icon: "📤", label: "Transmise",           color: "#4a9eff" },
+                              accepted:     { icon: "✅", label: "Approuvée",           color: "#3ecf7a" },
+                              payment_sent: { icon: "💸", label: "Paiement transmis",   color: "#d4a843" },
+                              paid:         { icon: "💰", label: "Encaissée",           color: "#2ecc71" },
+                              rejected:     { icon: "❌", label: "Refusée",             color: "#e54949" }
+                            }[fx] || { icon: "📤", label: fx, color: "#8a8a96" };
+                            const when = inv.pdp_transmitted_at ? new Date(inv.pdp_transmitted_at).toLocaleDateString("fr-FR") : "";
+                            return (
+                              <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                <span
+                                  style={{
+                                    padding: "5px 10px", fontSize: 10, color: meta.color,
+                                    border: "1px solid " + meta.color + "55",
+                                    background: meta.color + "18",
+                                    borderRadius: 6, whiteSpace: "nowrap"
+                                  }}
+                                  title={"Transmise via " + (inv.pdp_provider || "PA") + (when ? " le " + when : "") + " · ID " + (inv.pdp_transmission_id || "?")}
+                                >
+                                  {meta.icon} {meta.label}
+                                </span>
+                                {/* v8.57.2 — Bouton "Rafraîchir statut" : va lire côté SUPER PDP
+                                    le dernier événement de cycle de vie (fr:205, fr:210, fr:212...)
+                                    et met à jour facturx_status en base. Utile en attendant le
+                                    webhook automatique (v8.58). */}
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  onClick={() => refreshInvoiceStatus(inv, { force: true })}
+                                  disabled={actionLoading === `refresh-${inv.id}`}
+                                  style={{
+                                    padding: "2px 6px", fontSize: 10,
+                                    color: "var(--muted)", borderColor: "rgba(255,255,255,0.08)",
+                                    minWidth: 24, height: 24, lineHeight: 1
+                                  }}
+                                  title="Rafraîchir le statut PDP (accepté / refusé / encaissé)"
+                                >
+                                  {actionLoading === `refresh-${inv.id}` ? "⏳" : "🔄"}
+                                </button>
+                              </span>
+                            );
+                          })()}
+  
+                          {/* Bouton kebab : trigger, menu rendu en portail plus bas */}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (openMenu?.id === inv.id) {
+                                setOpenMenu(null);
+                                return;
+                              }
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              // v8.203 — Près du bas de l'écran, le menu
+                              // débordait sous la fenêtre et ses dernières
+                              // entrées devenaient inatteignables. On l'ouvre
+                              // alors VERS LE HAUT. Même garde que la page
+                              // Achats, qui avait déjà le correctif.
+                              const ESPACE_MINI = 320;
+                              const versLeHaut = window.innerHeight - rect.bottom < ESPACE_MINI;
+                              setOpenMenu({
+                                id: inv.id,
+                                invoice: inv,
+                                right: Math.max(12, window.innerWidth - rect.right),
+                                top: versLeHaut ? null : rect.bottom + 4,
+                                bottom: versLeHaut ? window.innerHeight - rect.top + 4 : null,
+                                canEdit, canDelete
+                              });
+                            }}
+                            style={{ padding: "5px 8px", fontSize: 14, lineHeight: 1 }}
+                            title="Plus d'actions"
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

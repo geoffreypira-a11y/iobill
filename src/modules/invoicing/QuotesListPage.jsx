@@ -721,45 +721,47 @@ export function QuotesListPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 30 }}></th>
-                <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Émis le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Validité" sortKey="expires_at" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grouped.map((group) => {
-                const { rootId, latest, versions, hasMultipleVersions } = group;
-                const isExpanded = expandedRoots.has(rootId);
-                const rows = [];
-
-                // ─── Ligne principale (derniere version) ─────
-                rows.push(renderQuoteRow(latest, {
-                  isLatest: true,
-                  hasMultipleVersions,
-                  isExpanded,
-                  totalVersions: versions.length,
-                  onToggleExpand: () => toggleExpand(rootId)
-                }));
-
-                // ─── Lignes des versions precedentes (si deplie) ─────
-                if (isExpanded && hasMultipleVersions) {
-                  for (let i = 1; i < versions.length; i++) {
-                    rows.push(renderQuoteRow(versions[i], { isLatest: false, isChild: true }));
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}></th>
+                  <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Émis le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Validité" sortKey="expires_at" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped.map((group) => {
+                  const { rootId, latest, versions, hasMultipleVersions } = group;
+                  const isExpanded = expandedRoots.has(rootId);
+                  const rows = [];
+  
+                  // ─── Ligne principale (derniere version) ─────
+                  rows.push(renderQuoteRow(latest, {
+                    isLatest: true,
+                    hasMultipleVersions,
+                    isExpanded,
+                    totalVersions: versions.length,
+                    onToggleExpand: () => toggleExpand(rootId)
+                  }));
+  
+                  // ─── Lignes des versions precedentes (si deplie) ─────
+                  if (isExpanded && hasMultipleVersions) {
+                    for (let i = 1; i < versions.length; i++) {
+                      rows.push(renderQuoteRow(versions[i], { isLatest: false, isChild: true }));
+                    }
                   }
-                }
-
-                return rows;
-              })}
-            </tbody>
-          </table>
+  
+                  return rows;
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

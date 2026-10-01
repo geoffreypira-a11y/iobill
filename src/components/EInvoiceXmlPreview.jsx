@@ -146,43 +146,45 @@ export function EInvoiceXmlPreview({ url, downloadHref }) {
           </div>
 
           {inv.lines.length > 0 && (
-            <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-              <thead>
-                <tr>
-                  <th style={thSt}>Désignation</th>
-                  <th style={{ ...thSt, textAlign: "right" }}>Qté</th>
-                  <th style={{ ...thSt, textAlign: "right" }}>PU HT</th>
-                  <th style={{ ...thSt, textAlign: "right" }}>TVA</th>
-                  <th style={{ ...thSt, textAlign: "right" }}>Total HT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inv.lines.map((l, i) => (
-                  <tr key={i}>
-                    <td style={tdSt}>
-                      <div>{l.label || "—"}</div>
-                      {l.description && (
-                        <div style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "pre-wrap" }}>
-                          {l.description}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ ...tdSt, textAlign: "right" }} className="mono">
-                      {num(l.qty)}{l.unit && l.unit !== "C62" ? ` ${l.unit}` : ""}
-                    </td>
-                    <td style={{ ...tdSt, textAlign: "right" }} className="mono">
-                      {l.unitPrice ? eur(l.unitPrice, inv.currency) : "—"}
-                    </td>
-                    <td style={{ ...tdSt, textAlign: "right" }} className="mono">
-                      {l.vatRate ? `${num(l.vatRate)} %` : "—"}
-                    </td>
-                    <td style={{ ...tdSt, textAlign: "right" }} className="mono">
-                      {l.total ? eur(l.total, inv.currency) : "—"}
-                    </td>
+            <div className="tbl-wrap">
+              <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+                <thead>
+                  <tr>
+                    <th style={thSt}>Désignation</th>
+                    <th style={{ ...thSt, textAlign: "right" }}>Qté</th>
+                    <th style={{ ...thSt, textAlign: "right" }}>PU HT</th>
+                    <th style={{ ...thSt, textAlign: "right" }}>TVA</th>
+                    <th style={{ ...thSt, textAlign: "right" }}>Total HT</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {inv.lines.map((l, i) => (
+                    <tr key={i}>
+                      <td style={tdSt}>
+                        <div>{l.label || "—"}</div>
+                        {l.description && (
+                          <div style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "pre-wrap" }}>
+                            {l.description}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...tdSt, textAlign: "right" }} className="mono">
+                        {num(l.qty)}{l.unit && l.unit !== "C62" ? ` ${l.unit}` : ""}
+                      </td>
+                      <td style={{ ...tdSt, textAlign: "right" }} className="mono">
+                        {l.unitPrice ? eur(l.unitPrice, inv.currency) : "—"}
+                      </td>
+                      <td style={{ ...tdSt, textAlign: "right" }} className="mono">
+                        {l.vatRate ? `${num(l.vatRate)} %` : "—"}
+                      </td>
+                      <td style={{ ...tdSt, textAlign: "right" }} className="mono">
+                        {l.total ? eur(l.total, inv.currency) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div style={{

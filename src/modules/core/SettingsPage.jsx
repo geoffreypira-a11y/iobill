@@ -1420,32 +1420,34 @@ function InboxTab({ token, company, setCompany }) {
           <h3 style={{ margin: "0 0 10px", fontFamily: "Syne, sans-serif", letterSpacing: 1, fontSize: 13 }}>
             10 derniers emails reçus
           </h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Reçu</th>
-                <th>Expéditeur</th>
-                <th>Sujet</th>
-                <th style={{ textAlign: "right" }}>PJ</th>
-                <th>Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recent.map((m) => (
-                <tr key={m.id}>
-                  <td className="mono" style={{ fontSize: 11 }}>{fmtDate(m.received_at)}</td>
-                  <td style={{ fontSize: 12 }}>{m.sender_email || "—"}</td>
-                  <td style={{ fontSize: 12, color: "var(--muted2)" }}>{(m.subject || "—").slice(0, 40)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{m.attachment_count}</td>
-                  <td>
-                    <span className={"badge " + (m.status === "processed" ? "badge-green" : m.status === "received" ? "badge-gold" : "badge-muted")}>
-                      {m.status}
-                    </span>
-                  </td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Reçu</th>
+                  <th>Expéditeur</th>
+                  <th>Sujet</th>
+                  <th style={{ textAlign: "right" }}>PJ</th>
+                  <th>Statut</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {recent.map((m) => (
+                  <tr key={m.id}>
+                    <td className="mono" style={{ fontSize: 11 }}>{fmtDate(m.received_at)}</td>
+                    <td style={{ fontSize: 12 }}>{m.sender_email || "—"}</td>
+                    <td style={{ fontSize: 12, color: "var(--muted2)" }}>{(m.subject || "—").slice(0, 40)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{m.attachment_count}</td>
+                    <td>
+                      <span className={"badge " + (m.status === "processed" ? "badge-green" : m.status === "received" ? "badge-gold" : "badge-muted")}>
+                        {m.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

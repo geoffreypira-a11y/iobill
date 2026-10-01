@@ -155,28 +155,30 @@ export function PublicQuotePage() {
           <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>
             Détail
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Désignation</th>
-                <th style={{ textAlign: "right" }}>Qté</th>
-                <th style={{ textAlign: "right" }}>P.U. HT</th>
-                <th style={{ textAlign: "right" }}>TVA</th>
-                <th style={{ textAlign: "right" }}>Total HT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.description}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{Number(l.quantity).toString().replace(/\.0+$/, "")} {l.unit}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.unit_price_ht_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{Number(l.vat_rate).toFixed(0)}%</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.line_ht_cents)}</td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Désignation</th>
+                  <th style={{ textAlign: "right" }}>Qté</th>
+                  <th style={{ textAlign: "right" }}>P.U. HT</th>
+                  <th style={{ textAlign: "right" }}>TVA</th>
+                  <th style={{ textAlign: "right" }}>Total HT</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{Number(l.quantity).toString().replace(/\.0+$/, "")} {l.unit}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.unit_price_ht_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{Number(l.vat_rate).toFixed(0)}%</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.line_ht_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Totals doc={q} />
         </div>
 
@@ -408,28 +410,30 @@ export function PublicInvoicePage() {
 
         <div className="card card-pad" style={{ marginBottom: 24 }}>
           <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>Détail</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Désignation</th>
-                <th style={{ textAlign: "right" }}>Qté</th>
-                <th style={{ textAlign: "right" }}>P.U. HT</th>
-                <th style={{ textAlign: "right" }}>TVA</th>
-                <th style={{ textAlign: "right" }}>Total HT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.description}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{Number(l.quantity).toString().replace(/\.0+$/, "")} {l.unit}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.unit_price_ht_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{Number(l.vat_rate).toFixed(0)}%</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.line_ht_cents)}</td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Désignation</th>
+                  <th style={{ textAlign: "right" }}>Qté</th>
+                  <th style={{ textAlign: "right" }}>P.U. HT</th>
+                  <th style={{ textAlign: "right" }}>TVA</th>
+                  <th style={{ textAlign: "right" }}>Total HT</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{Number(l.quantity).toString().replace(/\.0+$/, "")} {l.unit}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.unit_price_ht_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{Number(l.vat_rate).toFixed(0)}%</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(l.line_ht_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Totals doc={inv} showPaid />
         </div>
 
@@ -542,49 +546,51 @@ export function PublicPortalPage() {
           {invoices.length === 0 ? (
             <div style={{ fontSize: 13, color: "var(--muted)", padding: 12 }}>Aucune facture pour l'instant.</div>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>N°</th>
-                  <th>Émise le</th>
-                  <th>Échéance</th>
-                  <th style={{ textAlign: "right" }}>Montant TTC</th>
-                  <th>Statut</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((inv) => {
-                  const remaining = (inv.total_ttc_cents || 0) - (inv.paid_cents || 0);
-                  return (
-                    <tr key={inv.id}>
-                      <td className="mono">{inv.number}</td>
-                      <td>{fmtDate(inv.issue_date)}</td>
-                      <td>{fmtDate(inv.due_date)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
-                      <td><InvoiceStatusBadge status={inv.status} /></td>
-                      <td style={{ textAlign: "right" }}>
-                        {remaining > 0 && inv.stripe_payment_link_url && (
-                          <a href={inv.stripe_payment_link_url} className="btn btn-primary btn-xs">
-                            Payer {fmtEUR(remaining)}
-                          </a>
-                        )}
-                        {(inv.facturx_pdf_url || inv.pdf_url) && (
-                          <>
-                            <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }} title="Ouvrir le PDF">
-                              📄 Ouvrir
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>N°</th>
+                    <th>Émise le</th>
+                    <th>Échéance</th>
+                    <th style={{ textAlign: "right" }}>Montant TTC</th>
+                    <th>Statut</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => {
+                    const remaining = (inv.total_ttc_cents || 0) - (inv.paid_cents || 0);
+                    return (
+                      <tr key={inv.id}>
+                        <td className="mono">{inv.number}</td>
+                        <td>{fmtDate(inv.issue_date)}</td>
+                        <td>{fmtDate(inv.due_date)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                        <td><InvoiceStatusBadge status={inv.status} /></td>
+                        <td style={{ textAlign: "right" }}>
+                          {remaining > 0 && inv.stripe_payment_link_url && (
+                            <a href={inv.stripe_payment_link_url} className="btn btn-primary btn-xs">
+                              Payer {fmtEUR(remaining)}
                             </a>
-                            <a href={publicPdfHref(token, "invoice", inv.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
-                              ⬇️
-                            </a>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          )}
+                          {(inv.facturx_pdf_url || inv.pdf_url) && (
+                            <>
+                              <a href={publicPdfHref(token, "invoice", inv.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }} title="Ouvrir le PDF">
+                                📄 Ouvrir
+                              </a>
+                              <a href={publicPdfHref(token, "invoice", inv.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
+                                ⬇️
+                              </a>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
@@ -600,46 +606,48 @@ export function PublicPortalPage() {
               consultables et signables en ligne.
             </div>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>N°</th>
-                  <th>Date</th>
-                  <th>Validité</th>
-                  <th style={{ textAlign: "right" }}>Montant</th>
-                  <th>Statut</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {quotes.map((q) => (
-                  <tr key={q.id}>
-                    <td className="mono">{q.number}</td>
-                    <td>{fmtDate(q.issue_date)}</td>
-                    <td>{fmtDate(q.expires_at)}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
-                    <td><QuoteStatusBadge status={q.status} /></td>
-                    <td style={{ textAlign: "right" }}>
-                      {q.public_url && (
-                        <a href={q.public_url} className="btn btn-primary btn-xs" style={{ marginRight: 6 }}>
-                          {["sent", "draft"].includes(q.status) ? "Consulter / Signer" : "Consulter"}
-                        </a>
-                      )}
-                      {q.pdf_url && (
-                        <>
-                          <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" title="Ouvrir le PDF">
-                            📄 Ouvrir
-                          </a>
-                          <a href={publicPdfHref(token, "quote", q.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
-                            ⬇️
-                          </a>
-                        </>
-                      )}
-                    </td>
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>N°</th>
+                    <th>Date</th>
+                    <th>Validité</th>
+                    <th style={{ textAlign: "right" }}>Montant</th>
+                    <th>Statut</th>
+                    <th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {quotes.map((q) => (
+                    <tr key={q.id}>
+                      <td className="mono">{q.number}</td>
+                      <td>{fmtDate(q.issue_date)}</td>
+                      <td>{fmtDate(q.expires_at)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
+                      <td><QuoteStatusBadge status={q.status} /></td>
+                      <td style={{ textAlign: "right" }}>
+                        {q.public_url && (
+                          <a href={q.public_url} className="btn btn-primary btn-xs" style={{ marginRight: 6 }}>
+                            {["sent", "draft"].includes(q.status) ? "Consulter / Signer" : "Consulter"}
+                          </a>
+                        )}
+                        {q.pdf_url && (
+                          <>
+                            <a href={publicPdfHref(token, "quote", q.id)} className="btn btn-ghost btn-xs" target="_blank" rel="noopener noreferrer" title="Ouvrir le PDF">
+                              📄 Ouvrir
+                            </a>
+                            <a href={publicPdfHref(token, "quote", q.id, { download: true })} className="btn btn-ghost btn-xs" style={{ marginLeft: 6 }} title="Télécharger le PDF">
+                              ⬇️
+                            </a>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 

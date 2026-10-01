@@ -361,130 +361,132 @@ export function PurchasesPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <SortableTh label="Date" sortKey="issue_date" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Fournisseur" sortKey="vendor" sort={sort} onSort={toggleSort} />
-                <SortableTh label="N° doc" sortKey="number" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Catégorie" sortKey="category" sort={sort} onSort={toggleSort} />
-                <SortableTh label="HT" sortKey="ht" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="TVA" sortKey="vat" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="TTC" sortKey="ttc" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
-                <th style={{ textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((p) => {
-                const isPaid = p.status === "paid";
-                const isPending = p.status === "pending" || p.status === "validated";
-                const isPartial = p.status === "partial";
-                const remaining = (p.total_ttc_cents || 0) - (p.paid_cents || 0);
-                return (
-                  <tr key={p.id}>
-                    <td>{fmtDate(p.issue_date)}</td>
-                    <td>
-                      {p.vendor_name}
-                      {p.source === "inbox" ? (
-                        <span style={{ marginLeft: 6, fontSize: 11 }} title="Reçu via l'inbox email — brouillon créé par OCR">✉️</span>
-                      ) : p.ocr_status === "done" ? (
-                        <span style={{ marginLeft: 6, fontSize: 9, color: "var(--green)" }} title="OCR validé">🤖</span>
-                      ) : null}
-                    </td>
-                    <td className="mono">{p.number || "—"}</td>
-                    <td>
-                      {p.accounting_code && <span className="mono" style={{ fontSize: 11 }}>{p.accounting_code}</span>}
-                      {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>{p.category}</span>}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.subtotal_ht_cents)}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>
-                      {fmtEUR(p.vat_total_cents)}
-                      {/* v8.63 — Accès rapide TVA récupérable (abonné + cabinet).
-                          Badge cliquable → mini-éditeur, sans ouvrir toute la fiche. */}
-                      {(p.vat_total_cents || 0) > 0 && (() => {
-                        const vatC = p.vat_total_cents || 0;
-                        const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
-                        const isFull = dedC >= vatC, isNone = dedC <= 0;
-                        const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
-                        const tint = isNone
-                          ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
-                          : isFull
-                            ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
-                            : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
-                        return (
-                          <div style={{ marginTop: 4 }}>
-                            <span
-                              onClick={() => setDeductibleFor(p)}
-                              title="Modifier la TVA récupérable"
-                              style={{
-                                display: "inline-flex", alignItems: "center", gap: 4,
-                                padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
-                                cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
-                              }}
-                            >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <SortableTh label="Date" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Fournisseur" sortKey="vendor" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="N° doc" sortKey="number" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Catégorie" sortKey="category" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="HT" sortKey="ht" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="TVA" sortKey="vat" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="TTC" sortKey="ttc" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
+                  <th style={{ textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((p) => {
+                  const isPaid = p.status === "paid";
+                  const isPending = p.status === "pending" || p.status === "validated";
+                  const isPartial = p.status === "partial";
+                  const remaining = (p.total_ttc_cents || 0) - (p.paid_cents || 0);
+                  return (
+                    <tr key={p.id}>
+                      <td>{fmtDate(p.issue_date)}</td>
+                      <td>
+                        {p.vendor_name}
+                        {p.source === "inbox" ? (
+                          <span style={{ marginLeft: 6, fontSize: 11 }} title="Reçu via l'inbox email — brouillon créé par OCR">✉️</span>
+                        ) : p.ocr_status === "done" ? (
+                          <span style={{ marginLeft: 6, fontSize: 9, color: "var(--green)" }} title="OCR validé">🤖</span>
+                        ) : null}
+                      </td>
+                      <td className="mono">{p.number || "—"}</td>
+                      <td>
+                        {p.accounting_code && <span className="mono" style={{ fontSize: 11 }}>{p.accounting_code}</span>}
+                        {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>{p.category}</span>}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(p.subtotal_ht_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>
+                        {fmtEUR(p.vat_total_cents)}
+                        {/* v8.63 — Accès rapide TVA récupérable (abonné + cabinet).
+                            Badge cliquable → mini-éditeur, sans ouvrir toute la fiche. */}
+                        {(p.vat_total_cents || 0) > 0 && (() => {
+                          const vatC = p.vat_total_cents || 0;
+                          const dedC = p.vat_deductible_cents != null ? p.vat_deductible_cents : vatC;
+                          const isFull = dedC >= vatC, isNone = dedC <= 0;
+                          const lbl = isNone ? "Non récup." : `Récup. ${fmtEUR(dedC)}`;
+                          const tint = isNone
+                            ? { c: "var(--red)", bg: "rgba(229,73,73,0.12)", bd: "rgba(229,73,73,0.30)" }
+                            : isFull
+                              ? { c: "var(--green)", bg: "rgba(62,207,122,0.12)", bd: "rgba(62,207,122,0.30)" }
+                              : { c: "var(--gold)", bg: "rgba(212,168,67,0.12)", bd: "rgba(212,168,67,0.30)" };
+                          return (
+                            <div style={{ marginTop: 4 }}>
+                              <span
+                                onClick={() => setDeductibleFor(p)}
+                                title="Modifier la TVA récupérable"
+                                style={{
+                                  display: "inline-flex", alignItems: "center", gap: 4,
+                                  padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                                  cursor: "pointer", color: tint.c, background: tint.bg, border: `1px solid ${tint.bd}`
+                                }}
+                              >{lbl} <span style={{ opacity: 0.55, fontSize: 9 }}>✎</span></span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>
+                        {fmtEUR(p.total_ttc_cents)}
+                        {isPartial && (
+                          <div style={{ fontSize: 9, color: "var(--gold)", marginTop: 2 }}>
+                            Reste : {fmtEUR(remaining)}
                           </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>
-                      {fmtEUR(p.total_ttc_cents)}
-                      {isPartial && (
-                        <div style={{ fontSize: 9, color: "var(--gold)", marginTop: 2 }}>
-                          Reste : {fmtEUR(remaining)}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={"badge " + PURCHASE_STATUTS[p.status]?.cls}>
-                        {PURCHASE_STATUTS[p.status]?.icon} {PURCHASE_STATUTS[p.status]?.label}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        {/* Voir : si fichier → modale viewer, sinon → ouvre l'editeur (consultation) */}
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => p.file_url ? viewDocument(p) : setEditing(p)}
-                          style={{ padding: "5px 10px", fontSize: 11, whiteSpace: "nowrap" }}
-                          title={p.file_url ? "Voir le document scanné" : "Voir les détails (aucun document attaché)"}
-                        >
-                          👁 Voir
-                        </button>
-
-                        {/* Action rapide : SEULEMENT pour les non payées (Payé sur 1 clic) */}
-                        {(isPending || isPartial) && (
+                        )}
+                      </td>
+                      <td>
+                        <span className={"badge " + PURCHASE_STATUTS[p.status]?.cls}>
+                          {PURCHASE_STATUTS[p.status]?.icon} {PURCHASE_STATUTS[p.status]?.label}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          {/* Voir : si fichier → modale viewer, sinon → ouvre l'editeur (consultation) */}
                           <button
                             className="btn btn-ghost btn-sm"
-                            onClick={() => quickSetStatus(p, "paid")}
-                            disabled={actionLoading === p.id}
-                            style={{
-                              padding: "5px 10px", fontSize: 11,
-                              color: "var(--green)", borderColor: "rgba(62,207,122,0.4)",
-                              whiteSpace: "nowrap"
-                            }}
-                            title="Marquer comme payée"
+                            onClick={() => p.file_url ? viewDocument(p) : setEditing(p)}
+                            style={{ padding: "5px 10px", fontSize: 11, whiteSpace: "nowrap" }}
+                            title={p.file_url ? "Voir le document scanné" : "Voir les détails (aucun document attaché)"}
                           >
-                            {actionLoading === p.id ? "⏳" : "💰 Payé"}
+                            👁 Voir
                           </button>
-                        )}
-
-                        {/* Kebab : toujours visible */}
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={(e) => openKebab(e, p)}
-                          style={{ padding: "5px 8px", fontSize: 13 }}
-                          title="Plus d'actions"
-                        >
-                          ⋯
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+  
+                          {/* Action rapide : SEULEMENT pour les non payées (Payé sur 1 clic) */}
+                          {(isPending || isPartial) && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => quickSetStatus(p, "paid")}
+                              disabled={actionLoading === p.id}
+                              style={{
+                                padding: "5px 10px", fontSize: 11,
+                                color: "var(--green)", borderColor: "rgba(62,207,122,0.4)",
+                                whiteSpace: "nowrap"
+                              }}
+                              title="Marquer comme payée"
+                            >
+                              {actionLoading === p.id ? "⏳" : "💰 Payé"}
+                            </button>
+                          )}
+  
+                          {/* Kebab : toujours visible */}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => openKebab(e, p)}
+                            style={{ padding: "5px 8px", fontSize: 13 }}
+                            title="Plus d'actions"
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

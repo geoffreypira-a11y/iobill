@@ -341,28 +341,30 @@ export function ClientFichePage({ token, company }) {
             Aucune facture. <Link to="/quotes?new=1" style={{ color: "var(--gold)" }}>Créer un devis →</Link>
           </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>N°</th>
-                <th>Date</th>
-                <th>Échéance</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.map((inv) => (
-                <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: "pointer" }}>
-                  <td className="mono">{inv.number}</td>
-                  <td>{fmtDate(inv.issue_date)}</td>
-                  <td>{fmtDate(inv.due_date)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
-                  <td><InvoiceStatusBadge status={inv.status} /></td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>N°</th>
+                  <th>Date</th>
+                  <th>Échéance</th>
+                  <th style={{ textAlign: "right" }}>Montant TTC</th>
+                  <th>Statut</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: "pointer" }}>
+                    <td className="mono">{inv.number}</td>
+                    <td>{fmtDate(inv.issue_date)}</td>
+                    <td>{fmtDate(inv.due_date)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                    <td><InvoiceStatusBadge status={inv.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -370,28 +372,30 @@ export function ClientFichePage({ token, company }) {
       {quotes.length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 16 }}>
           <SectionTitle>Devis ({quotes.length})</SectionTitle>
-          <table>
-            <thead>
-              <tr>
-                <th>N°</th>
-                <th>Date</th>
-                <th>Validité</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {quotes.map((q) => (
-                <tr key={q.id} onClick={() => navigate(`/quotes/${q.id}`)} style={{ cursor: "pointer" }}>
-                  <td className="mono">{q.number}</td>
-                  <td>{fmtDate(q.issue_date)}</td>
-                  <td>{fmtDate(q.expires_at)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
-                  <td><QuoteStatusBadge status={q.status} /></td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>N°</th>
+                  <th>Date</th>
+                  <th>Validité</th>
+                  <th style={{ textAlign: "right" }}>Montant TTC</th>
+                  <th>Statut</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {quotes.map((q) => (
+                  <tr key={q.id} onClick={() => navigate(`/quotes/${q.id}`)} style={{ cursor: "pointer" }}>
+                    <td className="mono">{q.number}</td>
+                    <td>{fmtDate(q.issue_date)}</td>
+                    <td>{fmtDate(q.expires_at)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(q.total_ttc_cents)}</td>
+                    <td><QuoteStatusBadge status={q.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -399,36 +403,38 @@ export function ClientFichePage({ token, company }) {
       {creditNotes.length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 16 }}>
           <SectionTitle>Avoirs ({creditNotes.length})</SectionTitle>
-          <table>
-            <thead>
-              <tr>
-                <th>N°</th>
-                <th>Date</th>
-                <th>Facture liée</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {creditNotes.map((cn) => {
-                const linkedInv = invoices.find((i) => i.id === cn.invoice_id);
-                const badge = creditNoteStatusBadge(cn.status);
-                return (
-                  <tr key={cn.id} onClick={() => navigate(`/credit-notes/${cn.id}`)} style={{ cursor: "pointer" }}>
-                    <td className="mono">{cn.number}</td>
-                    <td>{fmtDate(cn.issue_date)}</td>
-                    <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
-                      {linkedInv ? linkedInv.number : "—"}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
-                      - {fmtEUR(cn.total_ttc_cents)}
-                    </td>
-                    <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>N°</th>
+                  <th>Date</th>
+                  <th>Facture liée</th>
+                  <th style={{ textAlign: "right" }}>Montant TTC</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditNotes.map((cn) => {
+                  const linkedInv = invoices.find((i) => i.id === cn.invoice_id);
+                  const badge = creditNoteStatusBadge(cn.status);
+                  return (
+                    <tr key={cn.id} onClick={() => navigate(`/credit-notes/${cn.id}`)} style={{ cursor: "pointer" }}>
+                      <td className="mono">{cn.number}</td>
+                      <td>{fmtDate(cn.issue_date)}</td>
+                      <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
+                        {linkedInv ? linkedInv.number : "—"}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
+                        - {fmtEUR(cn.total_ttc_cents)}
+                      </td>
+                      <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
             Total avoirs émis : <strong style={{ color: "var(--orange)" }}>- {fmtEUR(
               creditNotes.filter((c) => c.status === "issued")
@@ -442,31 +448,33 @@ export function ClientFichePage({ token, company }) {
       {payments.length > 0 && (
         <div className="card card-pad">
           <SectionTitle>Paiements reçus ({payments.length})</SectionTitle>
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Facture</th>
-                <th>Méthode</th>
-                <th>Référence</th>
-                <th style={{ textAlign: "right" }}>Montant</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p) => {
-                const inv = invoices.find((i) => i.id === p.invoice_id);
-                return (
-                  <tr key={p.id}>
-                    <td>{fmtDate(p.paid_at)}</td>
-                    <td className="mono">{inv?.number || "—"}</td>
-                    <td>{p.method || "—"}</td>
-                    <td className="mono" style={{ fontSize: 11 }}>{p.reference || "—"}</td>
-                    <td className="mono" style={{ textAlign: "right", color: "var(--green)" }}>{fmtEUR(p.amount_cents)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Facture</th>
+                  <th>Méthode</th>
+                  <th>Référence</th>
+                  <th style={{ textAlign: "right" }}>Montant</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => {
+                  const inv = invoices.find((i) => i.id === p.invoice_id);
+                  return (
+                    <tr key={p.id}>
+                      <td>{fmtDate(p.paid_at)}</td>
+                      <td className="mono">{inv?.number || "—"}</td>
+                      <td>{p.method || "—"}</td>
+                      <td className="mono" style={{ fontSize: 11 }}>{p.reference || "—"}</td>
+                      <td className="mono" style={{ textAlign: "right", color: "var(--green)" }}>{fmtEUR(p.amount_cents)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

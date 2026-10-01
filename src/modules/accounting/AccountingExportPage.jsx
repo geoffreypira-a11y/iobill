@@ -147,40 +147,42 @@ export function AccountingExportPage({ token, company }) {
             Aucun export généré.
           </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Format</th>
-                <th>Période</th>
-                <th style={{ textAlign: "right" }}>Lignes</th>
-                <th>Statut</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {exports.map((e) => (
-                <tr key={e.id}>
-                  <td>{fmtDate(e.created_at)}</td>
-                  <td className="mono">{e.format.toUpperCase()}</td>
-                  <td>{fmtDate(e.period_start)} → {fmtDate(e.period_end)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{e.row_count || "—"}</td>
-                  <td>
-                    <span className={"badge " + (e.status === "ready" || e.status === "downloaded" ? "badge-green" : "badge-muted")}>
-                      {e.status}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {e.file_url && (
-                      <a href={e.file_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-xs">
-                        <Icon name="download" size={12} /> Télécharger
-                      </a>
-                    )}
-                  </td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Format</th>
+                  <th>Période</th>
+                  <th style={{ textAlign: "right" }}>Lignes</th>
+                  <th>Statut</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {exports.map((e) => (
+                  <tr key={e.id}>
+                    <td>{fmtDate(e.created_at)}</td>
+                    <td className="mono">{e.format.toUpperCase()}</td>
+                    <td>{fmtDate(e.period_start)} → {fmtDate(e.period_end)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{e.row_count || "—"}</td>
+                    <td>
+                      <span className={"badge " + (e.status === "ready" || e.status === "downloaded" ? "badge-green" : "badge-muted")}>
+                        {e.status}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {e.file_url && (
+                        <a href={e.file_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-xs">
+                          <Icon name="download" size={12} /> Télécharger
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
