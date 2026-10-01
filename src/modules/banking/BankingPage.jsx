@@ -135,7 +135,26 @@ export function BankingPage({ token, company }) {
   }
 
   // Lettrage : association transaction -> facture
-  async function matchTransaction(txId, invoiceId) {
+  async function matchTransaction(txId, invoiceId, selectEl) {
+    // Une transaction plus grosse que le reste dû passait la facture en
+    // trop-perçu (paid_cents > total) : on refuse le lettrage avant d'écrire
+    // quoi que ce soit. Le total inclut les débours (grand_total_cents).
+    const txAvant = transactions.find((t) => t.id === txId);
+    const invAvant = invoices.find((i) => i.id === invoiceId);
+    if (txAvant && invAvant) {
+      const totalDu = invAvant.grand_total_cents || invAvant.total_ttc_cents || 0;
+      const resteDu = Math.max(0, totalDu - (invAvant.paid_cents || 0));
+      if (Math.abs(txAvant.amount_cents) > resteDu + 1) {
+        alert(
+          `Lettrage refusé : la transaction (${fmtEUR(Math.abs(txAvant.amount_cents))}) dépasse `
+          + `le reste dû sur la facture ${invAvant.number || ""} (${fmtEUR(resteDu)}).\n\n`
+          + "La facture passerait en trop-perçu. Vérifiez la facture choisie, ou enregistrez "
+          + "l'encaissement depuis la facture pour le montant exact."
+        );
+        if (selectEl) selectEl.value = "";
+        return;
+      }
+    }
     const updated = await sb.update(token, "bank_transactions", `id=eq.${txId}`, {
       matched_invoice_id: invoiceId,
       match_status: "matched",
@@ -158,7 +177,8 @@ export function BankingPage({ token, company }) {
           match_confidence: 1.0
         });
         const newPaid = (inv.paid_cents || 0) + Math.abs(tx.amount_cents);
-        const newStatus = newPaid >= inv.total_ttc_cents ? "paid" : "partial";
+        // Soldée au total débours compris, comme partout ailleurs.
+        const newStatus = newPaid >= (inv.grand_total_cents || inv.total_ttc_cents) - 1 ? "paid" : "partial";
         await sb.update(token, "invoices", `id=eq.${invoiceId}`, {
           paid_cents: newPaid,
           status: newStatus
@@ -383,7 +403,7 @@ export function BankingPage({ token, company }) {
                               className="form-input"
                               style={{ fontSize: 11, padding: "4px 8px" }}
                               defaultValue=""
-                              onChange={(e) => e.target.value && matchTransaction(t.id, e.target.value)}
+                              onChange={(e) => e.target.value && matchTransaction(t.id, e.target.value, e.target)}
                             >
                               <option value="">— Lettrer avec —</option>
                               {candidates.length > 0 && (
