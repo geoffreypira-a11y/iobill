@@ -6,6 +6,22 @@ import { registerRoute } from "workbox-routing";
 import { NetworkFirst, CacheFirst } from "workbox-strategies";
 import { ExpirationPlugin } from "workbox-expiration";
 
+// ─── Prise de contrôle à la mise à jour ─────────────────────
+// v8.112 — En mode injectManifest, vite-plugin-pwa n'injecte RIEN de tout
+// ça : `registerType: "autoUpdate"` ne suffit pas, c'est au service worker
+// de le faire lui-même. Sans cette ligne, le nouveau worker restait en
+// attente tant que TOUS les onglets de l'app n'étaient pas fermés — ce qui
+// n'arrive jamais sur un téléphone. Résultat : un déploiement pouvait ne
+// jamais atteindre l'utilisateur, et il fallait un rechargement forcé.
+//
+// On s'arrête volontairement à skipWaiting, SANS clientsClaim : le build
+// est découpé en 6 fichiers chargés à la demande. Prendre le contrôle d'une
+// page déjà ouverte lui ferait réclamer des morceaux de l'ancienne version
+// que le cache vient de purger. Ici le nouveau worker s'active tout de
+// suite mais ne sert la page qu'au rechargement suivant : un rafraîchissement
+// ordinaire suffit, au lieu de fermer tous les onglets.
+self.skipWaiting();
+
 // ─── Precache (assets statiques generes par Vite) ──────────
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
