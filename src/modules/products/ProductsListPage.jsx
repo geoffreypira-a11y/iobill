@@ -144,65 +144,67 @@ export function ProductsListPage({ token, company }) {
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <SortableTh label="Désignation" sortKey="designation" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Référence" sortKey="reference" sort={sort} onSort={toggleSort} />
-                <th style={{ textAlign: "center" }}>Unité</th>
-                <SortableTh label="Prix HT" sortKey="price" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="TVA" sortKey="vat" sort={sort} onSort={toggleSort} align="right" />
-                <th style={{ textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibles.map((p) => (
-                <tr key={p.id} style={p.archived ? { opacity: 0.5 } : null}>
-                  <td>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>
-                      {p.designation}
-                      {p.archived && (
-                        <span className="badge badge-muted" style={{ marginLeft: 8, fontSize: 10 }}>Archivé</span>
-                      )}
-                    </div>
-                    {p.description && (
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, maxWidth: 420, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {p.description}
-                      </div>
-                    )}
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, color: "var(--muted2)" }}>{p.reference || "—"}</td>
-                  <td style={{ textAlign: "center", fontSize: 12, color: "var(--muted2)" }}>{p.unit}</td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtEUR(p.unit_price_ht_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right", fontSize: 12, color: "var(--muted2)" }}>{Number(p.vat_rate)}%</td>
-                  <td>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setEditing(p)}>
-                        ✏️ Modifier
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ fontSize: 11 }}
-                        onClick={() => basculerArchive(p)}
-                        title={p.archived
-                          ? "Remettre au catalogue"
-                          : "Retirer du catalogue sans le supprimer — il ne sera plus proposé à la saisie"}
-                      >
-                        {p.archived ? "↩ Réactiver" : "📦 Archiver"}
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ fontSize: 11, color: "var(--red)" }}
-                        onClick={() => setConfirmDel(p)}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </td>
+          <div className="tbl-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <SortableTh label="Désignation" sortKey="designation" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Référence" sortKey="reference" sort={sort} onSort={toggleSort} />
+                  <th style={{ textAlign: "center" }}>Unité</th>
+                  <SortableTh label="Prix HT" sortKey="price" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="TVA" sortKey="vat" sort={sort} onSort={toggleSort} align="right" />
+                  <th style={{ textAlign: "right" }}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {visibles.map((p) => (
+                  <tr key={p.id} style={p.archived ? { opacity: 0.5 } : null}>
+                    <td>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>
+                        {p.designation}
+                        {p.archived && (
+                          <span className="badge badge-muted" style={{ marginLeft: 8, fontSize: 10 }}>Archivé</span>
+                        )}
+                      </div>
+                      {p.description && (
+                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, maxWidth: 420, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p.description}
+                        </div>
+                      )}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12, color: "var(--muted2)" }}>{p.reference || "—"}</td>
+                    <td style={{ textAlign: "center", fontSize: 12, color: "var(--muted2)" }}>{p.unit}</td>
+                    <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtEUR(p.unit_price_ht_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right", fontSize: 12, color: "var(--muted2)" }}>{Number(p.vat_rate)}%</td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setEditing(p)}>
+                          ✏️ Modifier
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: 11 }}
+                          onClick={() => basculerArchive(p)}
+                          title={p.archived
+                            ? "Remettre au catalogue"
+                            : "Retirer du catalogue sans le supprimer — il ne sera plus proposé à la saisie"}
+                        >
+                          {p.archived ? "↩ Réactiver" : "📦 Archiver"}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: 11, color: "var(--red)" }}
+                          onClick={() => setConfirmDel(p)}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

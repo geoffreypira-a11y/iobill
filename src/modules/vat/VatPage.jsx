@@ -511,21 +511,23 @@ export function VatPage({ token, company }) {
             {openBlocks[1] && (stats.block1Rows.length === 0 ? (
               <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune facture avec TVA sur la période.</div>
             ) : (
-              <table style={{ marginTop: 10 }}>
-                <thead><tr><th>N°</th><th>Client</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA reversée PDP</th></tr></thead>
-                <tbody>
-                  {stats.block1Rows.map((r) => (
-                    <tr key={r.id}>
-                      {/* v8.182 — Un montant négatif au milieu de factures doit
-                          se comprendre du premier coup d'œil. */}
-                      <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
-                      <td>{r.client}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_cents)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="tbl-wrap">
+                <table style={{ marginTop: 10 }}>
+                  <thead><tr><th>N°</th><th>Client</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA reversée PDP</th></tr></thead>
+                  <tbody>
+                    {stats.block1Rows.map((r) => (
+                      <tr key={r.id}>
+                        {/* v8.182 — Un montant négatif au milieu de factures doit
+                            se comprendre du premier coup d'œil. */}
+                        <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
+                        <td>{r.client}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
           </div>
 
@@ -543,20 +545,22 @@ export function VatPage({ token, company }) {
             {openBlocks[2] && (stats.block2Rows.length === 0 ? (
               <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune vente en régime marge (art. 297 A) sur la période.</div>
             ) : (
-              <table style={{ marginTop: 10 }}>
-                <thead><tr><th>N°</th><th style={{ textAlign: "right" }}>Achat</th><th style={{ textAlign: "right" }}>Vente TTC</th><th style={{ textAlign: "right" }}>Marge</th><th style={{ textAlign: "right" }}>TVA marge</th></tr></thead>
-                <tbody>
-                  {stats.block2Rows.map((r) => (
-                    <tr key={r.id}>
-                      <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.achat_cents)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vente_ttc_cents)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.marge_cents)}</td>
-                      <td className="mono" style={{ textAlign: "right", color: "var(--gold)", fontWeight: 600 }}>{fmtEUR(r.tva_marge_cents)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="tbl-wrap">
+                <table style={{ marginTop: 10 }}>
+                  <thead><tr><th>N°</th><th style={{ textAlign: "right" }}>Achat</th><th style={{ textAlign: "right" }}>Vente TTC</th><th style={{ textAlign: "right" }}>Marge</th><th style={{ textAlign: "right" }}>TVA marge</th></tr></thead>
+                  <tbody>
+                    {stats.block2Rows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="mono">{r.avoir ? `↩ ${r.number}` : r.number}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.achat_cents)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vente_ttc_cents)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.marge_cents)}</td>
+                        <td className="mono" style={{ textAlign: "right", color: "var(--gold)", fontWeight: 600 }}>{fmtEUR(r.tva_marge_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
           </div>
           )}
@@ -574,19 +578,21 @@ export function VatPage({ token, company }) {
             {openBlocks[3] && (stats.block3Rows.length === 0 ? (
               <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 10 }}>Aucune TVA déductible sur la période (achats payés & récupérables).</div>
             ) : (
-              <table style={{ marginTop: 10 }}>
-                <thead><tr><th>N°</th><th>Fournisseur</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA déductible</th></tr></thead>
-                <tbody>
-                  {stats.block3Rows.map((r) => (
-                    <tr key={r.id}>
-                      <td className="mono">{r.number || "—"}</td>
-                      <td>{r.vendor}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_deductible_cents)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="tbl-wrap">
+                <table style={{ marginTop: 10 }}>
+                  <thead><tr><th>N°</th><th>Fournisseur</th><th style={{ textAlign: "right" }}>TTC</th><th style={{ textAlign: "right" }}>TVA déductible</th></tr></thead>
+                  <tbody>
+                    {stats.block3Rows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="mono">{r.number || "—"}</td>
+                        <td>{r.vendor}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.ttc_cents)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.vat_deductible_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
           </div>
 
@@ -632,20 +638,22 @@ export function VatPage({ token, company }) {
           <div style={{ fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>
             Ventilation TVA collectée — {currentPeriod && `${fmtDate(currentPeriod.start)} → ${fmtDate(currentPeriod.end)}`}
           </div>
-          <table>
-            <thead>
-              <tr><th>Taux</th><th style={{ textAlign: "right" }}>Base HT</th><th style={{ textAlign: "right" }}>TVA collectée</th></tr>
-            </thead>
-            <tbody>
-              {stats.breakdown.map((br) => (
-                <tr key={br.rate}>
-                  <td className="mono">{br.unventilated ? "Non ventilé" : `${br.rate}%`}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{br.unventilated ? "—" : fmtEUR(br.base_cents)}</td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(br.vat_cents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr><th>Taux</th><th style={{ textAlign: "right" }}>Base HT</th><th style={{ textAlign: "right" }}>TVA collectée</th></tr>
+              </thead>
+              <tbody>
+                {stats.breakdown.map((br) => (
+                  <tr key={br.rate}>
+                    <td className="mono">{br.unventilated ? "Non ventilé" : `${br.rate}%`}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{br.unventilated ? "—" : fmtEUR(br.base_cents)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(br.vat_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -661,50 +669,52 @@ export function VatPage({ token, company }) {
             Aucune déclaration générée.
           </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Période</th>
-                <th>Type</th>
-                <th style={{ textAlign: "right" }}>TVA collectée</th>
-                <th style={{ textAlign: "right" }}>TVA déductible</th>
-                <th style={{ textAlign: "right" }}>Crédit TVA</th>
-                <th style={{ textAlign: "right" }}>TVA à payer</th>
-                <th>Statut</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {returns.map((r) => {
-                const creditIn = r.credit_carried_in_cents || 0;
-                const creditOut = r.credit_remaining_cents || 0;
-                const toPay = r.net_vat_cents || 0;
-                return (
-                  <tr key={r.id}>
-                    <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
-                    <td className="mono">{r.form_type}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.collected_vat_cents)}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.deductible_vat_cents)}</td>
-                    <td className="mono" style={{ textAlign: "right", color: "var(--green)" }}>
-                      {creditOut > 0
-                        ? <>{fmtEUR(creditOut)} <span style={{ fontSize: 10, color: "var(--muted)" }}>(à reporter)</span></>
-                        : creditIn > 0
-                          ? <span style={{ color: "var(--muted)" }}>−{fmtEUR(creditIn)} <span style={{ fontSize: 10 }}>(utilisé)</span></span>
-                          : <span style={{ color: "var(--muted)" }}>—</span>}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right", color: toPay > 0 ? "var(--orange)" : "var(--muted)" }}>
-                      {toPay > 0 ? fmtEUR(toPay) : "—"}
-                    </td>
-                    <td><span className={"badge " + VAT_STATUTS[r.status]?.cls}>{VAT_STATUTS[r.status]?.icon} {VAT_STATUTS[r.status]?.label}</span></td>
-                    <td style={{ textAlign: "right" }}>
-                      {r.status === "ready" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
-                      {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Période</th>
+                  <th>Type</th>
+                  <th style={{ textAlign: "right" }}>TVA collectée</th>
+                  <th style={{ textAlign: "right" }}>TVA déductible</th>
+                  <th style={{ textAlign: "right" }}>Crédit TVA</th>
+                  <th style={{ textAlign: "right" }}>TVA à payer</th>
+                  <th>Statut</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {returns.map((r) => {
+                  const creditIn = r.credit_carried_in_cents || 0;
+                  const creditOut = r.credit_remaining_cents || 0;
+                  const toPay = r.net_vat_cents || 0;
+                  return (
+                    <tr key={r.id}>
+                      <td>{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
+                      <td className="mono">{r.form_type}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.collected_vat_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(r.deductible_vat_cents)}</td>
+                      <td className="mono" style={{ textAlign: "right", color: "var(--green)" }}>
+                        {creditOut > 0
+                          ? <>{fmtEUR(creditOut)} <span style={{ fontSize: 10, color: "var(--muted)" }}>(à reporter)</span></>
+                          : creditIn > 0
+                            ? <span style={{ color: "var(--muted)" }}>−{fmtEUR(creditIn)} <span style={{ fontSize: 10 }}>(utilisé)</span></span>
+                            : <span style={{ color: "var(--muted)" }}>—</span>}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right", color: toPay > 0 ? "var(--orange)" : "var(--muted)" }}>
+                        {toPay > 0 ? fmtEUR(toPay) : "—"}
+                      </td>
+                      <td><span className={"badge " + VAT_STATUTS[r.status]?.cls}>{VAT_STATUTS[r.status]?.icon} {VAT_STATUTS[r.status]?.label}</span></td>
+                      <td style={{ textAlign: "right" }}>
+                        {r.status === "ready" && <button className="btn btn-ghost btn-xs" onClick={() => markDeclared(r)}>Marquer déclarée</button>}
+                        {r.status === "declared" && <button className="btn btn-ghost btn-xs" onClick={() => markPaid(r)}>Marquer payée</button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

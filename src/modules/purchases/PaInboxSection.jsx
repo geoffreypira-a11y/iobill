@@ -196,69 +196,71 @@ export function PaInboxSection({ token, company, onConverted }) {
           Aucune facture à traiter.
         </div>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ fontSize: 11, color: "var(--muted)", textAlign: "left" }}>
-              <th style={th}>Fournisseur</th>
-              <th style={th}>N° · Date</th>
-              <th style={{ ...th, textAlign: "right" }}>HT</th>
-              <th style={{ ...th, textAlign: "right" }}>TVA</th>
-              <th style={{ ...th, textAlign: "right" }}>TTC</th>
-              <th style={th}>Statut</th>
-              <th style={th}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map(r => {
-              const isRefused = r.status === "refused";
-              return (
-                <tr key={r.id} style={{ borderTop: "1px solid var(--border)", opacity: isRefused ? 0.7 : 1 }}>
-                  <td style={td}>
-                    <div style={{ fontWeight: 500 }}>{r.supplier_name || "Fournisseur inconnu"}</div>
-                    {r.supplier_siren && <div style={{ fontSize: 11, color: "var(--muted)" }}>SIREN {r.supplier_siren}</div>}
-                  </td>
-                  <td style={td}>
-                    <div>{r.invoice_number || "—"}</div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.invoice_date || "—"}</div>
-                  </td>
-                  <td style={{ ...td, textAlign: "right" }} className="mono">{fmtEUR(r.subtotal_ht_cents)}</td>
-                  <td style={{ ...td, textAlign: "right" }} className="mono">{fmtEUR(r.vat_total_cents)}</td>
-                  <td style={{ ...td, textAlign: "right" }} className="mono" >
-                    <strong style={{ color: "var(--gold)" }}>{fmtEUR(r.total_ttc_cents)}</strong>
-                  </td>
-                  <td style={td}>
-                    {isRefused ? (
-                      <span title={r.refusal_reason || ""} style={badge("#e54949")}>❌ Refusée</span>
-                    ) : r.status === "approved" ? (
-                      <span style={badge("#3ecf7a")}>✅ Approuvée</span>
-                    ) : (
-                      <span style={badge("#d4a843")}>📥 Reçue</span>
-                    )}
-                  </td>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>
-                    <div style={{ display: "inline-flex", gap: 4 }}>
-                      <button className="btn btn-ghost" onClick={() => view(r)}
-                        disabled={busyId === r.id} style={btnSm} title="Aperçu du PDF">👁</button>
-                      {!isRefused && (
-                        <>
-                          <button className="btn" disabled={busyId === r.id}
-                            onClick={() => convert(r)}
-                            style={{ ...btnSm, background: "var(--gold)", color: "#000" }}
-                            title="Approuver auprès du fournisseur et ajouter aux achats">
-                            📗 Comptabiliser
-                          </button>
-                          <button className="btn btn-ghost" disabled={busyId === r.id}
-                            onClick={() => ack(r, "refused")} style={btnSm}
-                            title="Refuser avec motif">❌</button>
-                        </>
+        <div className="tbl-wrap">
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ fontSize: 11, color: "var(--muted)", textAlign: "left" }}>
+                <th style={th}>Fournisseur</th>
+                <th style={th}>N° · Date</th>
+                <th style={{ ...th, textAlign: "right" }}>HT</th>
+                <th style={{ ...th, textAlign: "right" }}>TVA</th>
+                <th style={{ ...th, textAlign: "right" }}>TTC</th>
+                <th style={th}>Statut</th>
+                <th style={th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(r => {
+                const isRefused = r.status === "refused";
+                return (
+                  <tr key={r.id} style={{ borderTop: "1px solid var(--border)", opacity: isRefused ? 0.7 : 1 }}>
+                    <td style={td}>
+                      <div style={{ fontWeight: 500 }}>{r.supplier_name || "Fournisseur inconnu"}</div>
+                      {r.supplier_siren && <div style={{ fontSize: 11, color: "var(--muted)" }}>SIREN {r.supplier_siren}</div>}
+                    </td>
+                    <td style={td}>
+                      <div>{r.invoice_number || "—"}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.invoice_date || "—"}</div>
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }} className="mono">{fmtEUR(r.subtotal_ht_cents)}</td>
+                    <td style={{ ...td, textAlign: "right" }} className="mono">{fmtEUR(r.vat_total_cents)}</td>
+                    <td style={{ ...td, textAlign: "right" }} className="mono" >
+                      <strong style={{ color: "var(--gold)" }}>{fmtEUR(r.total_ttc_cents)}</strong>
+                    </td>
+                    <td style={td}>
+                      {isRefused ? (
+                        <span title={r.refusal_reason || ""} style={badge("#e54949")}>❌ Refusée</span>
+                      ) : r.status === "approved" ? (
+                        <span style={badge("#3ecf7a")}>✅ Approuvée</span>
+                      ) : (
+                        <span style={badge("#d4a843")}>📥 Reçue</span>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    </td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", gap: 4 }}>
+                        <button className="btn btn-ghost" onClick={() => view(r)}
+                          disabled={busyId === r.id} style={btnSm} title="Aperçu du PDF">👁</button>
+                        {!isRefused && (
+                          <>
+                            <button className="btn" disabled={busyId === r.id}
+                              onClick={() => convert(r)}
+                              style={{ ...btnSm, background: "var(--gold)", color: "#000" }}
+                              title="Approuver auprès du fournisseur et ajouter aux achats">
+                              📗 Comptabiliser
+                            </button>
+                            <button className="btn btn-ghost" disabled={busyId === r.id}
+                              onClick={() => ack(r, "refused")} style={btnSm}
+                              title="Refuser avec motif">❌</button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {preview && (

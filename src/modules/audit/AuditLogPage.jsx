@@ -117,81 +117,83 @@ export function AuditLogPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 140 }}>Date/heure</th>
-                <th>Action</th>
-                <th>Élément</th>
-                <th>Référence</th>
-                <th>IP</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((l) => {
-                const act = ACTION_LABELS[l.action] || { label: l.action, color: "var(--muted)", icon: "·" };
-                const tableLabel = TABLE_LABELS[l.table_name] || l.table_name;
-                const ref = l.new_data?.number || l.new_data?.legal_name || l.old_data?.number || l.old_data?.legal_name || (l.record_id || "").slice(0, 8);
-                const isExpanded = expanded === l.id;
-                return (
-                  <React.Fragment key={l.id}>
-                    <tr style={{ cursor: "pointer" }} onClick={() => setExpanded(isExpanded ? null : l.id)}>
-                      <td className="mono" style={{ fontSize: 11 }}>{fmtTime(l.created_at)}</td>
-                      <td>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: act.color, fontSize: 12, fontWeight: 500 }}>
-                          <span style={{ display: "inline-block", width: 18, textAlign: "center" }}>{act.icon}</span>
-                          {act.label}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: 12 }}>{tableLabel}</td>
-                      <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>{ref}</td>
-                      <td className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>{l.ip_address || "—"}</td>
-                      <td style={{ textAlign: "right", color: "var(--muted)" }}>{isExpanded ? "▲" : "▼"}</td>
-                    </tr>
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={6} style={{ background: "var(--card2)", padding: 16 }}>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-                            <div>
-                              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Avant</div>
-                              <pre style={{
-                                background: "var(--bg)", padding: 10, borderRadius: 6,
-                                fontSize: 10, lineHeight: 1.5, color: "var(--muted2)",
-                                maxHeight: 200, overflow: "auto", margin: 0,
-                                fontFamily: "DM Mono, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word"
-                              }}>
-                                {l.old_data ? JSON.stringify(l.old_data, null, 2) : "—"}
-                              </pre>
-                            </div>
-                            <div>
-                              <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Après</div>
-                              <pre style={{
-                                background: "var(--bg)", padding: 10, borderRadius: 6,
-                                fontSize: 10, lineHeight: 1.5, color: "var(--muted2)",
-                                maxHeight: 200, overflow: "auto", margin: 0,
-                                fontFamily: "DM Mono, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word"
-                              }}>
-                                {l.new_data ? JSON.stringify(l.new_data, null, 2) : "—"}
-                              </pre>
-                            </div>
-                          </div>
-                          {l.user_agent && (
-                            <div style={{ marginTop: 10, fontSize: 10, color: "var(--muted)", fontFamily: "DM Mono, monospace" }}>
-                              UA: {l.user_agent}
-                            </div>
-                          )}
-                          <div style={{ marginTop: 6, fontSize: 10, color: "var(--muted)", fontFamily: "DM Mono, monospace" }}>
-                            ID: {l.id}
-                          </div>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>Date/heure</th>
+                  <th>Action</th>
+                  <th>Élément</th>
+                  <th>Référence</th>
+                  <th>IP</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((l) => {
+                  const act = ACTION_LABELS[l.action] || { label: l.action, color: "var(--muted)", icon: "·" };
+                  const tableLabel = TABLE_LABELS[l.table_name] || l.table_name;
+                  const ref = l.new_data?.number || l.new_data?.legal_name || l.old_data?.number || l.old_data?.legal_name || (l.record_id || "").slice(0, 8);
+                  const isExpanded = expanded === l.id;
+                  return (
+                    <React.Fragment key={l.id}>
+                      <tr style={{ cursor: "pointer" }} onClick={() => setExpanded(isExpanded ? null : l.id)}>
+                        <td className="mono" style={{ fontSize: 11 }}>{fmtTime(l.created_at)}</td>
+                        <td>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: act.color, fontSize: 12, fontWeight: 500 }}>
+                            <span style={{ display: "inline-block", width: 18, textAlign: "center" }}>{act.icon}</span>
+                            {act.label}
+                          </span>
                         </td>
+                        <td style={{ fontSize: 12 }}>{tableLabel}</td>
+                        <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>{ref}</td>
+                        <td className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>{l.ip_address || "—"}</td>
+                        <td style={{ textAlign: "right", color: "var(--muted)" }}>{isExpanded ? "▲" : "▼"}</td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={6} style={{ background: "var(--card2)", padding: 16 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+                              <div>
+                                <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Avant</div>
+                                <pre style={{
+                                  background: "var(--bg)", padding: 10, borderRadius: 6,
+                                  fontSize: 10, lineHeight: 1.5, color: "var(--muted2)",
+                                  maxHeight: 200, overflow: "auto", margin: 0,
+                                  fontFamily: "DM Mono, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word"
+                                }}>
+                                  {l.old_data ? JSON.stringify(l.old_data, null, 2) : "—"}
+                                </pre>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 10, color: "var(--muted)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Après</div>
+                                <pre style={{
+                                  background: "var(--bg)", padding: 10, borderRadius: 6,
+                                  fontSize: 10, lineHeight: 1.5, color: "var(--muted2)",
+                                  maxHeight: 200, overflow: "auto", margin: 0,
+                                  fontFamily: "DM Mono, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word"
+                                }}>
+                                  {l.new_data ? JSON.stringify(l.new_data, null, 2) : "—"}
+                                </pre>
+                              </div>
+                            </div>
+                            {l.user_agent && (
+                              <div style={{ marginTop: 10, fontSize: 10, color: "var(--muted)", fontFamily: "DM Mono, monospace" }}>
+                                UA: {l.user_agent}
+                              </div>
+                            )}
+                            <div style={{ marginTop: 6, fontSize: 10, color: "var(--muted)", fontFamily: "DM Mono, monospace" }}>
+                              ID: {l.id}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -227,46 +227,48 @@ export function DashboardPage({ token, company, user }) {
               cta={<Link to="/quotes?new=1" className="btn btn-primary btn-sm">Créer un premier devis</Link>}
             />
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>N°</th>
-                  <th>Client</th>
-                  <th style={{ textAlign: "right" }}>Montant</th>
-                  <th>Statut</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentInvoices.map((inv) => (
-                  <tr key={inv.id}>
-                    <td className="mono">{inv.number}</td>
-                    <td>{inv.client_snapshot?.legal_name || inv.client_snapshot?.name || "—"}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>
-                      {/* v8.49 — grand_total + sous-ligne "dont TVA · débours" pour cohérence */}
-                      {(() => {
-                        const debTotal = inv.debour_total_cents || 0;
-                        const vatTotal = inv.vat_total_cents || 0;
-                        const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
-                        const parts = [];
-                        if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
-                        if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
-                        return (
-                          <>
-                            <div>{fmtEUR(grandTotal)}</div>
-                            {parts.length > 0 && (
-                              <div style={{ fontSize: 9, color: "var(--muted)", fontFamily: "inherit" }}>
-                                dont {parts.join(" · ")}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </td>
-                    <td><InvoiceStatusBadge status={inv.status} /></td>
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>N°</th>
+                    <th>Client</th>
+                    <th style={{ textAlign: "right" }}>Montant</th>
+                    <th>Statut</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {recentInvoices.map((inv) => (
+                    <tr key={inv.id}>
+                      <td className="mono">{inv.number}</td>
+                      <td>{inv.client_snapshot?.legal_name || inv.client_snapshot?.name || "—"}</td>
+                      <td className="mono" style={{ textAlign: "right" }}>
+                        {/* v8.49 — grand_total + sous-ligne "dont TVA · débours" pour cohérence */}
+                        {(() => {
+                          const debTotal = inv.debour_total_cents || 0;
+                          const vatTotal = inv.vat_total_cents || 0;
+                          const grandTotal = inv.grand_total_cents ?? ((inv.total_ttc_cents || 0) + debTotal);
+                          const parts = [];
+                          if (vatTotal > 0) parts.push(`${fmtEUR(vatTotal)} TVA`);
+                          if (debTotal > 0) parts.push(`${fmtEUR(debTotal)} débours`);
+                          return (
+                            <>
+                              <div>{fmtEUR(grandTotal)}</div>
+                              {parts.length > 0 && (
+                                <div style={{ fontSize: 9, color: "var(--muted)", fontFamily: "inherit" }}>
+                                  dont {parts.join(" · ")}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </td>
+                      <td><InvoiceStatusBadge status={inv.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 

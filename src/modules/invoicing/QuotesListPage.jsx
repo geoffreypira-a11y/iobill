@@ -512,7 +512,7 @@ export function QuotesListPage({ token, company }) {
     const version = q.version || 1;
 
     return (
-      <tr key={q.id} style={isChild ? { background: "rgba(212,168,67,0.04)" } : null}>
+      <tr key={q.id} className={isChild ? "is-child" : undefined} style={isChild ? { background: "rgba(212,168,67,0.04)" } : null}>
         {/* Colonne expand : chevron si latest avec versions multiples, ⤷ si enfant */}
         <td style={{ textAlign: "center", width: 30 }}>
           {isLatest && hasMultipleVersions ? (
@@ -530,7 +530,7 @@ export function QuotesListPage({ token, company }) {
             <span style={{ color: "var(--muted)", fontSize: 12, paddingLeft: 12 }}>⤷</span>
           ) : null}
         </td>
-        <td className="mono" style={isChild ? { paddingLeft: 22, fontSize: 11, color: "var(--muted2)" } : null}>
+        <td data-label="N°" className="mono" style={isChild ? { paddingLeft: 22, fontSize: 11, color: "var(--muted2)" } : null}>
           {q.number || <span style={{ color: "var(--muted)" }}>—</span>}
           {hasMultipleVersions && isLatest && (
             <span style={{ marginLeft: 8, fontSize: 10, color: "var(--gold)", fontWeight: 600 }}>
@@ -543,20 +543,20 @@ export function QuotesListPage({ token, company }) {
             </span>
           )}
         </td>
-        <td style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>
+        <td data-label="Client" style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>
           {snapshotDisplayName(q.client_snapshot)}
         </td>
-        <td style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>{fmtDate(q.issue_date)}</td>
-        <td style={{ fontSize: 12, color: q.status === "sent" && validity !== null && validity < 7 ? "var(--orange)" : "var(--muted2)" }}>
+        <td data-label="Émis le" style={isChild ? { fontSize: 11, color: "var(--muted2)" } : null}>{fmtDate(q.issue_date)}</td>
+        <td data-label="Validité" style={{ fontSize: 12, color: q.status === "sent" && validity !== null && validity < 7 ? "var(--orange)" : "var(--muted2)" }}>
           {q.expires_at ? (
             validity > 0 ? `${validity} j` : validity === 0 ? "Aujourd'hui" : "Expiré"
           ) : "—"}
         </td>
-        <td className="mono" style={{ textAlign: "right", ...(isChild ? { fontSize: 11, color: "var(--muted2)" } : {}) }}>
+        <td data-label="Montant TTC" className="mono" style={{ textAlign: "right", ...(isChild ? { fontSize: 11, color: "var(--muted2)" } : {}) }}>
           {fmtEUR(q.total_ttc_cents)}
         </td>
-        <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
-        <td>
+        <td data-label="Statut"><span className={"badge " + badge.cls}>{badge.label}</span></td>
+        <td data-label="Actions">
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
             {/* Bouton principal : Voir (preview PDF) si readonly, sinon Modifier */}
             <button
@@ -721,45 +721,47 @@ export function QuotesListPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 30 }}></th>
-                <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Émis le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Validité" sortKey="expires_at" sort={sort} onSort={toggleSort} />
-                <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
-                <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grouped.map((group) => {
-                const { rootId, latest, versions, hasMultipleVersions } = group;
-                const isExpanded = expandedRoots.has(rootId);
-                const rows = [];
-
-                // ─── Ligne principale (derniere version) ─────
-                rows.push(renderQuoteRow(latest, {
-                  isLatest: true,
-                  hasMultipleVersions,
-                  isExpanded,
-                  totalVersions: versions.length,
-                  onToggleExpand: () => toggleExpand(rootId)
-                }));
-
-                // ─── Lignes des versions precedentes (si deplie) ─────
-                if (isExpanded && hasMultipleVersions) {
-                  for (let i = 1; i < versions.length; i++) {
-                    rows.push(renderQuoteRow(versions[i], { isLatest: false, isChild: true }));
+          <div className="tbl-wrap tbl-cards">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}></th>
+                  <SortableTh label="N°" sortKey="number" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Client" sortKey="client" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Émis le" sortKey="issue_date" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Validité" sortKey="expires_at" sort={sort} onSort={toggleSort} />
+                  <SortableTh label="Montant TTC" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                  <SortableTh label="Statut" sortKey="status" sort={sort} onSort={toggleSort} />
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped.map((group) => {
+                  const { rootId, latest, versions, hasMultipleVersions } = group;
+                  const isExpanded = expandedRoots.has(rootId);
+                  const rows = [];
+  
+                  // ─── Ligne principale (derniere version) ─────
+                  rows.push(renderQuoteRow(latest, {
+                    isLatest: true,
+                    hasMultipleVersions,
+                    isExpanded,
+                    totalVersions: versions.length,
+                    onToggleExpand: () => toggleExpand(rootId)
+                  }));
+  
+                  // ─── Lignes des versions precedentes (si deplie) ─────
+                  if (isExpanded && hasMultipleVersions) {
+                    for (let i = 1; i < versions.length; i++) {
+                      rows.push(renderQuoteRow(versions[i], { isLatest: false, isChild: true }));
+                    }
                   }
-                }
-
-                return rows;
-              })}
-            </tbody>
-          </table>
+  
+                  return rows;
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

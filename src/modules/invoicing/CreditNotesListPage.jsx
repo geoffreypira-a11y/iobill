@@ -244,146 +244,148 @@ export function CreditNotesListPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>N°</th>
-                <th>Client</th>
-                <th>Émis le</th>
-                <th>Facture liée</th>
-                <th style={{ textAlign: "right" }}>Montant TTC</th>
-                <th>Statut</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((c) => {
-                const badge = creditNoteStatusBadge(c.status);
-                // v8.49.10 — Badge "<icône> IO CAR" sur les avoirs venus d'une app source externe.
-                // Cohérent avec l'affichage des factures externes dans InvoicesListPage.
-                const isExternal = !!c.external_source && c.external_source !== "iobill";
-                const sourceLabel = sourceAppLabel(c.external_source)
-                                  || String(c.external_source || "").toUpperCase();
-                return (
-                  <tr key={c.id} onClick={() => navigate(`/credit-notes/${c.id}`)} style={{ cursor: "pointer" }}>
-                    <td className="mono">
-                      {c.number}
-                      {isExternal && (
-                        <span style={{
-                          marginLeft: 6,
-                          fontSize: 9,
-                          padding: "1px 6px",
-                          borderRadius: 8,
-                          background: "rgba(212,168,67,0.15)",
-                          color: "var(--gold, #d4a843)",
-                          fontWeight: 700,
-                          letterSpacing: 0.5
-                        }}>
-                          {sourceAppEmoji(c.external_source)} {sourceLabel}
-                        </span>
-                      )}
-                    </td>
-                    <td>{snapshotDisplayName(c.client_snapshot)}</td>
-                    <td>{fmtDate(c.issue_date)}</td>
-                    <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
-                      {c.invoice_id ? (
-                        <button
-                          type="button"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            // Charge la facture source pour la preview
-                            const inv = await sb.selectOne(token, "invoices", `id=eq.${c.invoice_id}`);
-                            if (inv) setPreviewInvoice(inv);
-                          }}
-                          style={{
-                            background: "none", border: "none", padding: 0, cursor: "pointer",
-                            color: "var(--gold)", textDecoration: "none", fontSize: 11
-                          }}
-                          title="Aperçu de la facture liée"
-                        >
-                          → voir
-                        </button>
-                      ) : "—"}
-                    </td>
-                    <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
-                      − {fmtEUR(c.total_ttc_cents)}
-                    </td>
-                    <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
-                    {/* v8.41 — Boutons Voir + Transmettre (cohérent avec page Factures) */}
-                    <td>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreviewCreditNote(c);
-                          }}
-                          style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
-                          title="Aperçu PDF de cet avoir"
-                        >
-                          👁 Voir
-                        </button>
-                        {/* v8.42 — Transmettre à la DGFiP via PDP (uniquement si émis et pas encore transmis)
-                            v8.193 — …et seulement si la transmission est ouverte. */}
-                        {c.status === "issued" && !c.pdp_transmitted_at && pdpConfigured && transmissionEnabled && (
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>N°</th>
+                  <th>Client</th>
+                  <th>Émis le</th>
+                  <th>Facture liée</th>
+                  <th style={{ textAlign: "right" }}>Montant TTC</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c) => {
+                  const badge = creditNoteStatusBadge(c.status);
+                  // v8.49.10 — Badge "<icône> IO CAR" sur les avoirs venus d'une app source externe.
+                  // Cohérent avec l'affichage des factures externes dans InvoicesListPage.
+                  const isExternal = !!c.external_source && c.external_source !== "iobill";
+                  const sourceLabel = sourceAppLabel(c.external_source)
+                                    || String(c.external_source || "").toUpperCase();
+                  return (
+                    <tr key={c.id} onClick={() => navigate(`/credit-notes/${c.id}`)} style={{ cursor: "pointer" }}>
+                      <td className="mono">
+                        {c.number}
+                        {isExternal && (
+                          <span style={{
+                            marginLeft: 6,
+                            fontSize: 9,
+                            padding: "1px 6px",
+                            borderRadius: 8,
+                            background: "rgba(212,168,67,0.15)",
+                            color: "var(--gold, #d4a843)",
+                            fontWeight: 700,
+                            letterSpacing: 0.5
+                          }}>
+                            {sourceAppEmoji(c.external_source)} {sourceLabel}
+                          </span>
+                        )}
+                      </td>
+                      <td>{snapshotDisplayName(c.client_snapshot)}</td>
+                      <td>{fmtDate(c.issue_date)}</td>
+                      <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>
+                        {c.invoice_id ? (
                           <button
-                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              // Charge la facture source pour la preview
+                              const inv = await sb.selectOne(token, "invoices", `id=eq.${c.invoice_id}`);
+                              if (inv) setPreviewInvoice(inv);
+                            }}
+                            style={{
+                              background: "none", border: "none", padding: 0, cursor: "pointer",
+                              color: "var(--gold)", textDecoration: "none", fontSize: 11
+                            }}
+                            title="Aperçu de la facture liée"
+                          >
+                            → voir
+                          </button>
+                        ) : "—"}
+                      </td>
+                      <td className="mono" style={{ textAlign: "right", color: "var(--orange)" }}>
+                        − {fmtEUR(c.total_ttc_cents)}
+                      </td>
+                      <td><span className={"badge " + badge.cls}>{badge.label}</span></td>
+                      {/* v8.41 — Boutons Voir + Transmettre (cohérent avec page Factures) */}
+                      <td>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                          <button
+                            className="btn btn-primary btn-sm"
                             onClick={(e) => {
                               e.stopPropagation();
-                              transmitCreditNote(c);
+                              setPreviewCreditNote(c);
                             }}
-                            disabled={actionLoading === `transmit-${c.id}`}
-                            style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
-                            title="Transmettre l'avoir à l'administration via votre PDP"
+                            style={{ padding: "5px 12px", fontSize: 11, whiteSpace: "nowrap" }}
+                            title="Aperçu PDF de cet avoir"
                           >
-                            {actionLoading === `transmit-${c.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                            👁 Voir
                           </button>
-                        )}
-                        {/* v8.193 — Sans cette mention, l'absence de bouton
-                            ressemblait à un bug. L'avoir est bien émis et sa
-                            Factur-X générée : seule la télétransmission est
-                            fermée côté administrateur. */}
-                        {c.status === "issued" && !c.pdp_transmitted_at && (!pdpConfigured || !transmissionEnabled) && (
-                          <span
-                            style={{ padding: "5px 10px", fontSize: 10, color: "var(--muted)", border: "1px dashed var(--border2, rgba(255,255,255,0.15))", borderRadius: 6, whiteSpace: "nowrap" }}
-                            title={pdpConfigured
-                              ? "La transmission à la Plateforme Agréée n'est pas activée pour cette entreprise. L'avoir reste valable et sa Factur-X est bien générée."
-                              : "Aucune Plateforme Agréée n'est configurée pour cette entreprise."}
-                          >
-                            🏛️ Transmission désactivée
-                          </span>
-                        )}
-                        {c.pdp_transmitted_at && (() => {
-                          // v8.194 — La pastille dit ce que la plateforme a
-                          // réellement répondu. « ✓ Transmis » sur un avoir
-                          // refusé affirmait le contraire de la vérité.
-                          const refuse = c.facturx_status === "rejected";
-                          const quand = new Date(c.pdp_transmitted_at).toLocaleDateString("fr-FR");
-                          const via = c.pdp_provider || "PDP";
-                          return (
-                          <span
-                            onClick={(e) => { e.stopPropagation(); rafraichirStatutPdp(c, { silencieux: false }); }}
-                            style={{
-                              padding: "5px 10px", fontSize: 10, cursor: "pointer",
-                              color: refuse ? "var(--red, #e54949)" : "var(--green)",
-                              border: `1px solid ${refuse ? "rgba(229,73,73,0.4)" : "rgba(62,207,122,0.3)"}`,
-                              borderRadius: 6, whiteSpace: "nowrap"
-                            }}
-                            title={refuse
-                              ? `Refusé par ${via}. L'avoir n'est PAS parvenu à l'administration : la rectification de TVA n'est pas prise en compte. Cliquer pour revérifier.`
-                              : `Transmis via ${via} le ${quand}. Cliquer pour revérifier le statut.`}
-                          >
-                            {refuse ? "❌ Refusé" : "✓ Transmis"}
-                          </span>
-                          );
-                        })()}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          {/* v8.42 — Transmettre à la DGFiP via PDP (uniquement si émis et pas encore transmis)
+                              v8.193 — …et seulement si la transmission est ouverte. */}
+                          {c.status === "issued" && !c.pdp_transmitted_at && pdpConfigured && transmissionEnabled && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                transmitCreditNote(c);
+                              }}
+                              disabled={actionLoading === `transmit-${c.id}`}
+                              style={{ padding: "5px 10px", fontSize: 11, color: "var(--green)", borderColor: "rgba(62,207,122,0.4)", whiteSpace: "nowrap" }}
+                              title="Transmettre l'avoir à l'administration via votre PDP"
+                            >
+                              {actionLoading === `transmit-${c.id}` ? "⏳ Transmission..." : "🏛️ Transmettre"}
+                            </button>
+                          )}
+                          {/* v8.193 — Sans cette mention, l'absence de bouton
+                              ressemblait à un bug. L'avoir est bien émis et sa
+                              Factur-X générée : seule la télétransmission est
+                              fermée côté administrateur. */}
+                          {c.status === "issued" && !c.pdp_transmitted_at && (!pdpConfigured || !transmissionEnabled) && (
+                            <span
+                              style={{ padding: "5px 10px", fontSize: 10, color: "var(--muted)", border: "1px dashed var(--border2, rgba(255,255,255,0.15))", borderRadius: 6, whiteSpace: "nowrap" }}
+                              title={pdpConfigured
+                                ? "La transmission à la Plateforme Agréée n'est pas activée pour cette entreprise. L'avoir reste valable et sa Factur-X est bien générée."
+                                : "Aucune Plateforme Agréée n'est configurée pour cette entreprise."}
+                            >
+                              🏛️ Transmission désactivée
+                            </span>
+                          )}
+                          {c.pdp_transmitted_at && (() => {
+                            // v8.194 — La pastille dit ce que la plateforme a
+                            // réellement répondu. « ✓ Transmis » sur un avoir
+                            // refusé affirmait le contraire de la vérité.
+                            const refuse = c.facturx_status === "rejected";
+                            const quand = new Date(c.pdp_transmitted_at).toLocaleDateString("fr-FR");
+                            const via = c.pdp_provider || "PDP";
+                            return (
+                            <span
+                              onClick={(e) => { e.stopPropagation(); rafraichirStatutPdp(c, { silencieux: false }); }}
+                              style={{
+                                padding: "5px 10px", fontSize: 10, cursor: "pointer",
+                                color: refuse ? "var(--red, #e54949)" : "var(--green)",
+                                border: `1px solid ${refuse ? "rgba(229,73,73,0.4)" : "rgba(62,207,122,0.3)"}`,
+                                borderRadius: 6, whiteSpace: "nowrap"
+                              }}
+                              title={refuse
+                                ? `Refusé par ${via}. L'avoir n'est PAS parvenu à l'administration : la rectification de TVA n'est pas prise en compte. Cliquer pour revérifier.`
+                                : `Transmis via ${via} le ${quand}. Cliquer pour revérifier le statut.`}
+                            >
+                              {refuse ? "❌ Refusé" : "✓ Transmis"}
+                            </span>
+                            );
+                          })()}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -505,26 +507,28 @@ function InvoicePickerModal({ token, company, onCancel, onPick }) {
             </div>
           ) : (
             <div style={{ maxHeight: 360, overflow: "auto", border: "1px solid var(--border2)", borderRadius: 8 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>N°</th>
-                    <th>Client</th>
-                    <th>Émise le</th>
-                    <th style={{ textAlign: "right" }}>Montant TTC</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((inv) => (
-                    <tr key={inv.id} onClick={() => onPick(inv.id)} style={{ cursor: "pointer" }}>
-                      <td className="mono">{inv.number}</td>
-                      <td>{snapshotDisplayName(inv.client_snapshot)}</td>
-                      <td>{fmtDate(inv.issue_date)}</td>
-                      <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+              <div className="tbl-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>N°</th>
+                      <th>Client</th>
+                      <th>Émise le</th>
+                      <th style={{ textAlign: "right" }}>Montant TTC</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filtered.map((inv) => (
+                      <tr key={inv.id} onClick={() => onPick(inv.id)} style={{ cursor: "pointer" }}>
+                        <td className="mono">{inv.number}</td>
+                        <td>{snapshotDisplayName(inv.client_snapshot)}</td>
+                        <td>{fmtDate(inv.issue_date)}</td>
+                        <td className="mono" style={{ textAlign: "right" }}>{fmtEUR(inv.total_ttc_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

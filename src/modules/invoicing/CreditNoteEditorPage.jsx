@@ -806,77 +806,79 @@ function PickerTable({ lines, onToggle, onUpdateAmount }) {
     return <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Aucune ligne sur la facture source.</div>;
   }
   return (
-    <table style={{ width: "100%" }}>
-      <thead>
-        <tr>
-          <th style={{ width: 30 }}></th>
-          <th>Désignation</th>
-          <th style={{ width: 130, textAlign: "right" }}>Facturé HT</th>
-          <th style={{ width: 130, textAlign: "right" }}>À créditer HT</th>
-          <th style={{ width: 130, textAlign: "right" }}>Reste sur ligne</th>
-          <th style={{ width: 60, textAlign: "right" }}>TVA</th>
-        </tr>
-      </thead>
-      <tbody>
-        {lines.map((l, idx) => {
-          // Montant HT facturé pour cette ligne (en cents)
-          const lineFullCalc = calcLine({
-            quantity: l.source_qty,
-            unit_price_ht: l.unit_price_ht,
-            vat_rate: l.vat_rate,
-            discount_pct: l.discount_pct
-          });
-          const fullHtCents = lineFullCalc.line_ht_cents;
-          // Montant HT à créditer (en cents), basé sur l.amount_ht (euros)
-          const creditedHtCents = l.checked
-            ? Math.min(Math.round((Number(l.amount_ht) || 0) * 100), fullHtCents)
-            : 0;
-          const remainingCents = fullHtCents - creditedHtCents;
-          return (
-            <tr key={idx} style={{ opacity: l.checked ? 1 : 0.5 }}>
-              <td>
-                <input
-                  type="checkbox"
-                  checked={l.checked}
-                  onChange={() => onToggle(idx)}
-                  style={{ accentColor: "var(--gold)" }}
-                />
-              </td>
-              <td style={{ fontSize: 13 }}>
-                {l.description}
-                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                  {l.source_qty} {l.unit} × {fmtEUR(l.unit_price_ht * 100)}
-                  {l.discount_pct > 0 ? ` (remise ${l.discount_pct}%)` : ""}
-                </div>
-              </td>
-              <td className="mono" style={{ textAlign: "right", fontSize: 12, color: "var(--muted2)" }}>
-                {fmtEUR(fullHtCents)}
-              </td>
-              <td style={{ textAlign: "right" }}>
-                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+    <div className="tbl-wrap">
+      <table style={{ width: "100%" }}>
+        <thead>
+          <tr>
+            <th style={{ width: 30 }}></th>
+            <th>Désignation</th>
+            <th style={{ width: 130, textAlign: "right" }}>Facturé HT</th>
+            <th style={{ width: 130, textAlign: "right" }}>À créditer HT</th>
+            <th style={{ width: 130, textAlign: "right" }}>Reste sur ligne</th>
+            <th style={{ width: 60, textAlign: "right" }}>TVA</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l, idx) => {
+            // Montant HT facturé pour cette ligne (en cents)
+            const lineFullCalc = calcLine({
+              quantity: l.source_qty,
+              unit_price_ht: l.unit_price_ht,
+              vat_rate: l.vat_rate,
+              discount_pct: l.discount_pct
+            });
+            const fullHtCents = lineFullCalc.line_ht_cents;
+            // Montant HT à créditer (en cents), basé sur l.amount_ht (euros)
+            const creditedHtCents = l.checked
+              ? Math.min(Math.round((Number(l.amount_ht) || 0) * 100), fullHtCents)
+              : 0;
+            const remainingCents = fullHtCents - creditedHtCents;
+            return (
+              <tr key={idx} style={{ opacity: l.checked ? 1 : 0.5 }}>
+                <td>
                   <input
-                    type="number"
-                    className="form-input"
-                    min="0"
-                    max={fullHtCents / 100}
-                    step="0.01"
-                    value={l.amount_ht}
-                    disabled={!l.checked}
-                    onChange={(e) => onUpdateAmount(idx, e.target.value)}
-                    style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                    type="checkbox"
+                    checked={l.checked}
+                    onChange={() => onToggle(idx)}
+                    style={{ accentColor: "var(--gold)" }}
                   />
-                  <span style={{ fontSize: 11, color: "var(--muted)" }}>€</span>
-                </div>
-              </td>
-              <td className="mono" style={{ textAlign: "right", fontSize: 12, color: remainingCents > 0 ? "var(--gold)" : "var(--muted)" }}>
-                {fmtEUR(remainingCents)}
-              </td>
-              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.vat_rate}%</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                </td>
+                <td style={{ fontSize: 13 }}>
+                  {l.description}
+                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                    {l.source_qty} {l.unit} × {fmtEUR(l.unit_price_ht * 100)}
+                    {l.discount_pct > 0 ? ` (remise ${l.discount_pct}%)` : ""}
+                  </div>
+                </td>
+                <td className="mono" style={{ textAlign: "right", fontSize: 12, color: "var(--muted2)" }}>
+                  {fmtEUR(fullHtCents)}
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min="0"
+                      max={fullHtCents / 100}
+                      step="0.01"
+                      value={l.amount_ht}
+                      disabled={!l.checked}
+                      onChange={(e) => onUpdateAmount(idx, e.target.value)}
+                      style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                    />
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>€</span>
+                  </div>
+                </td>
+                <td className="mono" style={{ textAlign: "right", fontSize: 12, color: remainingCents > 0 ? "var(--gold)" : "var(--muted)" }}>
+                  {fmtEUR(remainingCents)}
+                </td>
+                <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.vat_rate}%</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -884,28 +886,30 @@ function PickerTable({ lines, onToggle, onUpdateAmount }) {
 function StoredLinesTable({ lines }) {
   if (lines.length === 0) return null;
   return (
-    <table style={{ width: "100%" }}>
-      <thead>
-        <tr>
-          <th>Désignation</th>
-          <th style={{ width: 80, textAlign: "right" }}>Qté</th>
-          <th style={{ width: 100, textAlign: "right" }}>P.U. HT</th>
-          <th style={{ width: 60, textAlign: "right" }}>TVA</th>
-          <th style={{ width: 110, textAlign: "right" }}>Total HT</th>
-        </tr>
-      </thead>
-      <tbody>
-        {lines.map((l) => (
-          <tr key={l.id}>
-            <td style={{ fontSize: 13 }}>{l.description}</td>
-            <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.quantity} {l.unit}</td>
-            <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{fmtEUR(l.unit_price_ht_cents)}</td>
-            <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.vat_rate}%</td>
-            <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>− {fmtEUR(l.line_ht_cents)}</td>
+    <div className="tbl-wrap">
+      <table style={{ width: "100%" }}>
+        <thead>
+          <tr>
+            <th>Désignation</th>
+            <th style={{ width: 80, textAlign: "right" }}>Qté</th>
+            <th style={{ width: 100, textAlign: "right" }}>P.U. HT</th>
+            <th style={{ width: 60, textAlign: "right" }}>TVA</th>
+            <th style={{ width: 110, textAlign: "right" }}>Total HT</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.id}>
+              <td style={{ fontSize: 13 }}>{l.description}</td>
+              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.quantity} {l.unit}</td>
+              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{fmtEUR(l.unit_price_ht_cents)}</td>
+              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{l.vat_rate}%</td>
+              <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>− {fmtEUR(l.line_ht_cents)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

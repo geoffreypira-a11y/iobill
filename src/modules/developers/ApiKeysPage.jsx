@@ -214,56 +214,58 @@ export function ApiKeysPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Préfixe</th>
-                <th>Permissions</th>
-                <th>Limite</th>
-                <th>Dernier usage</th>
-                <th>Statut</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((k) => (
-                <tr key={k.id} style={{ opacity: k.revoked_at ? 0.5 : 1 }}>
-                  <td>{k.name}</td>
-                  <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>{k.key_prefix}***</td>
-                  <td>
-                    {(k.scopes || []).map((s) => (
-                      <span key={s} className="badge badge-gold" style={{ marginRight: 4, fontSize: 9 }}>
-                        {s}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="mono" style={{ fontSize: 11 }}>{k.rate_limit_per_minute}/min</td>
-                  <td style={{ fontSize: 11 }}>
-                    {k.last_used_at ? fmtDate(k.last_used_at) : <span style={{ color: "var(--muted)" }}>Jamais</span>}
-                  </td>
-                  <td>
-                    {k.revoked_at ? (
-                      <span className="badge badge-red">Révoquée</span>
-                    ) : (
-                      <span className="badge badge-green">Active</span>
-                    )}
-                  </td>
-                  <td>
-                    {!k.revoked_at && (
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        onClick={() => revokeKey(k.id, k.name)}
-                        style={{ color: "var(--red)" }}
-                      >
-                        Révoquer
-                      </button>
-                    )}
-                  </td>
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Préfixe</th>
+                  <th>Permissions</th>
+                  <th>Limite</th>
+                  <th>Dernier usage</th>
+                  <th>Statut</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {keys.map((k) => (
+                  <tr key={k.id} style={{ opacity: k.revoked_at ? 0.5 : 1 }}>
+                    <td>{k.name}</td>
+                    <td className="mono" style={{ fontSize: 11, color: "var(--muted2)" }}>{k.key_prefix}***</td>
+                    <td>
+                      {(k.scopes || []).map((s) => (
+                        <span key={s} className="badge badge-gold" style={{ marginRight: 4, fontSize: 9 }}>
+                          {s}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="mono" style={{ fontSize: 11 }}>{k.rate_limit_per_minute}/min</td>
+                    <td style={{ fontSize: 11 }}>
+                      {k.last_used_at ? fmtDate(k.last_used_at) : <span style={{ color: "var(--muted)" }}>Jamais</span>}
+                    </td>
+                    <td>
+                      {k.revoked_at ? (
+                        <span className="badge badge-red">Révoquée</span>
+                      ) : (
+                        <span className="badge badge-green">Active</span>
+                      )}
+                    </td>
+                    <td>
+                      {!k.revoked_at && (
+                        <button
+                          className="btn btn-ghost btn-xs"
+                          onClick={() => revokeKey(k.id, k.name)}
+                          style={{ color: "var(--red)" }}
+                        >
+                          Révoquer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
