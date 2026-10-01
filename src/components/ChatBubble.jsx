@@ -85,6 +85,7 @@ export function ChatBubble({ token, user, company }) {
         <button
           onClick={() => setOpen(true)}
           aria-label="Ouvrir messagerie cabinet"
+          className="chat-bubble"
           style={bubbleStyle}
         >
           💬
@@ -106,7 +107,7 @@ export function ChatBubble({ token, user, company }) {
 
       {/* Panneau ouvert */}
       {open && (
-        <div style={panelStyle}>
+        <div className="chat-panel" style={panelStyle}>
           {/* Header */}
           <div style={panelHeaderStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
