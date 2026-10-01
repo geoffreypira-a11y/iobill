@@ -620,6 +620,8 @@ tbody tr:hover td { background: var(--card2); }
   .page-header > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
   .page-sub { font-size: 12px; }
 
+  /* Les onglets débordaient la PAGE entière, ce qui la faisait glisser
+     latéralement en entier. Ils défilent maintenant entre eux. */
   /* `width: fit-content` (voulu sur grand écran) n'était plafonné par
      rien : la barre d'onglets mesurait 559 px dans une page de 390 et
      entraînait la page entière avec elle. */
@@ -647,6 +649,81 @@ tbody tr:hover td { background: var(--card2); }
     background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
     background-attachment: local, local, scroll, scroll;
   }
+}
+
+/* ─── Tableaux en cartes sur téléphone ──────────────────────────
+   v8.110 — Faire défiler un tableau de 7 colonnes pour lire un montant
+   reste pénible. Sur les deux écrans les plus consultés — Factures et
+   Devis — chaque ligne devient une carte empilée, chaque cellule une
+   paire étiquette / valeur. L'étiquette vient de `data-label`, posé
+   dans le JSX : un attribut inerte, qui ne change rien au-dessus du
+   palier. Aucune cellule n'est masquée — tout reste lisible sans un
+   seul geste latéral.
+
+   N'agit QUE sur les tableaux portant `tbl-cards`. Les 36 autres
+   gardent le défilement horizontal, qui convient à leur usage. */
+@media (max-width: 600px) {
+  .tbl-cards {
+    overflow-x: visible;
+    background: none;
+    font-size: inherit;
+  }
+  .tbl-cards table, .tbl-cards tbody, .tbl-cards tr, .tbl-cards td {
+    display: block;
+    width: auto;
+  }
+  /* L'en-tête ne sert plus à rien : chaque valeur porte son étiquette. */
+  .tbl-cards thead { display: none; }
+
+  .tbl-cards tr {
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+  }
+  /* Une révision (V2, V3) reste rattachée visuellement à son devis. */
+  .tbl-cards tr.is-child {
+    border-left: 3px solid var(--gold);
+    margin-left: 14px;
+  }
+
+  .tbl-cards td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 5px 0;
+    border: none;
+    font-size: 13px;
+    text-align: left;
+  }
+  .tbl-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  /* Cellules sans étiquette (le chevron d'expansion des devis) : pas de
+     ligne vide, pas de préfixe fantôme. */
+  .tbl-cards td:not([data-label]) { padding: 0; }
+  .tbl-cards td:not([data-label])::before { content: none; }
+  .tbl-cards td:not([data-label]):empty { display: none; }
+
+  /* Les actions ferment la carte, détachées des données. */
+  .tbl-cards td[data-label="Actions"] {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border2);
+    margin-top: 8px;
+    padding-top: 10px;
+  }
+  .tbl-cards td[data-label="Actions"]::before { content: none; }
+
+  /* Le numéro sert de titre à la carte. */
+  .tbl-cards td[data-label="N°"] { font-weight: 600; }
 }
 
 /* ─── Téléphones étroits ────────────────────────────────────────

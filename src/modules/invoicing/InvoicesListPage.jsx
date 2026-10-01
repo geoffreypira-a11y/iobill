@@ -792,7 +792,7 @@ export function InvoicesListPage({ token, company }) {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <div className="tbl-wrap">
+          <div className="tbl-wrap tbl-cards">
             <table>
               <thead>
                 <tr>
@@ -827,7 +827,7 @@ export function InvoicesListPage({ token, company }) {
   
                   return (
                     <tr key={inv.id}>
-                      <td className="mono">
+                      <td data-label="N°" className="mono">
                         {inv.number
                           ? (isProvisionalNumber(inv.number)
                               ? <span style={{ color: "var(--muted)", fontStyle: "italic" }}
@@ -863,12 +863,12 @@ export function InvoicesListPage({ token, company }) {
                           />
                         )}
                       </td>
-                      <td>{snapshotDisplayName(inv.client_snapshot)}</td>
-                      <td>{fmtDate(inv.issue_date)}</td>
-                      <td style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
+                      <td data-label="Client">{snapshotDisplayName(inv.client_snapshot)}</td>
+                      <td data-label="Émise le">{fmtDate(inv.issue_date)}</td>
+                      <td data-label="Échéance" style={{ fontSize: 12, color: eff === "overdue" ? "var(--red)" : "var(--muted2)" }}>
                         {fmtDate(inv.due_date)}
                       </td>
-                      <td className="mono" style={{ textAlign: "right" }}>
+                      <td data-label="Montant TTC" className="mono" style={{ textAlign: "right" }}>
                         {/* v8.49 — Affiche le grand_total (TTC + débours) comme montant principal
                             = ce que le client paye réellement. Sous-ligne discrète "dont TVA · débours"
                             pour la transparence fiscale (art. 267 II 2° CGI). */}
@@ -891,7 +891,7 @@ export function InvoicesListPage({ token, company }) {
                           );
                         })()}
                       </td>
-                      <td>
+                      <td data-label="Statut">
                         <span className={"badge " + badge.cls}>{badge.label}</span>
                         {inv.status === "partial" && (() => {
                           const tot = inv.grand_total_cents || inv.total_ttc_cents || 0;
@@ -903,7 +903,7 @@ export function InvoicesListPage({ token, company }) {
                           );
                         })()}
                       </td>
-                      <td>
+                      <td data-label="Actions">
                         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
                           {/* Bouton principal : Voir (preview PDF) si emise, sinon Modifier */}
                           <button
