@@ -1301,6 +1301,9 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
 
   const amountCents = Math.round(parseFloat(String(montant).replace(",", ".")) * 100) || 0;
   const applied = Math.min(Math.max(0, amountCents), remaining);
+  // Au-delà du reste dû, on le dit au lieu de ramener le montant en silence :
+  // l'utilisateur croyait encaisser ce qu'il avait tapé.
+  const depasse = amountCents > remaining;
   const newRemaining = Math.max(0, remaining - applied);
   const solde = applied > 0 && applied >= remaining - 1; // epsilon 1 cent
 
@@ -1347,12 +1350,17 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
               Solder
             </button>
           </div>
-          {applied > 0 && !solde && (
+          {depasse && (
+            <div style={{ fontSize: 12, color: "var(--red, #e54949)", marginTop: 8 }}>
+              Le montant dépasse le reste à payer ({fmtEUR(remaining)}).
+            </div>
+          )}
+          {!depasse && applied > 0 && !solde && (
             <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
               Après ce paiement, reste dû : <strong style={{ color: "var(--orange)" }}>{fmtEUR(newRemaining)}</strong> (statut : partiel)
             </div>
           )}
-          {solde && (
+          {!depasse && solde && (
             <div style={{ fontSize: 12, color: "var(--green)", marginTop: 8 }}>
               La facture sera soldée ✓
             </div>
@@ -1367,7 +1375,7 @@ function EncaisseLocalModal({ inv, busy, onClose, onSubmit }) {
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Annuler</button>
-          <button className="btn btn-primary" onClick={() => onSubmit(amountCents, method)} disabled={busy || applied <= 0}>
+          <button className="btn btn-primary" onClick={() => onSubmit(amountCents, method)} disabled={busy || applied <= 0 || depasse}>
             {busy ? "..." : "✅ Enregistrer"}
           </button>
         </div>
