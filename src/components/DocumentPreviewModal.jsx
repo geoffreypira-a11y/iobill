@@ -335,16 +335,51 @@ export function DocumentPreviewModal({ token, docType, doc, onClose, onSend }) {
             </div>
           )}
           {finalUrl && !loading && !error && (
-            <iframe
-              src={finalUrl}
-              title={title}
-              style={{
-                width: "100%",
-                height: "100%",
-                border: "none",
-                background: "#fff"
-              }}
-            />
+            <>
+              <iframe
+                className="pdf-frame"
+                src={finalUrl}
+                title={title}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  background: "#fff"
+                }}
+              />
+              {/* v8.111 — Safari iOS ne rend dans une iframe qu'une vignette
+                  figée de la première page : ni zoom, ni défilement, ni page
+                  suivante. On ouvre le lecteur PDF du téléphone, qui sait
+                  faire les trois. Masqué au-dessus du palier par le CSS. */}
+              <div
+                className="pdf-mobile"
+                style={{
+                  display: "none",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 14,
+                  padding: 28,
+                  textAlign: "center"
+                }}
+              >
+                <div style={{ fontSize: 34 }}>📄</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6, maxWidth: 300 }}>
+                  L'aperçu intégré ne permet ni zoom ni changement de page sur
+                  téléphone. Ouvrez le document pour le consulter en entier.
+                </div>
+                <a
+                  href={finalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-primary"
+                  style={{ textDecoration: "none", marginTop: 4 }}
+                >
+                  Ouvrir le document
+                </a>
+              </div>
+            </>
           )}
         </div>
       </div>

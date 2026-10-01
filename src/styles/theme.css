@@ -279,6 +279,43 @@ select:focus-visible {
 .kpi-foot { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
 /* ─── TABLE ─── */
+/* ─── Barre d'accès rapide (téléphone) ─────────────────────
+   v8.111 — Masquée par défaut : elle n'existe que sous le palier
+   mobile. Sur grand écran, la barre latérale reste seule.
+
+   z-index 70 : au-dessus du contenu, mais SOUS le voile du tiroir (80),
+   le tiroir lui-même (90) et les modales (200). Une barre qui flotte
+   par-dessus une modale est pire que pas de barre du tout. */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 70;
+  background: var(--card);
+  border-top: 1px solid var(--border2);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+}
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.bottom-nav-item.active { color: var(--gold); }
+.bottom-nav-item .bn-icon { width: 20px; height: 20px; }
+
 /* ─── Conteneur de tableau ──────────────────────────────────
    v8.110 — Un tableau à 7 colonnes mesure ~670 px. Dans une carte de
    354 px sur téléphone, il débordait d'un tiers — et la carte portait
@@ -590,7 +627,14 @@ tbody tr:hover td { background: var(--card2); }
     position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 80; display: none;
   }
   .mobile-overlay.open { display: block; }
-  .page { padding: 60px 18px 24px; }
+  .bottom-nav { display: grid; }
+  /* Dégage la hauteur de la barre, sans quoi elle masque la dernière
+     ligne de chaque liste. */
+  .page { padding: 60px 18px 92px; }
+  /* La bulle de discussion flotte au-dessus de la barre : on la remonte
+     plutôt que de la laisser recouvrir deux entrées. */
+  .chat-bubble { bottom: 90px !important; }
+  .chat-panel { bottom: 90px !important; max-height: calc(100vh - 110px) !important; }
   .page-title { font-size: 22px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   /* Modal devient drawer du bas sur mobile */
@@ -631,6 +675,10 @@ tbody tr:hover td { background: var(--card2); }
 
   .search-input { width: 100%; }
 
+  /* Tableau de bord : les grilles à deux colonnes écrasent tout sur
+     390 px — une colonne de 230 px et une de 150 px, illisibles. */
+  .dash-2col { grid-template-columns: 1fr !important; }
+
   /* Densité : 7 colonnes restent 7 colonnes, mais chacune prend moins
      de place, donc on fait défiler moins loin. */
   .tbl-wrap { font-size: 12px; }
@@ -649,6 +697,17 @@ tbody tr:hover td { background: var(--card2); }
     background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
     background-attachment: local, local, scroll, scroll;
   }
+}
+
+/* ─── Aperçu d'un document sur téléphone ───────────────────────
+   v8.111 — Safari iOS n'affiche dans une <iframe> qu'une vignette figée
+   de la première page d'un PDF : ni défilement, ni zoom, ni pages
+   suivantes. Ce n'est pas réglable côté CSS, c'est le comportement du
+   navigateur. On remplace donc l'iframe par un accès au lecteur PDF
+   natif, où le zoom et la pagination fonctionnent. */
+@media (max-width: 700px) {
+  .pdf-frame { display: none !important; }
+  .pdf-mobile { display: flex !important; }
 }
 
 /* ─── Tableaux en cartes sur téléphone ──────────────────────────
@@ -730,7 +789,7 @@ tbody tr:hover td { background: var(--card2); }
    v8.110 — Second palier, absent jusqu'ici. En dessous de 480 px, les
    tailles pensées pour un grand écran coûtent trop de hauteur. */
 @media (max-width: 480px) {
-  .page { padding: 60px 12px 24px; }
+  .page { padding: 60px 12px 92px; }
   .page-title { font-size: 18px; line-height: 1.15; word-break: break-word; }
   .kpi-grid { gap: 10px; }
   .btn { font-size: 12px; padding: 8px 14px; }

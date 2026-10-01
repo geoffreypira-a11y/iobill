@@ -4,6 +4,7 @@ import { sb } from "./lib/supabase.js";
 import { saveSession, loadSession, clearSession } from "./lib/session.js";
 import { kickReminders } from "./lib/reminders.js";
 import { Sidebar } from "./components/Sidebar.jsx";
+import { BottomNav } from "./components/BottomNav.jsx";
 import { LogoFull } from "./components/Logo.jsx";
 import { VatReminderBanner } from "./components/VatReminderBanner.jsx";
 
@@ -400,6 +401,7 @@ function AuthedLayout({ session, company, onSignOut }) {
         <Outlet />
         <LegalFooter />
       </main>
+      <BottomNav company={company} />
       <AdminModeToggle isAdmin={!!company?.is_admin} />
       <OnboardingTour user={session.user} company={company} />
       <ChatBubble token={session.token} user={session.user} company={company} />
